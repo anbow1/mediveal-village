@@ -1,6 +1,54 @@
 {
-  "totalBytes": 15797525,
+  "totalBytes": 19032531,
   "files": [
+    {
+      "path": "assets/buildings/bakery_l1_lod0.glb",
+      "bytes": 37768
+    },
+    {
+      "path": "assets/buildings/bakery_l1_lod1.glb",
+      "bytes": 29856
+    },
+    {
+      "path": "assets/buildings/bakery_l1_lod2.glb",
+      "bytes": 16740
+    },
+    {
+      "path": "assets/buildings/bakery_l1_shadow.glb",
+      "bytes": 4656
+    },
+    {
+      "path": "assets/buildings/farm_l1_lod0.glb",
+      "bytes": 76024
+    },
+    {
+      "path": "assets/buildings/farm_l1_lod1.glb",
+      "bytes": 23588
+    },
+    {
+      "path": "assets/buildings/farm_l1_lod2.glb",
+      "bytes": 7900
+    },
+    {
+      "path": "assets/buildings/farm_l1_shadow.glb",
+      "bytes": 4272
+    },
+    {
+      "path": "assets/buildings/gate_l1_lod0.glb",
+      "bytes": 37680
+    },
+    {
+      "path": "assets/buildings/gate_l1_lod1.glb",
+      "bytes": 33952
+    },
+    {
+      "path": "assets/buildings/gate_l1_lod2.glb",
+      "bytes": 12912
+    },
+    {
+      "path": "assets/buildings/gate_l1_shadow.glb",
+      "bytes": 6568
+    },
     {
       "path": "assets/buildings/house_l1_impostor.ktx2",
       "bytes": 163926
@@ -20,6 +68,86 @@
     {
       "path": "assets/buildings/house_l1_shadow.glb",
       "bytes": 5092
+    },
+    {
+      "path": "assets/buildings/keep_l1_lod0.glb",
+      "bytes": 110624
+    },
+    {
+      "path": "assets/buildings/keep_l1_lod1.glb",
+      "bytes": 96888
+    },
+    {
+      "path": "assets/buildings/keep_l1_lod2.glb",
+      "bytes": 38188
+    },
+    {
+      "path": "assets/buildings/keep_l1_shadow.glb",
+      "bytes": 4880
+    },
+    {
+      "path": "assets/buildings/wall_segment_lod0.glb",
+      "bytes": 11108
+    },
+    {
+      "path": "assets/buildings/wall_segment_lod1.glb",
+      "bytes": 11048
+    },
+    {
+      "path": "assets/buildings/wall_segment_lod2.glb",
+      "bytes": 7392
+    },
+    {
+      "path": "assets/buildings/wall_segment_shadow.glb",
+      "bytes": 4112
+    },
+    {
+      "path": "assets/buildings/watchtower_l1_lod0.glb",
+      "bytes": 56468
+    },
+    {
+      "path": "assets/buildings/watchtower_l1_lod1.glb",
+      "bytes": 56124
+    },
+    {
+      "path": "assets/buildings/watchtower_l1_lod2.glb",
+      "bytes": 9860
+    },
+    {
+      "path": "assets/buildings/watchtower_l1_shadow.glb",
+      "bytes": 4548
+    },
+    {
+      "path": "assets/buildings/windmill_l1_lod0.glb",
+      "bytes": 79100
+    },
+    {
+      "path": "assets/buildings/windmill_l1_lod1.glb",
+      "bytes": 71616
+    },
+    {
+      "path": "assets/buildings/windmill_l1_lod2.glb",
+      "bytes": 32156
+    },
+    {
+      "path": "assets/buildings/windmill_l1_shadow.glb",
+      "bytes": 4248
+    },
+    {
+      "path": "assets/buildings/woodcutter_l1_lod0.glb",
+      "bytes": 38676
+    },
+    {
+      "path": "assets/buildings/woodcutter_l1_lod1.glb",
+      "bytes": 24972
+    },
+    {
+      "path": "assets/buildings/woodcutter_l1_lod2.glb",
+      "bytes": 16112
+    },
+    {
+      "path": "assets/buildings/woodcutter_l1_shadow.glb",
+      "bytes": 3932
     },
     {
       "path": "assets/props/barrel_lod0.glb",
@@ -182,6 +310,26 @@
       "bytes": 298406
     },
     {
+      "path": "assets/trees/birch_impostor.ktx2",
+      "bytes": 138806
+    },
+    {
+      "path": "assets/trees/birch_lod0.glb",
+      "bytes": 344372
+    },
+    {
+      "path": "assets/trees/birch_lod1.glb",
+      "bytes": 29640
+    },
+    {
+      "path": "assets/trees/birch_lod2.glb",
+      "bytes": 12496
+    },
+    {
+      "path": "assets/trees/birch_shadow.glb",
+      "bytes": 3368
+    },
+    {
       "path": "assets/trees/oak_impostor.ktx2",
       "bytes": 155460
     },
@@ -200,6 +348,54 @@
     {
       "path": "assets/trees/oak_shadow.glb",
       "bytes": 5604
+    },
+    {
+      "path": "assets/trees/pine_impostor.ktx2",
+      "bytes": 129460
+    },
+    {
+      "path": "assets/trees/pine_lod0.glb",
+      "bytes": 395636
+    },
+    {
+      "path": "assets/trees/pine_lod1.glb",
+      "bytes": 29680
+    },
+    {
+      "path": "assets/trees/pine_lod2.glb",
+      "bytes": 12448
+    },
+    {
+      "path": "assets/trees/pine_shadow.glb",
+      "bytes": 3360
+    },
+    {
+      "path": "assets/trees/reeds_lod0.glb",
+      "bytes": 5336
+    },
+    {
+      "path": "assets/trees/sapling_lod0.glb",
+      "bytes": 293564
+    },
+    {
+      "path": "assets/trees/stump_lod0.glb",
+      "bytes": 235440
+    },
+    {
+      "path": "assets/units/citizen_lod0.glb",
+      "bytes": 598904
+    },
+    {
+      "path": "assets/units/citizen_lod1.glb",
+      "bytes": 15368
+    },
+    {
+      "path": "assets/units/citizen_lod2.glb",
+      "bytes": 10264
+    },
+    {
+      "path": "assets/units/citizen_shadow.glb",
+      "bytes": 2896
     },
     {
       "path": "assets/units/swordsman_lod0.glb",

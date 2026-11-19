@@ -280,6 +280,11 @@ export function createSkyDomeMaterial(u: PhysicalSkyUniforms): MeshBasicNodeMate
   return mat;
 }
 
+/** Shared reflection evaluation for calm lakes & rivers (exact same sky + cloud function as dome & fog). */
+export function buildFullSkyNodeForWater(dir: Vec3Node, u: PhysicalSkyUniforms) {
+  return buildFullSkyNode(dir, u, { includeSunDisk: false, clampSunGlowForProbe: false });
+}
+
 /** PMREM environment reflection probe material (same sky + warm soil ground bounce, no ringing spike). */
 export function createSkyProbeMaterial(u: PhysicalSkyUniforms): MeshBasicNodeMaterial {
   const mat = new MeshBasicNodeMaterial({

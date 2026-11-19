@@ -3,6 +3,7 @@
 
 import { BENCH } from '../config.ts';
 import type { FreeCameraPose, RtsCameraGoal } from '../sim/cameraMath.ts';
+import { STAGE4_TERRAIN_CONFIG, TerrainField } from '../sim/terrain.ts';
 import { BenchRecorder, type BenchSample, formatBench, type GpuTimes } from '../render/benchRecorder.ts';
 
 export type BenchSpotCamera =
@@ -14,58 +15,83 @@ export interface BenchSpot {
   readonly camera: BenchSpotCamera;
 }
 
+const benchTerrain = new TerrainField(STAGE4_TERRAIN_CONFIG);
+
+function freeLookAt(
+  eyeX: number,
+  eyeAboveGroundM: number,
+  eyeZ: number,
+  lookX: number,
+  lookAboveGroundM: number,
+  lookZ: number,
+): FreeCameraPose {
+  const eyeY = benchTerrain.heightAt(eyeX, eyeZ) + eyeAboveGroundM;
+  const lookY = benchTerrain.heightAt(lookX, lookZ) + lookAboveGroundM;
+  const dx = lookX - eyeX;
+  const dy = lookY - eyeY;
+  const dz = lookZ - eyeZ;
+  const horiz = Math.max(1e-5, Math.hypot(dx, dz));
+  return {
+    x: eyeX,
+    y: eyeY,
+    z: eyeZ,
+    yawRad: Math.atan2(-dx, -dz),
+    pitchRad: Math.atan2(dy, horiz),
+  };
+}
+
 /**
- * Fixed camera views shared across every stage (Stage 1 calibration through Stage 8 critic).
+ * Fixed camera views shared across every Stage 4–8 capture and benchmark.
  * No randomness: before/after screenshots and numbers always compare identical pixels.
  */
 export const BENCH_SPOTS: readonly BenchSpot[] = [
   {
     name: 'showcase',
-    camera: { mode: 'free', pose: { x: 8.8, y: 5.2, z: 13.8, yawRad: 0.543, pitchRad: -0.187 } },
+    camera: { mode: 'free', pose: freeLookAt(14.5, 14.5, 36.5, 1.5, 2.2, -4.5) },
   },
   {
     name: 'building',
-    camera: { mode: 'free', pose: { x: 6.8, y: 4.2, z: 8.2, yawRad: 0.562, pitchRad: -0.125 } },
+    camera: { mode: 'free', pose: freeLookAt(8.2, 4.0, -0.5, 1.5, 2.7, -10.5) },
   },
   {
     name: 'unit',
-    camera: { mode: 'free', pose: { x: 1.1, y: 1.38, z: 6.75, yawRad: -0.363, pitchRad: -0.116 } },
+    camera: { mode: 'free', pose: freeLookAt(1.3, 1.42, -1.65, 2.55, 1.05, -4.6) },
   },
   {
     name: 'calibration',
-    camera: { mode: 'free', pose: { x: -23.8, y: 4.3, z: 30.0, yawRad: 0.22, pitchRad: -0.38 } },
+    camera: { mode: 'free', pose: freeLookAt(-35.6, 4.3, 43.8, -38.0, 1.15, 36.0) },
   },
   {
     name: 'town',
-    camera: { mode: 'rts', goal: { targetX: 0, targetZ: 0, distanceM: 55, yawRad: 0.45, pitchRad: 0.78 } },
+    camera: { mode: 'rts', goal: { targetX: -2, targetZ: -1, distanceM: 58, yawRad: 0.35, pitchRad: 0.72 } },
   },
   {
     name: 'rally',
-    camera: { mode: 'rts', goal: { targetX: 28, targetZ: 18, distanceM: 36, yawRad: 0.9, pitchRad: 0.68 } },
+    camera: { mode: 'rts', goal: { targetX: 33, targetZ: -1, distanceM: 38, yawRad: 0.65, pitchRad: 0.65 } },
   },
   {
     name: 'field',
-    camera: { mode: 'rts', goal: { targetX: 90, targetZ: -60, distanceM: 88, yawRad: -0.4, pitchRad: 0.72 } },
+    camera: { mode: 'rts', goal: { targetX: 24, targetZ: 15, distanceM: 56, yawRad: -0.35, pitchRad: 0.58 } },
   },
   {
     name: 'close',
-    camera: { mode: 'rts', goal: { targetX: 0, targetZ: 0, distanceM: 12, yawRad: 0.55, pitchRad: 0.42 } },
+    camera: { mode: 'rts', goal: { targetX: -2, targetZ: -4, distanceM: 22, yawRad: 0.35, pitchRad: 0.46 } },
   },
   {
     name: 'enemy',
-    camera: { mode: 'rts', goal: { targetX: -140, targetZ: -140, distanceM: 68, yawRad: -2.4, pitchRad: 0.76 } },
+    camera: { mode: 'rts', goal: { targetX: 38.0, targetZ: -1.0, distanceM: 22, yawRad: 0.08, pitchRad: 0.50 } },
   },
   {
     name: 'overview',
-    camera: { mode: 'rts', goal: { targetX: 0, targetZ: 0, distanceM: 460, yawRad: 0, pitchRad: 1.38 } },
+    camera: { mode: 'rts', goal: { targetX: 0, targetZ: 0, distanceM: 420, yawRad: 0, pitchRad: 1.34 } },
   },
   {
     name: 'ground_045m',
-    camera: { mode: 'free', pose: { x: -5.6, y: 0.45, z: 7.6, yawRad: -0.695, pitchRad: 0.048 } },
+    camera: { mode: 'free', pose: freeLookAt(-4.8, 0.45, 0.2, 2.2, 1.85, -8.5) },
   },
   {
     name: 'eye_170m',
-    camera: { mode: 'free', pose: { x: -5.8, y: 1.7, z: 9.8, yawRad: -0.602, pitchRad: -0.009 } },
+    camera: { mode: 'free', pose: freeLookAt(-7.2, 1.7, -3.2, 14.0, 2.6, -1.2) },
   },
 ];
 

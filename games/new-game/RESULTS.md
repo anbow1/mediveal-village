@@ -2,6 +2,61 @@
 
 > Newest entries first (`GUIDE.md` §1, §6). Every measurement includes date, commit, exact method (script, preset, view, alternating before/after runs), Before | After table (pipelines, draw calls / triangles, texture memory, ready / GPU idle, build size), screenshot comparison crops in `games/new-game/results/<date>/`, and the decision + number behind it. Reverted attempts are logged too.
 
+## 2026-11-19 · Stage 4 — 100 × 100 m Vertical Slice at Final Quality & 560 × 560 m Budget Extrapolation (base `c1d160b`, pushed to `main`)
+
+- **Measured how:** Production build (`vite build --base ./`, `21 MB` total, `103` manifest assets / `18.15 MB`) served via `tools/measure/serve.mjs games/new-game/dist 8765`. Headless Chrome (`/usr/bin/google-chrome`, SwiftShader Vulkan WebGPU + ANGLE SwiftShader WebGL2), strictly one browser process at a time:
+  1. **`tools/measure/load.mjs --game generic --extra '&q=high|low' --hide-features texture-compression-astc,texture-compression-etc2 --json stage4-load-{high,low}.json`** — verifying BC7 GPU textures, 0 uncompressed uploads, exact pipeline/module/RT counts, and GPU-idle load time.
+  2. **Stage 4 full visual, lighting, parity & animation suite (`verify-stage4.mjs`, `960×540`):**
+     - WebGPU High (`high-a`, `high-b`, `polish`): 4-preset EV100 calibration (`clearNoon`, `lateAutumn`, `goldenHour`, `overcast`), 4-preset `showcase`, all 10 slice views (`ground_045m`, `eye_170m`, `town`, `rally`, `field`, `enemy`, `close`, `building`, `unit`, `overview`) + dedicated `lake_shore` and `farm_windmill` close-ups, deterministic `step(2.5)` advancing windmill sails / walking villagers / grass gusts / chimney smoke / water ripples, viewport resize (`920×520 ↔ 960×540`), and runtime pipeline tracer (`newPipelines: []`).
+     - WebGPU Low (`&q=low`): `showcase`, `town`, `rally`, `ground_045m`, `goldenHour`, and pipeline tracer (`newPipelines: []`).
+     - WebGL2 High fallback: `showcase`, `town`, `field`, `cal_clearNoon`, `cal_overcast` parity vs WebGPU High.
+     - Phone landscape emulation (`800×380`, DPR 3 → capped 2× = `1600×760`, touch, Low, HUD visible).
+  3. **Full 12-spot benchmarks (`?autostart&debug&bench&fast`, WebGPU `--disable-vulkan-surface`)** on High and Low → `stage4-bench-{high,low}.json`.
+- **Stage 4 Before (Stage 3) | After (Stage 4 Vertical Slice) table:**
+
+| Metric | Before — Stage 3 High (Low) | After — Stage 4 High (WebGPU) | After — Stage 4 Low (WebGPU) | Notes |
+|---|---|---|---|---|
+| World content (100 × 100 m slice) | Flat ground, 3 cottages, 4 oaks, 3 soldiers, small pond | **560 m sculpted terrain + 6-layer TSL + 41k R2 grass + enclosed lake + 12 buildings (9 types) + 12 wall segments + 75 batched trees (3 species) + 33 rigged units (2 armies + villagers) + 352 wheat sheaves + 38 lake reeds + smoke** | Same world (`19.3k` R2 grass blades, `160` wheat sheaves, `2`-cascade `1024²` CSM) | Single-height-function `TerrainField` + `GroundWorksMap` shared by terrain, grass, water, buildings, units, and contact shadows |
+| Pipelines (total / after load) | `36 / 0` (`36 / 0`) | **`74 / 0`** (`105` shader modules) | **`74 / 0`** (`105` shader modules) | Tracer: **0 new pipelines** across all 12 views, 4 presets, `step(2.5)` & resize |
+| Draw calls / frame (12 spots) | `27–75` (`27–62`) | **`179` overview · `257` town · `276` rally** | **`115` overview · `203` town · `218` rally** | Well below `≤ 500` High / `≤ 250` Low budgets (all 75 trees + walls + wheat + reeds + grass GPU-instanced) |
+| Triangles / frame (12 spots) | `9.4k–63k` (`9k–50k`) | **`0.37 M` overview · `0.41 M` town · `0.53 M` eye_170m** | **`0.29 M` overview · `0.33 M` town · `0.43 M` eye_170m** | Well below `≤ 1.2 M` High / `≤ 0.6 M` Low ceilings; 87 matte impostors active in `overview` |
+| Uploaded texture VRAM | `20.7 MB` (100% BC7) | **`25.2 MB`** (`29` textures: **`24.7 MB` BC7** + `0.3 MB` R32F height + `0.3 MB` RGBA8 groundWorks) | **`25.2 MB`** (`29` textures, **`24.7 MB` BC7**) | **`image uploads: 0, 0.00 s`**; +4.5 MB for 8 new buildings (0 embedded tex!), Pine, Birch, Citizen & terrain maps |
+| Render-target VRAM | `125.6 MB` (`45.6 MB`) | **`125.6 MB`** (`34` targets) | **`45.6 MB`** (`32` targets) | Unchanged from Stage 3 (3×2048² High / 2×1024² Low CSM + HDR/MRT/TRAA/bloom + 128² PMREM) |
+| Load (ready / GPU idle, SwiftShader) | `4.7 s / 13.5 s` (`5.0 s / 12.9 s`) | **`22.6 s / 28.0 s`** (`assets 1.90 s`, `scene 0.007 s`, `warmup 3.20 s`) | **`7.1 s / 26.4 s`** (`[load] total: 6.22 s`) | 103 binary files (`18.15 MB`) stream in `1.9–3.1 s`; **0 console/page errors** |
+| Production build size (`dist/`) | `17 MB` | **`21 MB`** (`18.15 MB` assets + `1.20 MB` JS / `347 KB` gzip) | same | Only `+4 MB` over Stage 3 (well below `80 MB` ceiling) |
+| GPU ms per pass (SwiftShader, `ground_045m` / `eye_170m`) | `674.5 ms` (`582.0 ms`) | **`4197.6 ms`** (scene `3421.6`, **shadows `153.6` = 3.7%**, post `613.0`, other `9.4`) | **`3834.2 ms`** (scene `3094.4`, **shadows `106.3` = 2.8%**, post `619.6`, other `13.8`) | R7 coarse shadow stand-ins + batched tree shadows keep shadows < 4% of GPU time; Low shadows **−31%** vs High |
+
+- **4-Preset EV100 Calibration, Tone Floor & Cross-Backend Parity (`960×540`):**
+  - **18% Grey Calibration Cube (both WebGPU & WebGL2):** `clearNoon` **`+0.01 stops`** (`[108.0, 104.0, 107.0]`, **0.0 / 255 WebGL2 diff**), `lateAutumn` **`+0.03 stops`**, `goldenHour` **`−0.01 stops`**, `overcast` **`−0.05 stops`** (`[104.9, 102.6, 104.2]`, **0.0 / 255 WebGL2 diff**) — all 4 presets locked within **±0.05 stops**.
+  - **Shadow readability & clipping (`13` High views):** Zero clipped highlights (`p99` 137–222, never 255), warm readable undersides (`p05` 15–68 across all views and presets).
+  - **High vs Low & WebGL2 Parity:** `town` mean abs diff `3.82 / 255` (High vs Low) and `4.15 / 255` (WebGPU vs WebGL2, mainly live windmill sail / villager animation delta); `cal` WebGL2 diff `0.69–2.04 / 255` (0.0 on grey cube).
+  - **Phone landscape (`800×380`, DPR 3 → 2× cap, touch, Low):** `1600×760` backing, `204` draw calls, `332k` tris, crisp legible HUD buttons, zero overlap, **0 console errors**.
+- **Extrapolation from Measured 100 × 100 m Slice → Full 560 × 560 m Campaign World (Stage 5–6 Gate):**
+
+| Subsystem | Stage 4 Measured (100 × 100 m Slice) | Full 560 × 560 m Extrapolation | Ceiling (`BRIEF.md` §4 / `NUMBERS.md`) | Scaling Architecture & Headroom |
+|---|---|---|---|---|
+| Terrain + GroundWorks | `1` call, `157k` tris, `0.6 MB` VRAM | **`1` call, `157k` tris, `1.3 MB` VRAM** | Fixed | Terrain mesh is **already** 560 × 560 m; upgrading `GroundWorksMap` to `512²` adds only `+0.7 MB`, `+0` calls |
+| R2 Bézier Grass (3 rings) | `3` calls, `129k` High / `60k` Low tris | **`3` calls, `129k` High / `60k` Low tris** | Fixed | Camera-focus annular rings: **0 scaling cost** from 100 m to 560 m |
+| Forests (3 species, 450–600 trees) | `24` calls max (75 trees) | **`24` calls max**, `+30–45k` tris | Fixed calls | Batched per-species multi-LOD `InstancedMesh` + matte impostors (> 100 m) + 3 shadow batches |
+| Buildings & Fortifications (31 types, ~75 placed + M5 fortress) | `~45` calls (`12` buildings + `12` instanced walls), `0 MB` extra tex | **`~85–115` calls**, `+140–220k` tris, **`0 MB` extra tex** | Shared 12-layer KTX2 arrays | All 31 building types share the existing `12.0 MB` BC7 surface arrays; walls/towers/houses instanced |
+| Animated Army & Citizens (140 soldiers + 40 villagers) | `~85` calls (`33` individual `SkinnedMesh` actors) | **`≤ 28` calls** (GPU-instanced bone-matrix `DataTexture`, `180` people), `+5 MB` VRAM | `≤ 500` High / `≤ 250` Low | **Stage 4 gate finding:** Individual `SkinnedMesh` actors would add `+370` calls at 180 people → Stage 5/6 will batch all unit archetypes into GPU bone-texture `InstancedMesh`es (cutting unit draw calls from `85` → `≤ 28`!) |
+| Water, Wheat, Reeds, Props, Smoke, Contact Shadows | `~18` calls, `~40k` tris | **`~24–30` calls, `~65k` tris** | Fixed | All static props/crops/reeds use `InstancedMesh` + `markStaticInstances` |
+| **Total Extrapolated Full World** | **`257` High / `203` Low calls · `0.41 M` / `0.33 M` tris · `25.2 MB` BC7** | **`~240–340` High / `~170–230` Low calls · `0.68–0.92 M` / `0.44–0.58 M` tris · `~33–36 MB` BC7 · `~36 MB` `dist/`** | **`≤ 500` / `≤ 250` calls · `≤ 1.2 M` / `≤ 0.6 M` tris · `≤ 120 MB` tex · `≤ 80 MB` build** | **PASS across every single ceiling with generous margin** |
+
+- **Comparison crops & JPEGs (`games/new-game/results/2026-11-19/`):**
+  - `stage4-all-4-presets.jpg` (Clear Noon | Late Autumn | Golden Hour | Overcast slice showcase).
+  - `stage4-height-sweep.jpg` (Ground `0.45 m` | Eye `1.70 m` | RTS `town 58 m` | `overview 420 m`).
+  - `stage4-tactical-features.jpg` (`rally` Gate/Wall/Regiments | `enemy` Cobalt vs Crimson | `lake_shore` Reeds & Reflection | `farm_windmill` Wheat & Windmill).
+  - `stage4-high-low-webgl2-diff8.jpg` (WebGPU High | WebGPU Low | WebGL2 High | `|WebGPU−WebGL2| × 8`).
+  - Individual JPEGs: `stage4-high-{showcase,golden,overcast,ground-045m,eye-170m,town,rally,field,enemy,lake-shore,farm-windmill,building,unit,overview}.jpg`, `stage4-low-showcase.jpg`, `stage4-webgl2-showcase.jpg`, `stage4-phone-low-hud.jpg`.
+  - Raw JSON: `stage4-load-{high,low}.json`, `stage4-bench-{high,low}.json`.
+- **Bugs caught & fixed by live screenshot inspection (every single one verified visually via `view_file` after fix):**
+  1. **Meshopt-quantized `Int16` overflow squashing instanced trees & walls (`stage4Slice.ts`):** `geo.applyMatrix4()` wrote real-world `0..12 m` coordinates back into normalized `Int16Array` attributes (`KHR_mesh_quantization`), clamping all instanced Oaks, Pines, Birches, and Curtain Walls into `[-1..+1]` m cubes! Fixed with `dequantizeGeometry()` unpacking quantized attributes into `Float32BufferAttribute`s before applying `matrixWorld`.
+  2. **Deduplicated LOD1/LOD2 bark material mapped onto Pine & Birch leaf cards (`stage4Slice.ts`):** `gltf-transform dedup()` merged empty placeholder materials on texture-free `lod1`/`lod2` GLBs into `PineBarkPBR`/`BirchBarkPBR`, causing `byName ?? byObject` in `applySharedMaterialsFromLod0()` to assign solid bark textures onto distant Pine/Birch canopies. Swapped priority to `byObject ?? byName` → lush alpha-cutout evergreen pine needles and golden birch leaves across every LOD.
+  3. **Instanced golden wheat field missing from farm strips (`stage4Slice.ts`):** `mat.positionNode` referenced raw `attribute('position')` instead of `positionLocal`, bypassing `InstancedMesh` instance matrices and piling all wheat at `(0, 0, 0)`. Switched to `positionLocal.add(...)` + `frustumCulled = false` on all static `InstancedMesh`es + denser 8-stalk golden sheaves → 352 swaying wheat sheaves carpeting all 4 ploughed dark-loam strips.
+  4. **Sparse dark-speckled grass, dark Enemy Crimson surcoats, and low-angle lake ripple grid (`grassField.ts`, `lakeWater.ts`, `terrainMesh.ts`, `stage4Slice.ts`, `bench.ts`):** Tightened grass tiles (`3.2 m`, `41k` blades High / `19.3k` Low) with ground-matched olive-gold turf albedo; switched Enemy Crimson TSL team-swap from Rec.709 `luma` (which crushed blue to 7%) to channel-max brightness so Crimson vs Cobalt regiments read cleanly at RTS distance with 0 extra textures; replaced orthogonal lake waves with 5 domain-warped ripples + softened wet-bank roughness (`0.46`) + moved lakeshore trees onto dry bank; moved `enemy` camera clear of pine canopy.
+  5. **Unit tests & shared-file integrity:** Added `tests/terrain.test.ts` verifying `TerrainField`, `GroundWorksMap`, `PlaneGeometry` triangle-split height agreement, and exact `+0.45 m` / `+1.70 m` ground-relative camera heights (**7 files, 24/24 Vitest tests passed**; `tsc --noEmit` 0 errors; all 7 `shared-src/` files byte-identical).
+
 ## 2026-11-19 · Stage 3 — Light & atmosphere: CSM, unified physical sky/fog/probe/water, contact shadows & 4-preset EV100 calibration (base `091266c`, pushed to `main`)
 
 - **Measured how:** Production build (`vite build --base ./`, `17 MB` total) served via `tools/measure/serve.mjs games/new-game/dist 8765`. Headless Chrome (`/usr/bin/google-chrome`, SwiftShader Vulkan WebGPU + ANGLE SwiftShader WebGL2), strictly one browser process at a time:

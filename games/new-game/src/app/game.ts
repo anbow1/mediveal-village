@@ -1,7 +1,7 @@
 // Stage 2 game host: boot timing ([load] logs), byte-accurate asset loading, PMREM sky probe,
 // LOD/impostor updates, fixed 60 Hz skeletal animation, debug contract, governor & bench.
 
-import type { PerspectiveCamera, Scene, WebGPURenderer } from 'three/webgpu';
+import { Vector3, type PerspectiveCamera, type Scene, type WebGPURenderer } from 'three/webgpu';
 import {
   BENCH,
   GOVERNOR_STEPS,
@@ -17,7 +17,7 @@ import { AssetLoader } from '../render/assetLoader.ts';
 import { LightingRig, type ShadowConfigSummary } from '../render/lighting.ts';
 import { CpuTimer, FrameGovernor } from '../render/perf.ts';
 import { RenderStage } from '../render/stage.ts';
-import { buildStage2World, type Stage2WorldHandles } from '../render/stage2Assets.ts';
+import { buildStage4Slice, type Stage4SliceHandles } from '../render/stage4Slice.ts';
 import { OverlayUi } from '../ui/overlay.ts';
 import { BENCH_SPOTS, type BenchResult, BenchSession, findBenchSpot } from './bench.ts';
 import { InputBindings } from './bindings.ts';
@@ -60,6 +60,7 @@ interface DebugApi {
     loadTotalS: number;
     lods: Record<string, number>;
     shadows: ShadowConfigSummary;
+    sliceMetrics: ReturnType<Stage4SliceHandles['getSliceMetrics']>;
     benchResult: BenchResult | null;
   };
   readonly renderer: WebGPURenderer;
@@ -81,13 +82,14 @@ export class Game {
   private readonly stage: RenderStage;
   private readonly lighting: LightingRig;
   private readonly assetLoader: AssetLoader;
-  private readonly world: Stage2WorldHandles;
+  private readonly world: Stage4SliceHandles;
   private readonly bindings: InputBindings;
   private readonly camCtrl: RtsCameraController;
   private readonly loop: FixedStepLoop;
   private readonly cpuTimer = new CpuTimer();
   private readonly governor: FrameGovernor<(typeof GOVERNOR_STEPS)['high'][number]>;
   private readonly ui: OverlayUi;
+  private readonly camDir = new Vector3();
 
   private benchSession: BenchSession | null = null;
   private lastBenchResult: BenchResult | null = null;
@@ -105,7 +107,7 @@ export class Game {
     stage: RenderStage,
     lighting: LightingRig,
     assetLoader: AssetLoader,
-    world: Stage2WorldHandles,
+    world: Stage4SliceHandles,
     ui: OverlayUi,
     bindings: InputBindings,
     camCtrl: RtsCameraController,
@@ -126,8 +128,9 @@ export class Game {
 
     this.loop = new FixedStepLoop({
       onStep: () => {
-        // Advance skeletal animations, cloud drift, and calm water ripples on the 60 Hz sim clock.
-        this.world.update(SIM.fixedStepS, this.stage.camera.position, false);
+        // Advance skeletal animations, windmill sails, citizen patrols, grass gusts, chimney smoke, cloud drift & water ripples.
+        this.stage.camera.getWorldDirection(this.camDir);
+        this.world.update(SIM.fixedStepS, this.stage.camera.position, this.camDir, false);
         this.lighting.advanceAtmosphere(SIM.fixedStepS);
       },
       onRender: (realDtS) => this.renderFrame(realDtS),
@@ -190,23 +193,31 @@ export class Game {
         : 8;
     const anisotropy = Math.min(opts.quality === 'high' ? 8 : 4, maxAniso);
 
-    const world = await buildStage2World(
+    const world = await buildStage4Slice(
       stage.scene,
       assetLoader,
       lighting.skyUniforms,
       anisotropy,
+      opts.quality,
       (loadedBytes, totalBytes) => {
         ui.setLoadingProgress(loadedBytes, totalBytes);
       },
     );
     markStage('assets');
 
-    const camCtrl = new RtsCameraController(stage.camera, stage.renderer.domElement, bindings);
-    // Start framed on optional ?spot=<name> or default village showcase.
+    const camCtrl = new RtsCameraController(
+      stage.camera,
+      stage.renderer.domElement,
+      bindings,
+      (x, z) => world.terrain.heightAt(x, z),
+    );
+    // Start framed on optional ?spot=<name> or default Stage 4 village showcase.
     const startSpot = opts.initialSpot && BENCH_SPOTS.some((s) => s.name === opts.initialSpot) ? opts.initialSpot : 'showcase';
     camCtrl.applySpotCamera(findBenchSpot(startSpot).camera);
+    const initDir = new Vector3();
+    stage.camera.getWorldDirection(initDir);
     lighting.followCamera(stage.camera.position);
-    world.update(0, stage.camera.position, true);
+    world.update(0, stage.camera.position, initDir, true);
     stage.updateSunShafts(lighting.state.sunDirection, lighting.state.config.sunShaftStrength, lighting.state.sunRgb);
     markStage('scene');
 
@@ -252,8 +263,9 @@ export class Game {
     window.__debug = {
       place: (v) => {
         this.camCtrl.place(v);
+        this.stage.camera.getWorldDirection(this.camDir);
         this.lighting.followCamera(this.stage.camera.position);
-        this.world.update(0, this.stage.camera.position, true);
+        this.world.update(0, this.stage.camera.position, this.camDir, true);
         this.stage.updateSunShafts(
           this.lighting.state.sunDirection,
           this.lighting.state.config.sunShaftStrength,
@@ -262,8 +274,9 @@ export class Game {
       },
       spot: (name) => {
         this.camCtrl.applySpotCamera(findBenchSpot(name).camera);
+        this.stage.camera.getWorldDirection(this.camDir);
         this.lighting.followCamera(this.stage.camera.position);
-        this.world.update(0, this.stage.camera.position, true);
+        this.world.update(0, this.stage.camera.position, this.camDir, true);
         this.stage.updateSunShafts(
           this.lighting.state.sunDirection,
           this.lighting.state.config.sunShaftStrength,
@@ -291,6 +304,7 @@ export class Game {
         loadTotalS: this.loadTotalS,
         lods: this.world.getLodSummary(),
         shadows: this.lighting.getShadowInfo(),
+        sliceMetrics: this.world.getSliceMetrics(),
         benchResult: this.lastBenchResult,
       }),
       renderer: this.stage.renderer,
@@ -395,14 +409,15 @@ export class Game {
     this.loop.paused = true;
     this.governor.enabled = false;
     this.governor.reset();
-    const title = `Marchland Stage 3 · ${this.stage.backendName} · ${this.stage.quality.toUpperCase()} · ${this.lighting.state.presetId}`;
+    const title = `Marchland Stage 4 · ${this.stage.backendName} · ${this.stage.quality.toUpperCase()} · ${this.lighting.state.presetId}`;
     this.benchSession = new BenchSession(
       BENCH_SPOTS,
       title,
       (spot) => {
         this.camCtrl.applySpotCamera(spot.camera);
+        this.stage.camera.getWorldDirection(this.camDir);
         this.lighting.followCamera(this.stage.camera.position);
-        this.world.update(0, this.stage.camera.position, true);
+        this.world.update(0, this.stage.camera.position, this.camDir, true);
         this.stage.updateSunShafts(
           this.lighting.state.sunDirection,
           this.lighting.state.config.sunShaftStrength,
@@ -439,8 +454,9 @@ export class Game {
       this.camCtrl.update(realDtS);
       this.governor.update(realDtS);
     }
+    this.stage.camera.getWorldDirection(this.camDir);
     this.lighting.followCamera(this.stage.camera.position);
-    this.world.update(0, this.stage.camera.position, true);
+    this.world.update(0, this.stage.camera.position, this.camDir, true);
     this.stage.updateSunShafts(
       this.lighting.state.sunDirection,
       this.lighting.state.config.sunShaftStrength,

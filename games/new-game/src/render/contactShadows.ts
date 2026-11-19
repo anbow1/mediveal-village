@@ -70,7 +70,11 @@ export class ContactShadowBatch {
   }
 
   /** Compiles all registered contact shadows into a single merged Mesh (1 draw call). */
-  build(uGlobalGain: FloatUniform, yOffsetM = 0.012): Mesh {
+  build(
+    uGlobalGain: FloatUniform,
+    yOffsetM = 0.015,
+    heightAt: (x: number, z: number) => number = () => 0,
+  ): Mesh {
     const positions: number[] = [];
     const uvs: number[] = [];
     const params: number[] = [];
@@ -80,22 +84,34 @@ export class ContactShadowBatch {
     for (const q of this.specs) {
       const c = Math.cos(q.yawRad);
       const s = Math.sin(q.yawRad);
-      const corners: readonly [number, number, number, number][] = [
-        [-q.halfW, -q.halfD, 0, 0],
-        [q.halfW, -q.halfD, 1, 0],
-        [q.halfW, q.halfD, 1, 1],
-        [-q.halfW, q.halfD, 0, 1],
-      ];
-      for (const [lx, lz, u, v] of corners) {
-        const wx = q.x + lx * c + lz * s;
-        const wz = q.z - lx * s + lz * c;
-        positions.push(wx, yOffsetM, wz);
-        uvs.push(u, v);
-        params.push(q.strength, q.shape, q.inner);
+      // Subdivide larger footprints (buildings & tree canopies) into 2x2 cells so they hug terrain slopes smoothly.
+      const divs = q.halfW > 2.2 || q.halfD > 2.2 ? 2 : 1;
+      const stride = divs + 1;
+      for (let iz = 0; iz <= divs; iz++) {
+        const v = iz / divs;
+        const lz = -q.halfD + v * q.halfD * 2;
+        for (let ix = 0; ix <= divs; ix++) {
+          const u = ix / divs;
+          const lx = -q.halfW + u * q.halfW * 2;
+          const wx = q.x + lx * c + lz * s;
+          const wz = q.z - lx * s + lz * c;
+          const wy = heightAt(wx, wz) + yOffsetM;
+          positions.push(wx, wy, wz);
+          uvs.push(u, v);
+          params.push(q.strength, q.shape, q.inner);
+        }
       }
-      // CCW winding facing +Y so front-face culling shows from above.
-      indices.push(vBase, vBase + 3, vBase + 2, vBase, vBase + 2, vBase + 1);
-      vBase += 4;
+      // CCW winding facing +Y so front-face culling shows cleanly from above.
+      for (let iz = 0; iz < divs; iz++) {
+        for (let ix = 0; ix < divs; ix++) {
+          const i00 = vBase + iz * stride + ix;
+          const i10 = i00 + 1;
+          const i01 = i00 + stride;
+          const i11 = i01 + 1;
+          indices.push(i00, i01, i11, i00, i11, i10);
+        }
+      }
+      vBase += stride * stride;
     }
 
     const geo = new BufferGeometry();

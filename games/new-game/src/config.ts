@@ -270,6 +270,6 @@ export const BENCH = {
   settleFrames: 45,
   sampleFrames: 120,
   /** Shortened counts when running `?bench&fast` on software GPUs. */
-  fastSettleFrames: 6,
-  fastSampleFrames: 12,
+  fastSettleFrames: 3,
+  fastSampleFrames: 5,
 } as const;

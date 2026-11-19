@@ -1,0 +1,136 @@
+{
+  "title": "Marchland Stage 4 · WebGPU · HIGH · lateAutumn",
+  "rows": [
+    {
+      "spot": "showcase",
+      "fps": 25,
+      "p95Ms": 66.7,
+      "cpuMs": 25.98,
+      "drawCalls": 256,
+      "triangles": 420813,
+      "gpuMs": null,
+      "gpu": {}
+    },
+    {
+      "spot": "building",
+      "fps": 33,
+      "p95Ms": 33.4,
+      "cpuMs": 22.86,
+      "drawCalls": 201,
+      "triangles": 478285,
+      "gpuMs": null,
+      "gpu": {}
+    },
+    {
+      "spot": "unit",
+      "fps": 33,
+      "p95Ms": 33.4,
+      "cpuMs": 21.08,
+      "drawCalls": 193,
+      "triangles": 472104,
+      "gpuMs": null,
+      "gpu": {}
+    },
+    {
+      "spot": "calibration",
+      "fps": 43,
+      "p95Ms": 33.4,
+      "cpuMs": 19.42,
+      "drawCalls": 196,
+      "triangles": 375441,
+      "gpuMs": null,
+      "gpu": {}
+    },
+    {
+      "spot": "town",
+      "fps": 37,
+      "p95Ms": 33.4,
+      "cpuMs": 21.54,
+      "drawCalls": 257,
+      "triangles": 412103,
+      "gpuMs": null,
+      "gpu": {}
+    },
+    {
+      "spot": "rally",
+      "fps": 43,
+      "p95Ms": 33.3,
+      "cpuMs": 18.46,
+      "drawCalls": 276,
+      "triangles": 426483,
+      "gpuMs": null,
+      "gpu": {}
+    },
+    {
+      "spot": "field",
+      "fps": 43,
+      "p95Ms": 33.3,
+      "cpuMs": 15.6,
+      "drawCalls": 254,
+      "triangles": 401493,
+      "gpuMs": null,
+      "gpu": {}
+    },
+    {
+      "spot": "close",
+      "fps": 23,
+      "p95Ms": 100,
+      "cpuMs": 18.1,
+      "drawCalls": 253,
+      "triangles": 476616,
+      "gpuMs": null,
+      "gpu": {}
+    },
+    {
+      "spot": "enemy",
+      "fps": 19,
+      "p95Ms": 100,
+      "cpuMs": 3196.5,
+      "drawCalls": 204,
+      "triangles": 510702,
+      "gpuMs": null,
+      "gpu": {}
+    },
+    {
+      "spot": "overview",
+      "fps": 12,
+      "p95Ms": 100,
+      "cpuMs": 3692.7,
+      "drawCalls": 179,
+      "triangles": 374717,
+      "gpuMs": null,
+      "gpu": {}
+    },
+    {
+      "spot": "ground_045m",
+      "fps": 10,
+      "p95Ms": 100,
+      "cpuMs": 5172.08,
+      "drawCalls": 207,
+      "triangles": 491234,
+      "gpuMs": 4197.64,
+      "gpu": {
+        "scene": 3421.62,
+        "shadows": 153.61,
+        "post": 612.98,
+        "other": 9.43
+      }
+    },
+    {
+      "spot": "eye_170m",
+      "fps": 10,
+      "p95Ms": 100,
+      "cpuMs": 3801.64,
+      "drawCalls": 270,
+      "triangles": 526443,
+      "gpuMs": 4197.64,
+      "gpu": {
+        "scene": 3421.62,
+        "shadows": 153.61,
+        "post": 612.98,
+        "other": 9.43
+      }
+    }
+  ],
+  "text": "Marchland Stage 4 · WebGPU · HIGH · lateAutumn\nspot            fps  p95ms  cpu  calls  Mtris  gpu ms (per pass)\nshowcase         25   66.7 26.0    256   0.42  n/a\nbuilding         33   33.4 22.9    201   0.48  n/a\nunit             33   33.4 21.1    193   0.47  n/a\ncalibration      43   33.4 19.4    196   0.38  n/a\ntown             37   33.4 21.5    257   0.41  n/a\nrally            43   33.3 18.5    276   0.43  n/a\nfield            43   33.3 15.6    254   0.40  n/a\nclose            23  100.0 18.1    253   0.48  n/a\nenemy            19  100.0 3196.5    204   0.51  n/a\noverview         12  100.0 3692.7    179   0.37  n/a\nground_045m      10  100.0 5172.1    207   0.49  4197.6 (scene 3421.6, shadows 153.6, post 613.0, other 9.4)\neye_170m         10  100.0 3801.6    270   0.53  4197.6 (scene 3421.6, shadows 153.6, post 613.0, other 9.4)"
+}
