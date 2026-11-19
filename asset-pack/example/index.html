@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="pl">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Marchland — assety</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #9fb6cc; overflow: hidden; font: 14px/1.4 system-ui, sans-serif; }
+      canvas { display: block; }
+      #panel { position: fixed; top: 10px; left: 10px; padding: 10px 12px; border-radius: 8px; background: rgba(20, 24, 32, 0.85); color: #f1ead8; max-width: 360px; }
+      #panel select, #panel button { font: inherit; margin: 2px 0; }
+      #panel h1 { font-size: 16px; margin: 0 0 6px; }
+    </style>
+    <!-- three.js r186 from ../vendor (works offline); 'three' is the WebGPU build. -->
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "../vendor/three/build/three.webgpu.js",
+          "three/webgpu": "../vendor/three/build/three.webgpu.js",
+          "three/tsl": "../vendor/three/build/three.tsl.js",
+          "three/addons/": "../vendor/three/examples/jsm/"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <div id="panel">
+      <h1>Marchland — assety</h1>
+      <div>Model: <select id="model"></select></div>
+      <div>Klip: <select id="clip"></select></div>
+      <div id="info"></div>
+      <div style="opacity: 0.7">Lewy przycisk: obrót · kółko: zoom · prawy: przesuwanie</div>
+    </div>
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>
