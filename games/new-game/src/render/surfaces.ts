@@ -203,8 +203,19 @@ function createVillageGroundMaterial(
   const dirtCol = dirtAlb.mul(vec3(1.26, 1.14, 0.96)).mul(mix(float(0.88), float(1.10), macroB));
   const cobbleCol = cobbleAlb.mul(mix(float(0.92), float(1.08), macroB));
 
-  const grassDirtCol = mix(grassCol, dirtCol, dirtMask);
-  const finalCol = mix(grassDirtCol, cobbleCol, cobbleMask);
+  // Wet silt bank hugging the organic meadow pond at (-9.4, -0.4) (playbook §6aa: water needs a wet bank).
+  const pondLpX = wp.x.add(9.4).div(3.4);
+  const pondLpY = wp.y.add(0.4).div(-2.25);
+  const pondEdgeWarp = sin(pondLpX.mul(3.1).add(pondLpY.mul(2.4)).add(0.5))
+    .mul(0.11)
+    .add(sin(pondLpX.mul(5.2).sub(pondLpY.mul(4.1)).add(1.5708)).mul(0.065));
+  const pondR = pondLpX.mul(pondLpX).add(pondLpY.mul(pondLpY)).sqrt().add(pondEdgeWarp);
+  const wetBankMask = float(1.0).sub(smoothstep(float(0.84), float(1.16), pondR));
+
+  const grassDirtCol = mix(grassCol, dirtCol, clamp(dirtMask.add(wetBankMask.mul(0.9)), 0.0, 1.0));
+  const dryFinalCol = mix(grassDirtCol, cobbleCol, cobbleMask);
+  // Wet silt darkens albedo ~45% and tightens roughness into damp mud sheen.
+  const finalCol = mix(dryFinalCol, dryFinalCol.mul(vec3(0.48, 0.45, 0.4)), wetBankMask);
   mat.colorNode = clamp(finalCol, vec3(0.02), vec3(0.72));
 
   const grassDirtNor = mix(grassNor, dirtNor, dirtMask);
@@ -212,8 +223,9 @@ function createVillageGroundMaterial(
   mat.normalNode = normalMap(finalNor, vec2(0.85, 0.85));
 
   const grassDirtRough = mix(grassOrm.g, dirtOrm.g, dirtMask);
-  const finalRough = mix(grassDirtRough, cobbleOrm.g, cobbleMask);
-  mat.roughnessNode = clamp(finalRough, 0.62, 0.96);
+  const dryRough = mix(grassDirtRough, cobbleOrm.g, cobbleMask);
+  const finalRough = mix(dryRough, float(0.28), wetBankMask);
+  mat.roughnessNode = clamp(finalRough, 0.25, 0.96);
   mat.metalnessNode = float(0.0);
 
   return mat;

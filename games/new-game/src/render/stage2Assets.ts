@@ -10,6 +10,7 @@ import {
   AnimationMixer,
   BoxGeometry,
   BufferGeometry,
+  CircleGeometry,
   DoubleSide,
   Float32BufferAttribute,
   Group,
@@ -41,7 +42,9 @@ import {
   type AssetManifest,
   createByteProgressTracker,
 } from './assetLoader.ts';
+import { ContactShadowBatch } from './contactShadows.ts';
 import { SHADOW_ONLY_LAYER } from './lighting.ts';
+import { createCalmWaterMaterial, type PhysicalSkyUniforms } from './sky.ts';
 import { loadSurfaceLibrary, type SurfaceLibrary } from './surfaces.ts';
 
 /** World position of the Stage 1 18% grey calibration plinth (offset from the village showcase). */
@@ -266,6 +269,7 @@ function buildCalibrationRig(scene: Scene): void {
 export async function buildStage2World(
   scene: Scene,
   loader: AssetLoader,
+  skyUniforms: PhysicalSkyUniforms,
   anisotropy: number,
   onProgress: (loadedBytes: number, totalBytes: number) => void,
 ): Promise<Stage2WorldHandles> {
@@ -363,7 +367,7 @@ export async function buildStage2World(
     impostorTex: houseImpostorTex,
     impostorWidthM: 12.2,
     impostorHeightM: 12.2,
-    impostorBottomSinkM: 2.05,
+    impostorBottomSinkM: 3.25,
     skinned: false,
     castFromLod0: false,
   };
@@ -472,7 +476,7 @@ export async function buildStage2World(
         uvAttr.setY(i, 1.0 - uvAttr.getY(i));
       }
       uvAttr.needsUpdate = true;
-      geo.translate(0, tpl.impostorHeightM * 0.5 - 0.35, 0);
+      geo.translate(0, tpl.impostorHeightM * 0.5 - (tpl.impostorBottomSinkM ?? 0.35), 0);
       disposableGeos.push(geo);
       const impMat = getImpostorMaterial(tpl.impostorTex, `${kind}_ImpostorMat`);
       impNode = new Mesh(geo, impMat);
@@ -518,39 +522,80 @@ export async function buildStage2World(
     return actor;
   };
 
-  // ---------------- STAGE 2 MEDIEVAL VILLAGE YARD SHOWCASE ----------------
+  // ---------------- STAGE 2 / STAGE 3 MEDIEVAL VILLAGE YARD SHOWCASE ----------------
+  const contactBatch = new ContactShadowBatch();
+
   spawnActor('building', 'HouseL1_Hero', houseTemplate, BUILDING_LOD_THRESHOLDS, [0, 0, -2.6], 0.0, 1.0);
+  contactBatch.addRect(0, -2.6, 8.2, 5.6, 0.0, 1.0, 0.95);
 
   spawnActor('unit', 'Swordsman_Hero', unitTemplate, UNIT_LOD_THRESHOLDS, [2.2, 0, 3.85], -0.32, 1.0, {
     clipName: 'idle',
     phaseOffsetS: 0.2,
     speed: 0.9,
   });
+  contactBatch.addDisc(2.2, 3.85, 0.62, 0.85, 0.26);
 
   spawnActor('unit', 'Swordsman_GuardA', unitTemplate, UNIT_LOD_THRESHOLDS, [5.1, 0, 2.55], -0.58, 1.0, {
     clipName: 'idle',
     phaseOffsetS: 1.1,
     speed: 0.85,
   });
+  contactBatch.addDisc(5.1, 2.55, 0.62, 0.85, 0.26);
+
   spawnActor('unit', 'Swordsman_GuardB', unitTemplate, UNIT_LOD_THRESHOLDS, [-4.9, 0, 3.65], 0.42, 1.0, {
     clipName: 'walk',
     phaseOffsetS: 0.4,
     speed: 0.72,
   });
+  contactBatch.addDisc(-4.9, 3.65, 0.62, 0.85, 0.26);
 
   spawnActor('tree', 'Oak_West', oakTemplate, TREE_LOD_THRESHOLDS, [-7.2, 0, -3.8], 0.65, 1.02);
+  contactBatch.addDisc(-7.2, -3.8, 1.35, 0.92, 0.3);
+  contactBatch.addDisc(-7.2, -3.8, 4.5, 0.36, 0.22);
+
   spawnActor('tree', 'Oak_East', oakTemplate, TREE_LOD_THRESHOLDS, [8.4, 0, -4.6], 2.35, 0.94);
+  contactBatch.addDisc(8.4, -4.6, 1.28, 0.92, 0.3);
+  contactBatch.addDisc(8.4, -4.6, 4.2, 0.36, 0.22);
 
   spawnActor('prop', 'Barrel_PorchA', barrelTemplate, PROP_LOD_THRESHOLDS, [-3.35, 0, 1.48], 0.4, 1.0);
+  contactBatch.addDisc(-3.35, 1.48, 0.56, 0.95, 0.42);
   spawnActor('prop', 'Barrel_PorchB', barrelTemplate, PROP_LOD_THRESHOLDS, [-4.05, 0, 1.16], 1.85, 0.96);
+  contactBatch.addDisc(-4.05, 1.16, 0.54, 0.95, 0.42);
   spawnActor('prop', 'Barrel_PorchC', barrelTemplate, PROP_LOD_THRESHOLDS, [-3.52, 0, 0.68], 3.1, 1.03);
+  contactBatch.addDisc(-3.52, 0.68, 0.58, 0.95, 0.42);
 
-  // Distant hamlet (> 118 m north-west) so town/overview cameras exercise LOD2 & >100 m matte impostors live
+  // Midground farmstead (~65 m north-east) exercising CSM Cascade 1 (27..96 m) live
+  spawnActor('building', 'HouseL1_Midground', houseTemplate, BUILDING_LOD_THRESHOLDS, [34, 0, -56], -0.45, 1.0);
+  contactBatch.addRect(34, -56, 8.2, 5.6, -0.45, 0.9, 0.95);
+  spawnActor('tree', 'Oak_Midground', oakTemplate, TREE_LOD_THRESHOLDS, [25, 0, -52], 1.7, 1.04);
+  contactBatch.addDisc(25, -52, 4.4, 0.36, 0.25);
+
+  // Distant hamlet (> 118 m north-west) exercising CSM Cascade 2 (96..320 m) & >100 m matte impostors live
   spawnActor('building', 'HouseL1_Distant', houseTemplate, BUILDING_LOD_THRESHOLDS, [-54, 0, -114], 0.35, 1.0);
+  contactBatch.addRect(-54, -114, 8.2, 5.6, 0.35, 0.85, 0.95);
   spawnActor('tree', 'Oak_DistantA', oakTemplate, TREE_LOD_THRESHOLDS, [-64, 0, -118], 1.2, 1.05);
   spawnActor('tree', 'Oak_DistantB', oakTemplate, TREE_LOD_THRESHOLDS, [-44, 0, -112], 4.1, 0.92);
 
+  // Stage 3 calm meadow pond (proves unified sky dome = PMREM = height fog = water reflection)
+  const pondGeo = new CircleGeometry(1, 40);
+  const pondMat = createCalmWaterMaterial(skyUniforms);
+  const pondMesh = new Mesh(pondGeo, pondMat);
+  pondMesh.name = 'VillageRainwaterPond';
+  pondMesh.rotation.x = -Math.PI / 2;
+  pondMesh.scale.set(3.4, 2.25, 1);
+  pondMesh.position.set(-9.4, 0.02, -0.4);
+  pondMesh.castShadow = false;
+  pondMesh.receiveShadow = false;
+  pondMesh.renderOrder = 3;
+  scene.add(pondMesh);
+  disposableGeos.push(pondGeo);
+
   buildCalibrationRig(scene);
+  contactBatch.addRect(CALIBRATION_ANCHOR.x, CALIBRATION_ANCHOR.z, 11.4, 4.2, 0.0, 0.72, 0.55);
+
+  const contactShadowsMesh = contactBatch.build(skyUniforms.uContactShadowGain, 0.012);
+  scene.add(contactShadowsMesh);
+  disposableGeos.push(contactShadowsMesh.geometry as BufferGeometry);
 
   const tmpPos = new Vector3();
 
@@ -596,6 +641,8 @@ export async function buildStage2World(
   const dispose = (): void => {
     surfaces.dispose();
     shadowStandInMat.dispose();
+    pondMat.dispose();
+    (contactShadowsMesh.material as Material).dispose();
     houseImpostorTex.dispose();
     oakImpostorTex.dispose();
     for (const m of impostorMaterials.values()) m.dispose();

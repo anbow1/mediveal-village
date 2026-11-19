@@ -24,8 +24,16 @@ export interface LightingPresetConfig {
   readonly sunShaftStrength: number;
   /** Ground bounce albedo luminance factor for hemisphere/probe lower half. */
   readonly groundBounceFactor: number;
-  /** Aerial perspective extinction coefficient (1/m). */
+  /** Aerial perspective ground-level extinction coefficient (1/m). */
   readonly fogDensityPerM: number;
+  /** Exponential height-fog vertical falloff (1/m; 0.014 -> ~71 m valley mist scale height). */
+  readonly fogHeightFalloffPerM: number;
+  /** Procedural high-altitude cloud deck coverage (0..1). */
+  readonly cloudCoverage: number;
+  /** Procedural cloud edge softness (0..1; higher in overcast for smooth cloud deck). */
+  readonly cloudSoftness: number;
+  /** Ambient ground contact-shadow opacity under foundations, trunks, barrels, and boots (0..1). */
+  readonly contactShadowOpacity: number;
 }
 
 export interface QualityPresetConfig {
@@ -36,6 +44,16 @@ export interface QualityPresetConfig {
   readonly shadowCascades: number;
   /** Shadow map resolution per cascade (px). */
   readonly shadowMapSizePx: number;
+  /** Maximum CSM shadow distance from camera (m). */
+  readonly shadowMaxFarM: number;
+  /** Practical-logarithmic split blend lambda (0 = uniform, 1 = logarithmic). */
+  readonly shadowSplitLambda: number;
+  /** Extra light-space frustum pull-back margin so behind-camera hills/trees cast cleanly (m). */
+  readonly shadowLightMarginM: number;
+  /** Base cascade-0 depth bias (CSMShadowNode scales by i + 1 across cascades). */
+  readonly shadowBias: number;
+  /** World-space normal offset bias to prevent shadow acne on sloping masonry & timber (m). */
+  readonly shadowNormalBias: number;
   /** TRAA enabled on every preset (GUIDE.md §2b, §4, §7). */
   readonly traaEnabled: boolean;
   /** CAS-style sharpen amount after tone map + sRGB (~0.30 High, ~0.25 Low). */
@@ -125,14 +143,18 @@ export const LIGHTING_PRESETS: Record<LightingPresetId, LightingPresetConfig> = 
   clearNoon: {
     id: 'clearNoon',
     sunIlluminanceLux: 100_000,
-    skyIlluminanceLux: 18_000,
+    skyIlluminanceLux: 22_000,
     sunKelvin: 5500,
     skyKelvin: 10_000,
     sunElevationDeg: 65,
     sunAzimuthDeg: 35,
     sunShaftStrength: 0.15,
-    groundBounceFactor: 0.22,
-    fogDensityPerM: 0.00055,
+    groundBounceFactor: 0.28,
+    fogDensityPerM: 0.0006,
+    fogHeightFalloffPerM: 0.013,
+    cloudCoverage: 0.28,
+    cloudSoftness: 0.34,
+    contactShadowOpacity: 0.34,
   },
   lateAutumn: {
     id: 'lateAutumn',
@@ -144,8 +166,12 @@ export const LIGHTING_PRESETS: Record<LightingPresetId, LightingPresetConfig> = 
     sunElevationDeg: 30,
     sunAzimuthDeg: 48,
     sunShaftStrength: 0.42,
-    groundBounceFactor: 0.24,
-    fogDensityPerM: 0.00085,
+    groundBounceFactor: 0.26,
+    fogDensityPerM: 0.00105,
+    fogHeightFalloffPerM: 0.014,
+    cloudCoverage: 0.42,
+    cloudSoftness: 0.4,
+    contactShadowOpacity: 0.4,
   },
   goldenHour: {
     id: 'goldenHour',
@@ -156,21 +182,29 @@ export const LIGHTING_PRESETS: Record<LightingPresetId, LightingPresetConfig> = 
     sunElevationDeg: 12,
     sunAzimuthDeg: 65,
     sunShaftStrength: 0.72,
-    groundBounceFactor: 0.2,
-    fogDensityPerM: 0.0012,
+    groundBounceFactor: 0.24,
+    fogDensityPerM: 0.00155,
+    fogHeightFalloffPerM: 0.015,
+    cloudCoverage: 0.46,
+    cloudSoftness: 0.44,
+    contactShadowOpacity: 0.4,
   },
   overcast: {
     id: 'overcast',
-    // Overcast keeps ~15 % directional fill (GUIDE.md §2b: never pure blue-violet shadow).
-    sunIlluminanceLux: 1_200,
-    skyIlluminanceLux: 8_000,
-    sunKelvin: 6200,
-    skyKelvin: 7000,
+    // Overcast keeps ~19 % directional sky-break key light (GUIDE.md §2b: never pure blue-violet shadow).
+    sunIlluminanceLux: 2_000,
+    skyIlluminanceLux: 8_500,
+    sunKelvin: 6100,
+    skyKelvin: 6800,
     sunElevationDeg: 48,
     sunAzimuthDeg: 40,
     sunShaftStrength: 0.0,
-    groundBounceFactor: 0.28,
-    fogDensityPerM: 0.0014,
+    groundBounceFactor: 0.3,
+    fogDensityPerM: 0.0018,
+    fogHeightFalloffPerM: 0.012,
+    cloudCoverage: 0.88,
+    cloudSoftness: 0.78,
+    contactShadowOpacity: 0.48,
   },
 };
 
@@ -180,6 +214,11 @@ export const QUALITY_PRESETS: Record<QualityPreset, QualityPresetConfig> = {
     maxDpr: 2,
     shadowCascades: 3,
     shadowMapSizePx: 2048,
+    shadowMaxFarM: 320,
+    shadowSplitLambda: 0.68,
+    shadowLightMarginM: 160,
+    shadowBias: -0.00018,
+    shadowNormalBias: 0.022,
     traaEnabled: true,
     sharpenStrength: 0.3,
     sunShaftSamples: 24,
@@ -192,6 +231,11 @@ export const QUALITY_PRESETS: Record<QualityPreset, QualityPresetConfig> = {
     maxDpr: 2,
     shadowCascades: 2,
     shadowMapSizePx: 1024,
+    shadowMaxFarM: 200,
+    shadowSplitLambda: 0.62,
+    shadowLightMarginM: 130,
+    shadowBias: -0.00028,
+    shadowNormalBias: 0.044,
     traaEnabled: true,
     sharpenStrength: 0.25,
     sunShaftSamples: 0,

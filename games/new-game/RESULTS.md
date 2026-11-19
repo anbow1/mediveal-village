@@ -2,7 +2,56 @@
 
 > Newest entries first (`GUIDE.md` §1, §6). Every measurement includes date, commit, exact method (script, preset, view, alternating before/after runs), Before | After table (pipelines, draw calls / triangles, texture memory, ready / GPU idle, build size), screenshot comparison crops in `games/new-game/results/<date>/`, and the decision + number behind it. Reverted attempts are logged too.
 
-## 2026-11-19 · Stage 2 — Asset pipeline, Blender 4.2 hero assets, KTX2/Meshopt & live verification (working tree)
+## 2026-11-19 · Stage 3 — Light & atmosphere: CSM, unified physical sky/fog/probe/water, contact shadows & 4-preset EV100 calibration (base `091266c`, pushed to `main`)
+
+- **Measured how:** Production build (`vite build --base ./`, `17 MB` total) served via `tools/measure/serve.mjs games/new-game/dist 8765`. Headless Chrome (`/usr/bin/google-chrome`, SwiftShader Vulkan WebGPU + ANGLE SwiftShader WebGL2), strictly one browser process at a time:
+  1. **`tools/measure/load.mjs --game generic --hide-features texture-compression-astc,texture-compression-etc2`** on High (`&q=high`) and Low (`&q=low`) — verifying BC7 textures, 0 uncompressed uploads, exact pipeline/module/RT counts, and GPU-idle load time.
+  2. **Stage 3 full visual, CSM & calibration suite (`verify-stage3.mjs`, `960×540`):**
+     - WebGPU High (3-cascade 2048² CSM `maxFar 320 m`, `fade = true`): 18% grey calibration cube across **all 4 presets** (`clearNoon`, `lateAutumn`, `goldenHour`, `overcast`), showcase across **all 4 presets**, dedicated `sunset_unity` view looking across the organic wet-banked meadow pond into the low golden-hour sun + clouds + sun shafts, `building`, `unit`, `ground_045m`, `eye_170m`, `town` (showing Cascade 0 foreground + Cascade 1 65 m midground farmstead + CalibrationRig simultaneously), and `overview` (height fog clarity at 460 m), plus runtime pipeline tracer across all 4 preset switches, views, viewport resize (`csm.updateFrustums()`), and `step(1.0)`.
+     - WebGPU Low (2-cascade 1024² CSM `maxFar 200 m`, `fade = true`): showcase (`lateAutumn`, `goldenHour`, `overcast`), `town`, and pipeline tracer.
+     - WebGL2 High fallback: showcase (`lateAutumn`, `goldenHour`) and calibration (`clearNoon`, `overcast`) parity checks vs WebGPU High.
+  3. **Full 12-spot benchmarks (`?autostart&debug&bench&fast`, WebGPU `--disable-vulkan-surface`)** on High and Low → `stage3-bench-{high,low}.json`.
+- **Stage 3 Before (Stage 2) | After (Stage 3) table:**
+
+| Metric | Before — Stage 2 High (Low) | After — Stage 3 High (WebGPU) | After — Stage 3 Low (WebGPU) | Notes |
+|---|---|---|---|---|
+| Shadow system | 1 fixed ortho frustum (`±42 m`) | **3-cascade CSM (`2048²`, `320 m`, `fade`)** | **2-cascade CSM (`1024²`, `200 m`, `fade`)** | Practical-log splits (`27 / 96 / 320 m` High, `46 / 200 m` Low); R7 layer-1 stand-ins preserved across all cascades |
+| Pipelines (total / after load) | `34 / 0` (`34 / 0`) | **`36 / 0`** (55 shader modules) | **`36 / 0`** (55 shader modules) | +2 (`GroundContactShadows`, `MarchlandCalmWaterMaterial`); tracer: **0 new** across 4 presets, views & resize |
+| Draw calls / frame | `29–43` (`29–43`) | **`27–75`** (`74` showcase, `52` overview) | **`27–62`** (`59` showcase, `36` overview) | Multi-cascade shadow draws + 1 contact-shadow batch + 1 meadow pond + 2 Cascade-1 farmstead actors |
+| Triangles / frame | `43 849 → 15 381 → 8 713` | **`63 159` close → `19 568` town → `9 359` overview** | **`50k → 18.5k → 9k`** | Live LOD0→1→2→impostor cuts tris by **−85%** |
+| Uploaded texture VRAM | `20.7 MB` (100% BC7) | **`20.7 MB`** (15 textures, **100% BC7**) | **`20.7 MB`** (15 textures, **100% BC7**) | **`image uploads: 0, 0.00 s`** (procedural clouds, height fog, water ripples & contact shadows add 0 textures) |
+| Render-target VRAM | `61.6 MB` (`37.6 MB`) | **`125.6 MB`** (34 targets) | **`45.6 MB`** (32 targets) | +64 MB High (3×2048² CSM) / +8 MB Low (2×1024² CSM); single persistent 128² PMREM target reused in-place |
+| Load (ready / GPU idle, SwiftShader) | `5.1 s / 14.0 s` (`10.5 s / 15.5 s`) | **`4.7 s / 13.5 s`** (`[load] total: 3.40 s`) | **`5.0 s / 12.9 s`** (`[load] total: 4.17 s`) | Both High and Low GPU-idle faster than Stage 2; **0 console/page errors** |
+| Production build size (`dist/`) | `17 MB` | **`17 MB`** (`1.17 MB` JS / `334 KB` gzip) | same | Unchanged disk footprint (well below 80 MB ceiling) |
+| GPU ms per pass (SwiftShader, `ground_045m`) | `699.0 ms` (`697.3 ms`) | **`674.5 ms`** (scene `476.4`, **shadows `33.2`**, post `164.9`) | **`582.0 ms`** (scene `411.8`, **shadows `10.5`**, post `159.7`) | Low 2-cascade 1024² CSM shadows are **−68% cheaper** than High; total frame faster than Stage 2 |
+
+- **4-Preset 18% Grey Calibration Cube & Shadow Underside Verification (`960×540`, Frostbite EV100 ±0.15 stop target):**
+
+| Preset (Lux / Elev / Kelvin) | Anchor EV100 | 18% Cube Top sRGB | Exposure Δ vs Ref | Plaster Top sRGB | Showcase `dark 5%` RGB (Undersides) | Sky Zenith / Hue Check |
+|---|---|---|---|---|---|---|
+| **Clear Noon** (`100 klx + 22 klx`, `65°`, `5500 K`) | `15.46` | `[108.0, 104.0, 107.0]` | **`+0.01 stops`** | `[194.0, 190.0, 189.0]` | `[16.7, 12.4, 11.6]` (`p05 = 21.2`) | Crisp cerulean sky + clouds |
+| **Late Autumn** (`45 klx + 11 klx`, `30°`, `4400 K`) | `13.71` | `[115.9, 103.0, 104.0]` | **`+0.03 stops`** | `[199.0, 188.0, 185.0]` | `[34.5, 29.3, 25.8]` (`p05 = 37.1`) | Warm autumn haze + long CSM |
+| **Golden Hour** (`12 klx + 4.5 klx`, `12°`, `3200 K`) | `11.45` | `[119.0, 100.0, 104.7]` | **`−0.01 stops`** | `[199.0, 183.0, 184.0]` | `[56.0, 41.5, 36.3]` (`p05 = 53.1`) | Unified amber sun/fog/pond/shafts |
+| **Overcast** (`2 klx + 8.5 klx`, `48°`, `6100 K`) | `11.96` | `[105.2, 102.8, 104.4]` | **`−0.04 stops`** | `[185.8, 183.1, 181.6]` | `[51.9, 43.9, 41.2]` (`p05 = 52.6`) | Bright neutral cloud deck, 0 purple cast |
+
+  - **WebGL2 fallback parity (`960×540`):** **Exact `0.0 / 255` diff** on 18% grey cube top and lime plaster at both `clearNoon` and `overcast`; showcase mean abs pixel diff `3.00 / 255` WebGPU vs WebGL2 (`2.56 / 255` High vs Low — sky, fog, ground, and static cottage pitch-black in `|diff|×8`, with differences confined to animated swordsman walk & water ripple phase).
+- **Comparison crops & JPEGs (`games/new-game/results/2026-11-19/`):**
+  - `stage3-all-4-presets.jpg` (Clear Noon | Late Autumn | Golden Hour | Overcast showcase side-by-side).
+  - `stage3-calibration-4-presets.jpg` (18% grey calibration cube & steel probe sphere across all 4 presets).
+  - `stage3-before-after-strip.jpg` (Stage 2 vs Stage 3 Showcase & Golden Hour comparison).
+  - `stage3-high-low-webgl2-diff8.jpg` (WebGPU High | WebGPU Low | WebGL2 High | `|WebGPU−WebGL2| × 8`).
+  - `stage3-high-sunset-unity.jpg` (Golden Hour looking across wet-banked meadow pond into sun, shafts, horizon haze, and reflected sky).
+  - `stage3-high-{showcase,noon,golden,overcast,building,unit,ground-045m,eye-170m,town,overview}.jpg`, `stage3-low-showcase.jpg`, `stage3-webgl2-showcase.jpg`.
+  - Raw JSON: `stage3-load-{high,low}.json`, `stage3-bench-{high,low}.json`.
+- **Issues caught & fixed during live Stage 3 visual inspection (all verified after fix):**
+  1. **Overcast +0.20 stop exposure drift & harsh clear-noon shadow crush:** First live pass measured `overcast` top at `+0.20 stops` (cloudy PMREM upper dome was brighter than clear sky) and `clearNoon` showcase `dark 5%` at `[11.9, 9.0, 8.4]`. Tuned `overcast` `hemiShare = 0.22`, raised `clearNoon` `skyIlluminanceLux` to `22 000 lx` (`NUMBERS.md` clear sky range) with richer warm soil ground bounce (`groundBounceFactor = 0.28`, PMREM bounce `× 0.31/0.26/0.18`), locking all 4 presets to **±0.04 stops** and lifting `clearNoon` `dark 5%` to `[16.7, 12.4, 11.6]`.
+  2. **Geometric oval corner pond → organic wet-banked meadow pond (`sky.ts`, `surfaces.ts`, `stage2Assets.ts`):** First placement at `(-1.6, 8.6)` sat cropped as a soft blurry grey oval in the bottom-left of `showcase`. Relocated uncropped into the west meadow `(-9.4, 0.02, -0.4)`, added matching harmonic contour warping + crisp wet-silt shore band, darkened olive-peat water body, and boosted multi-wave animated wind ripples + Fresnel sky/cloud reflection.
+  3. **Distant cottage impostor 1.2 m float (`stage2Assets.ts`):** `impostorBottomSinkM` was still hardcoded to `0.35` instead of reading `tpl.impostorBottomSinkM` and matching `build_house.py`'s `ortho_scale = 11.4` ground margin (`3.25 m`). Fixed and visually verified flush on the ground in all 4 calibration backgrounds.
+  4. **PMREM nadir `normalize(0)` guard (`sky.ts`):** Replaced `normalize(vec3(dir.x, 0, dir.z))` with NaN-free `dot(dir.xz, uSunDir.xz)` so the straight-down cubemap pole never generates NaN artifacts in mip chains.
+  5. **GTAO reversed-depth safety:** Confirmed `docs/graphics-playbook.md` §11 r186 reversed-depth GTAO dark-face bug; implemented single-draw-call warm-earth `ContactShadowBatch` (`polygonOffsetFactor: 2` positive for reversed depth) + Cycles vertex AO + physical PMREM ground bounce so wall footings, barrels, oak root flares, and boots stay grounded in both harsh sun and diffuse overcast with zero dark-face regression.
+  6. **Unit tests:** Expanded `tests/lightingMath.test.ts` with CSM split monotonicity, height-fog Taylor continuity & 460 m overview thinning (>4× clearer than ground haze), and overcast directional-fill checks (**6 files, 20/20 passed**; all 7 `shared-src/` files verified byte-identical).
+
+## 2026-11-19 · Stage 2 — Asset pipeline, Blender 4.2 hero assets, KTX2/Meshopt & live verification (`091266c`)
 
 - **Measured how:** Production build (`vite build --base ./`, `17 MB` total, `basis_transcoder` bundled once via `import.meta.url`) served via `tools/measure/serve.mjs games/new-game/dist 8765`. Headless Chrome (`/usr/bin/google-chrome`, SwiftShader Vulkan WebGPU + ANGLE SwiftShader WebGL2), strictly one browser process at a time:
   1. **Single-texture PNG vs KTX2 benchmark** (`1024×1024 clay_plaster`, alternating `png → uastc → etc1s → png` via `tools/measure/load.mjs --hide-features texture-compression-astc,texture-compression-etc2`).

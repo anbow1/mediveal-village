@@ -240,7 +240,14 @@ export class RenderStage {
   }
 
   /** Projects sun world direction to screen UV and scales sun shaft weight by view alignment. */
-  updateSunShafts(sunDirection: Vector3, presetStrength: number): void {
+  updateSunShafts(
+    sunDirection: Vector3,
+    presetStrength: number,
+    sunRgb?: { readonly r: number; readonly g: number; readonly b: number },
+  ): void {
+    if (sunRgb) {
+      this.uSunShaftTint.value.set(sunRgb.r, sunRgb.g, sunRgb.b);
+    }
     const camForward = this.camera.getWorldDirection(this.tmpVec3);
     const alignment = camForward.dot(sunDirection);
     if (alignment <= 0.1 || presetStrength <= 0.001) {

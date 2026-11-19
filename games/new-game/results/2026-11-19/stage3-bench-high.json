@@ -1,0 +1,158 @@
+{
+  "title": "Marchland Stage 3 · WebGPU · HIGH · lateAutumn",
+  "rows": [
+    {
+      "spot": "showcase",
+      "fps": 36,
+      "p95Ms": 50,
+      "cpuMs": 9.57,
+      "drawCalls": 74,
+      "triangles": 56112,
+      "gpuMs": null,
+      "gpu": {}
+    },
+    {
+      "spot": "building",
+      "fps": 48,
+      "p95Ms": 33.4,
+      "cpuMs": 4.38,
+      "drawCalls": 74,
+      "triangles": 63159,
+      "gpuMs": null,
+      "gpu": {}
+    },
+    {
+      "spot": "unit",
+      "fps": 48,
+      "p95Ms": 33.4,
+      "cpuMs": 2.69,
+      "drawCalls": 57,
+      "triangles": 50601,
+      "gpuMs": null,
+      "gpu": {}
+    },
+    {
+      "spot": "calibration",
+      "fps": 30,
+      "p95Ms": 66.7,
+      "cpuMs": 5.38,
+      "drawCalls": 69,
+      "triangles": 8408,
+      "gpuMs": null,
+      "gpu": {}
+    },
+    {
+      "spot": "town",
+      "fps": 10,
+      "p95Ms": 100,
+      "cpuMs": 1694.02,
+      "drawCalls": 75,
+      "triangles": 19568,
+      "gpuMs": null,
+      "gpu": {}
+    },
+    {
+      "spot": "rally",
+      "fps": 12,
+      "p95Ms": 100,
+      "cpuMs": 1487.44,
+      "drawCalls": 72,
+      "triangles": 16163,
+      "gpuMs": 2105.46,
+      "gpu": {
+        "scene": 1565.42,
+        "shadows": 64.82,
+        "post": 460.8,
+        "other": 14.42
+      }
+    },
+    {
+      "spot": "field",
+      "fps": 11,
+      "p95Ms": 100,
+      "cpuMs": 1213.86,
+      "drawCalls": 27,
+      "triangles": 2948,
+      "gpuMs": 2105.46,
+      "gpu": {
+        "scene": 1565.42,
+        "shadows": 64.82,
+        "post": 460.8,
+        "other": 14.42
+      }
+    },
+    {
+      "spot": "close",
+      "fps": 11,
+      "p95Ms": 100,
+      "cpuMs": 728.51,
+      "drawCalls": 74,
+      "triangles": 63159,
+      "gpuMs": 2105.46,
+      "gpu": {
+        "scene": 1565.42,
+        "shadows": 64.82,
+        "post": 460.8,
+        "other": 14.42
+      }
+    },
+    {
+      "spot": "enemy",
+      "fps": 11,
+      "p95Ms": 100,
+      "cpuMs": 605.21,
+      "drawCalls": 40,
+      "triangles": 3640,
+      "gpuMs": 2105.46,
+      "gpu": {
+        "scene": 1565.42,
+        "shadows": 64.82,
+        "post": 460.8,
+        "other": 14.42
+      }
+    },
+    {
+      "spot": "overview",
+      "fps": 11,
+      "p95Ms": 100,
+      "cpuMs": 592.21,
+      "drawCalls": 52,
+      "triangles": 9359,
+      "gpuMs": 674.55,
+      "gpu": {
+        "scene": 476.45,
+        "shadows": 33.2,
+        "post": 164.9
+      }
+    },
+    {
+      "spot": "ground_045m",
+      "fps": 11,
+      "p95Ms": 100,
+      "cpuMs": 591.83,
+      "drawCalls": 64,
+      "triangles": 62470,
+      "gpuMs": 674.55,
+      "gpu": {
+        "scene": 476.45,
+        "shadows": 33.2,
+        "post": 164.9
+      }
+    },
+    {
+      "spot": "eye_170m",
+      "fps": 11,
+      "p95Ms": 100,
+      "cpuMs": 947.23,
+      "drawCalls": 65,
+      "triangles": 62510,
+      "gpuMs": 674.55,
+      "gpu": {
+        "scene": 476.45,
+        "shadows": 33.2,
+        "post": 164.9
+      }
+    }
+  ],
+  "text": "Marchland Stage 3 · WebGPU · HIGH · lateAutumn\nspot            fps  p95ms  cpu  calls  Mtris  gpu ms (per pass)\nshowcase         36   50.0  9.6     74   0.06  n/a\nbuilding         48   33.4  4.4     74   0.06  n/a\nunit             48   33.4  2.7     57   0.05  n/a\ncalibration      30   66.7  5.4     69   0.01  n/a\ntown             10  100.0 1694.0     75   0.02  n/a\nrally            12  100.0 1487.4     72   0.02  2105.5 (scene 1565.4, shadows 64.8, post 460.8, other 14.4)\nfield            11  100.0 1213.9     27   0.00  2105.5 (scene 1565.4, shadows 64.8, post 460.8, other 14.4)\nclose            11  100.0 728.5     74   0.06  2105.5 (scene 1565.4, shadows 64.8, post 460.8, other 14.4)\nenemy            11  100.0 605.2     40   0.00  2105.5 (scene 1565.4, shadows 64.8, post 460.8, other 14.4)\noverview         11  100.0 592.2     52   0.01  674.5 (scene 476.4, shadows 33.2, post 164.9)\nground_045m      11  100.0 591.8     64   0.06  674.5 (scene 476.4, shadows 33.2, post 164.9)\neye_170m         11  100.0 947.2     65   0.06  674.5 (scene 476.4, shadows 33.2, post 164.9)"
+}

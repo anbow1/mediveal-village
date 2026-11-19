@@ -36,7 +36,8 @@ void Game.boot({
   autoBench: params.has('bench'),
   fastBench: params.has('fast'),
   quality: parseQuality(params.get('q')),
-  lighting: parseLighting(params.get('light')),
+  lighting: parseLighting(params.get('light') ?? params.get('time')),
   toneMapping: parseToneMapping(params.get('tm')),
   lang: parseLang(params.get('lang')),
+  initialSpot: params.get('spot'),
 });

@@ -101,3 +101,66 @@ export function sunDirectionFromAngles(elevationDeg: number, azimuthDeg: number)
     z: Math.cos(az) * cosE,
   };
 }
+
+/**
+ * Practical-logarithmic CSM cascade split fractions in (0, 1] (Zhang et al. 2006).
+ * Matches `CSMShadowNode` customSplitsCallback signature (always ends with 1.0).
+ */
+export function computeCsmSplits(
+  cascades: number,
+  cameraNearM: number,
+  shadowFarM: number,
+  lambda = 0.65,
+): number[] {
+  const count = Math.max(1, Math.floor(cascades));
+  const near = Math.max(0.05, cameraNearM);
+  const far = Math.max(near + 1, shadowFarM);
+  const l = Math.max(0, Math.min(1, lambda));
+  const out: number[] = [];
+  for (let i = 1; i < count; i++) {
+    const p = i / count;
+    const logSplit = (near * Math.pow(far / near, p)) / far;
+    const uniSplit = (near + (far - near) * p) / far;
+    out.push(uniSplit + (logSplit - uniSplit) * l);
+  }
+  out.push(1.0);
+  return out;
+}
+
+/**
+ * Height-integrated exponential aerial perspective optical depth along a ray (playbook §4 #4):
+ *   tau = rho0 * d * exp(-f * h0) * (1 - exp(-f * (h1 - h0))) / (f * (h1 - h0))
+ * Keeps valley mist realistic at ground/RTS views while automatically thinning at high-altitude overview.
+ */
+export function heightFogOpticalDepth(
+  distanceM: number,
+  camHeightM: number,
+  targetHeightM: number,
+  densityPerM: number,
+  heightFalloffPerM: number,
+): number {
+  const d = Math.max(0, distanceM);
+  const rho0 = Math.max(0, densityPerM);
+  if (d <= 0 || rho0 <= 0) return 0;
+  const f = Math.max(0, heightFalloffPerM);
+  const h0 = Math.max(0, camHeightM);
+  const h1 = Math.max(0, targetHeightM);
+  if (f <= 1e-6) return rho0 * d;
+  const u = f * (h1 - h0);
+  const base = Math.exp(-f * h0);
+  const ratio = Math.abs(u) < 1e-3 ? 1 - 0.5 * u + (u * u) / 6 : (1 - Math.exp(-u)) / u;
+  return Math.max(0, rho0 * d * base * ratio);
+}
+
+/** Transmittance complement 1 - exp(-tau), clamped to maxOpacity (default 0.96). */
+export function heightFogFactor(
+  distanceM: number,
+  camHeightM: number,
+  targetHeightM: number,
+  densityPerM: number,
+  heightFalloffPerM: number,
+  maxOpacity = 0.96,
+): number {
+  const tau = heightFogOpticalDepth(distanceM, camHeightM, targetHeightM, densityPerM, heightFalloffPerM);
+  return Math.min(maxOpacity, Math.max(0, 1 - Math.exp(-tau)));
+}
