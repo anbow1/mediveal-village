@@ -60,7 +60,7 @@ samym stylu albo realistyczne CC0/CC BY.
 | „Impact Sounds” (metal, zbroja, ciosy, upadki, skała) | Kenney (kenney.nl), przez github.com/Boyquotes | CC0 1.0 | **w grze**: odgłosy walki, trafień, kul i kruszonego muru (`public/sounds`, 18 plików MP3, 116 kB) |
 | „Horse” (szkielet, chód, galop, postój, skubanie trawy) | MAXDESIGN-3D (Sketchfab) | CC BY 4.0 | **w grze**: konie jazdy, konie w stajni i konie zaprzężone do wozów (`warhorse.json`, `animalsView.ts`) |
 | „Horse” (drugi: galop, postój, upadek; 70 kości bez nazw) | MAXDESIGN-3D (Sketchfab) | CC BY 4.0 | **w grze**: tylko upadek, przeniesiony na konia jazdy (`horsefall.py`) |
-| „Medieval Castle” (mury z basztami, brama z barbakanem nad fosą, donżon na dużym dziedzińcu; 64 tys. tr., Draco + Meshopt) | Uğur Yakışık (Sketchfab) | CC BY 4.0 | twierdza misji 5 kampanii (`fortress_1.glb`, 30 tys. tr., 130 × 112 m) |
+| „Medieval Castle” (mury z basztami, brama z barbakanem nad fosą, donżon na dużym dziedzińcu; 64 tys. tr., Draco + Meshopt) | Uğur Yakışık (Sketchfab) | CC BY 4.0 | **w grze**: donżon twierdzy w misji 5 kampanii, wycięty z modelu przy wczytaniu (`fortress_1.glb`, 30 tys. tr., 130 × 112 m; jego mury i wieże zastępują mury i wieże gry, które da się burzyć) |
 | Armata, moździerz, kula | Lyskilde, ViktorKom, Uğur Yakışık (Sketchfab) | CC BY 4.0 | **w grze**: armata i moździerz (kula rysowana własna); obsługa to mieszczanie ze szkieletem |
 | Kusza | iedalton, Sketchfab | CC BY 4.0 | broń kuszników |
 | Świnia | iRahulRajput, Sketchfab | CC BY 4.0 | **w grze**: świnie chodzące po zagrodzie chlewni (`animalsView.ts`) |

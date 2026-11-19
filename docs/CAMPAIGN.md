@@ -43,6 +43,13 @@ Zasada: kampania nie dokłada nowych jednostek, budynków ani grafiki. Dokłada 
 
 ### Misja 3 — Odbicie osady
 
+> **Stan (19.11):** grywalna na *Dolinie* (`MARCHLAND_MAP=valley`, zamek w drugim miejscu): dwa grzbiety gór wzdłuż
+> drogi między zamkami (szczyt co 52 m, 175 m od osi), przełęcz przy drugim końcu, skąd idzie odsiecz. Osada to
+> wieś w środku mapy (trzy domy, 274 m od zamku), trzymana przez 5 pełnych oddziałów (miecznicy, pikinierzy,
+> halabardnicy, kusznicy, łucznicy) i wieżę z 4 kusznikami. Odsiecz (ciężka jazda, miecznicy, kusznicy) w 12.
+> minucie; jeśli zastanie osadę w rękach wroga, po 3 minutach wszystko rusza na miasto. Pomiar: 6 pełnych
+> oddziałów (112 ludzi) wygrywa 4/4 w 3–6 minut, tracąc 50–75 ludzi; 4 oddziały po 15 przegrywają 4/4.
+
 *W czasie wojny wróg zajął Twoją osadę w dolinie. Zbierz wojsko i odbij ją.*
 
 - **Mapa:** nowa, *Dolina* (§4): Twój zamek przy jednym końcu, osada 250 m dalej (zabudowania, mała
@@ -55,6 +62,11 @@ Zasada: kampania nie dokłada nowych jednostek, budynków ani grafiki. Dokłada 
 
 ### Misja 4 — Odbudowa i wielka armia
 
+> **Stan (19.11):** grywalna na tej samej mapie: osada jest Twoja (jej targ płaci), cel 160 ludzi w 10
+> oddziałach i zamek poziomu 3; zagony 2, 3 i 4 pełnych oddziałów w 8., 16. i 24. minucie idą na zamek.
+> Druga gwiazdka: wróg nie zburzy żadnego budynku. Wokół rynku osady stoi 6 ruin (3 chaty, piekarnia, młyn, targ):
+> nic nie robią, a przycisk „Odbuduj (½ ceny)” robi z nich plac budowy za połowę ceny i materiału.
+
 *Osada jest Twoja, ale w ruinach. Odbuduj ją i wystaw armię, jakiej marchia jeszcze nie widziała.*
 
 - **Mapa:** ta sama *Dolina*. Ruiny z misji 3 stoją na swoich miejscach i odbudowuje się je za połowę
@@ -66,6 +78,34 @@ Zasada: kampania nie dokłada nowych jednostek, budynków ani grafiki. Dokłada 
 - **Gwiazdka:** ani jeden budynek odbudowanej osady nie padł w zagonach.
 
 ### Misja 5 — Twierdza
+
+> **Stan (19.11):** grywalna na nowym układzie *Twierdza* (`MARCHLAND_MAP=fortress`). Zamek wroga stoi na
+> płaskowyżu (płasko do 100 m, 7 m nad równiną, bez jeziora, złóż i lasu na nim). Mury i wieże to mury gry, więc
+> da się zrobić w nich wyłom:
+> - pierścień zewnętrzny 124 × 112 m: 8 wież, brama od strony gracza;
+> - pierścień wewnętrzny 84 × 70 m: 4 wieże, brama w lewym murze (bez prostej drogi od bramy zewnętrznej);
+> - mury i bramy 2 × twardsze od zwykłych; na każdej wieży 2 kuszników.
+>
+> Donżon to środek modelu „Medieval Castle” (wycięty w kodzie, `cutOut` w `townView.ts`).
+>
+> Załoga i odsiecz:
+> - między murami: kusznicy, miecznicy, pikinierzy, halabardnicy;
+> - przy bramie wypad (ciężka jazda, miecznicy): wychodzi, gdy działo lub moździerz gracza podejdzie na 230 m,
+>   bije w działa i po 150 s wraca;
+> - na dziedzińcu gwardia: 2 oddziały ciężkiej jazdy;
+> - odsiecz w 15. minucie zza obozu gracza: ciężka jazda, miecznicy, kusznicy.
+>
+> Za murami pracuje miasto wroga (4 chaty, piekarnia, kuźnia, koszary, spichlerz, mieszkańcy): koszary co 5
+> minut wystawiają oddział (miecznicy, kusznicy, pikinierzy na zmianę), dopóki stoją; moździerz może je zburzyć.
+> Zamek wroga to donżon: zbyt mocny, żeby go burzyć, bo wojna rozstrzyga się na dziedzińcu.
+>
+> Gracz zaczyna z armią z misji 4, 2 działami i 2 moździerzami, z miastem z koszarami i ludwisarnią.
+> Wygrana: gwardia rozbita; przegrana: obóz padnie albo przez minutę nie ma żadnego oddziału. Druga gwiazdka:
+> wyłom w 10 minut i żadne działo nie stracone.
+>
+> Pomiar (bot: moździerze w mur, jeden moździerz w koszary, armaty w bramę, piechota rozbija wypad i odsiecz
+> przed murami, nie wchodząc pod wieże, potem szturmuje): pełna armia 8 × 20 wygrywa 2 z 3, tracąc 80–88 ludzi;
+> trzecia próba kończy się prawie remisem; wyłom po ok. 9 minutach.
 
 *Czas zakończyć tę wojnę pod murami jego zamku.*
 
@@ -157,6 +197,6 @@ Oba układy przydadzą się też w potyczce, więc menu „Mapa” urośnie z tr
 | Przenoszenie wojska i złota, postęp na urządzeniu (`src/ui/campaignStore.ts`), ekran końca misji | ✔ |
 | Misja 1 (trybut, pasek z odliczaniem i przyciskiem zapłaty, najeźdźca 10 × 20 za rzeką) | ✔ grywalna |
 | Misja 2 (obóz: 3 oddziały, 2 zagony wracające co 5 min) | ✔ grywalna; palisada i namioty obozu — później |
-| Misja 3 (układ *Dolina*, przejęcie osady) | do zrobienia |
-| Misja 4 (ruiny, odbudowa, zagony) | do zrobienia |
-| Misja 5 (układ *Twierdza*, mury scenariuszem, wypady, odsiecz) | model twierdzy gotowy (`fortress_1.glb`, „Medieval Castle”, Uğur Yakışık, CC BY 4.0); misja do zrobienia |
+| Misja 3 (osada: wieś w środku *Doliny*, 5 oddziałów i wieża z kusznikami, odsiecz w 12. minucie) | ✔ grywalna |
+| Misja 4 (osada Twoja, 6 ruin do odbudowy za pół ceny, cel: 160 ludzi w 10 oddziałach i zamek 3, trzy zagony) | ✔ grywalna |
+| Misja 5 (układ *Twierdza*, mury scenariuszem, wypady, odsiecz) | ✔ grywalna: płaskowyż, dwa pierścienie murów gry (12 wież, 2 bramy), donżon wycięty z `fortress_1.glb` |
