@@ -1,0 +1,65 @@
+name: Android APK (rolling release)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'games/new-game/**'
+      - '.github/workflows/android.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: games/new-game/package-lock.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Build web bundle & run tests
+        working-directory: games/new-game
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+        run: |
+          npm ci
+          npm run typecheck
+          npm test
+          npm run build
+          rm -rf android/app/src/main/assets/www
+          mkdir -p android/app/src/main/assets/www
+          cp -r dist/* android/app/src/main/assets/www/
+
+      - name: Build Android APK
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.11.1
+
+      - name: Assemble release APK
+        working-directory: games/new-game/android
+        run: gradle assembleRelease --no-daemon
+
+      # One rolling release only — never upload per-run workflow artifacts (GUIDE.md §3, §7).
+      - name: Publish to rolling release android-latest
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          APK=games/new-game/android/app/build/outputs/apk/release/app-release.apk
+          cp "$APK" marchland.apk
+          if gh release view android-latest >/dev/null 2>&1; then
+            gh release upload android-latest marchland.apk --clobber
+          else
+            gh release create android-latest marchland.apk --title "Android APK (latest)" --notes "Rolling Android build from main."
+          fi

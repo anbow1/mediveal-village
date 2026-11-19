@@ -1,0 +1,220 @@
+// Stage 2 shared KTX2 surface library (12 layers -> 3 CompressedArrayTextures: albedo, normal, orm).
+// Stays well within the WebGPU 16-texture-per-stage limit while giving buildings and ground real
+// Poly Haven CC0 photogrammetry albedo, normal, roughness, and AO maps.
+
+import {
+  CompressedArrayTexture,
+  DataArrayTexture,
+  MeshStandardNodeMaterial,
+} from 'three/webgpu';
+import {
+  abs,
+  clamp,
+  float,
+  int,
+  mix,
+  normalMap,
+  positionWorld,
+  round,
+  sin,
+  smoothstep,
+  texture,
+  uv,
+  vec2,
+  vec3,
+  vertexColor,
+} from 'three/tsl';
+import type { AssetLoader, ByteProgressTracker } from './assetLoader.ts';
+
+export const SURFACE_LAYERS = [
+  'grass',    // 0: forrest_ground_01
+  'dirt',     // 1: brown_mud_03
+  'cobble',   // 2: cobblestone_02
+  'plaster',  // 3: clay_plaster
+  'beam',     // 4: dark_wood
+  'boards',   // 5: oak_wood_planks
+  'thatch',   // 6: reed_roof_04
+  'shingles', // 7: roof_slates_02
+  'rubble',   // 8: medieval_blocks_03
+  'ashlar',   // 9: castle_brick_02_white
+  'bark',     // 10: jolcham_oak_bark_01
+  'linen',    // 11: rough_linen
+] as const;
+
+export type SurfaceLayerName = (typeof SURFACE_LAYERS)[number];
+
+export interface SurfaceLibrary {
+  readonly albedoArray: CompressedArrayTexture | DataArrayTexture;
+  readonly normalArray: CompressedArrayTexture | DataArrayTexture;
+  readonly ormArray: CompressedArrayTexture | DataArrayTexture;
+  readonly buildingMaterial: MeshStandardNodeMaterial;
+  readonly groundMaterial: MeshStandardNodeMaterial;
+  dispose(): void;
+}
+
+/**
+ * Loads the 12-layer KTX2 surface library into 3 GPU texture arrays and compiles the shared
+ * TSL building material (UV0 box-projected, UV1.x = layer/15, 1-UV1.y = iron metal flag, COLOR_0 = Cycles AO)
+ * and dual-scale medieval village ground material (grass + yard dirt + cobbled lane).
+ */
+export async function loadSurfaceLibrary(
+  loader: AssetLoader,
+  anisotropy: number,
+  tracker?: ByteProgressTracker,
+): Promise<SurfaceLibrary> {
+  const albedoUrls = SURFACE_LAYERS.map((id) => `assets/surfaces/${id}_albedo.ktx2`);
+  const normalUrls = SURFACE_LAYERS.map((id) => `assets/surfaces/${id}_normal.ktx2`);
+  const ormUrls = SURFACE_LAYERS.map((id) => `assets/surfaces/${id}_orm.ktx2`);
+
+  const [albedoArray, normalArray, ormArray] = await Promise.all([
+    loader.loadKtx2Array(albedoUrls, true, anisotropy, tracker),
+    loader.loadKtx2Array(normalUrls, false, anisotropy, tracker),
+    loader.loadKtx2Array(ormUrls, false, anisotropy, tracker),
+  ]);
+
+  const buildingMaterial = createBuildingSurfaceMaterial(albedoArray, normalArray, ormArray);
+  const groundMaterial = createVillageGroundMaterial(albedoArray, normalArray, ormArray);
+
+  return {
+    albedoArray,
+    normalArray,
+    ormArray,
+    buildingMaterial,
+    groundMaterial,
+    dispose() {
+      buildingMaterial.dispose();
+      groundMaterial.dispose();
+      albedoArray.dispose();
+      normalArray.dispose();
+      ormArray.dispose();
+    },
+  };
+}
+
+function createBuildingSurfaceMaterial(
+  albedoArray: CompressedArrayTexture | DataArrayTexture,
+  normalArray: CompressedArrayTexture | DataArrayTexture,
+  ormArray: CompressedArrayTexture | DataArrayTexture,
+): MeshStandardNodeMaterial {
+  const mat = new MeshStandardNodeMaterial({
+    roughness: 1.0,
+    metalness: 0.0,
+  });
+  mat.name = 'MarchlandBuildingSurfaceMat';
+
+  const uv0 = uv(0);
+  const uv1 = uv(1);
+
+  // UV1.x carries `layer / 15.0` from Blender; UV1.y is V-flipped by glTF so `1.0 - uv1.y` is metalFlag.
+  const layerFloat = round(clamp(uv1.x.mul(15.0), 0.0, 11.0));
+  const layerIdx = int(layerFloat);
+  const ironMask = smoothstep(float(0.45), float(0.85), float(1.0).sub(uv1.y));
+
+  const albSample = texture(albedoArray, uv0).depth(layerIdx).rgb;
+  const norSample = texture(normalArray, uv0).depth(layerIdx).rgb;
+  const ormSample = texture(ormArray, uv0).depth(layerIdx);
+
+  // Lift clay_plaster (layer 3) gently into warm lime-washed medieval wattle-and-daub plaster
+  // so dark oak half-timbering contrasts crisply in daylight (still strictly below 0.85 linear cap).
+  const isPlaster = smoothstep(float(0.5), float(0.05), abs(layerFloat.sub(3.0)));
+  const plasterLifted = albSample.mul(mix(vec3(1.0), vec3(1.62, 1.56, 1.44), isPlaster));
+
+  // Forged iron door hinges, shutter straps, and handle override albedo/roughness/metalness.
+  const baseAlb = mix(plasterLifted, vec3(0.24, 0.24, 0.26), ironMask);
+
+  // Multiply by Cycles-baked vertex AO & weathering tint (COLOR_0) + micro-AO from ORM.r.
+  const vcol = vertexColor().rgb;
+  const microAo = mix(float(0.76), float(1.0), ormSample.r);
+  mat.colorNode = clamp(baseAlb.mul(vcol).mul(microAo), vec3(0.015), vec3(0.82));
+
+  // Normal map detail (slightly damped on forged iron so straps stay cleanly read).
+  const normalStrength = mix(float(1.0), float(0.45), ironMask);
+  mat.normalNode = normalMap(norSample, vec2(normalStrength, normalStrength));
+
+  // Physical roughness & metalness from ORM + forged iron flag.
+  const dielectricRough = clamp(ormSample.g, 0.42, 0.96);
+  mat.roughnessNode = mix(dielectricRough, float(0.44), ironMask);
+  mat.metalnessNode = mix(clamp(ormSample.b, 0.0, 0.15), float(0.88), ironMask);
+
+  return mat;
+}
+
+function createVillageGroundMaterial(
+  albedoArray: CompressedArrayTexture | DataArrayTexture,
+  normalArray: CompressedArrayTexture | DataArrayTexture,
+  ormArray: CompressedArrayTexture | DataArrayTexture,
+): MeshStandardNodeMaterial {
+  const mat = new MeshStandardNodeMaterial({
+    roughness: 1.0,
+    metalness: 0.0,
+  });
+  mat.name = 'MarchlandVillageGroundMat';
+
+  const wp = positionWorld.xz;
+
+  // Real-world tile UVs matching Poly Haven physical texture scales (m per tile).
+  const grassUv = wp.div(2.8);
+  const dirtUv = wp.div(2.2);
+  const cobbleUv = wp.div(1.9);
+
+  // Two-scale organic macro variation breaks up tiling across the 560 m battlefield.
+  const macroA = sin(wp.x.mul(0.065).add(sin(wp.y.mul(0.055)).mul(1.8)))
+    .mul(sin(wp.y.mul(0.072).sub(wp.x.mul(0.048))))
+    .mul(0.5)
+    .add(0.5);
+  const macroB = sin(wp.x.mul(0.27).add(wp.y.mul(0.19)))
+    .mul(sin(wp.y.mul(0.31).sub(wp.x.mul(0.23))))
+    .mul(0.5)
+    .add(0.5);
+  const edgeNoise = macroB.sub(0.5).mul(1.1);
+
+  // Sample grass (0), dirt (1), cobble (2) from the SAME 3 shared texture arrays (0 extra textures).
+  const grassAlb = texture(albedoArray, grassUv).depth(int(0)).rgb;
+  const dirtAlb = texture(albedoArray, dirtUv).depth(int(1)).rgb;
+  const cobbleAlb = texture(albedoArray, cobbleUv).depth(int(2)).rgb;
+
+  const grassNor = texture(normalArray, grassUv).depth(int(0)).rgb;
+  const dirtNor = texture(normalArray, dirtUv).depth(int(1)).rgb;
+  const cobbleNor = texture(normalArray, cobbleUv).depth(int(2)).rgb;
+
+  const grassOrm = texture(ormArray, grassUv).depth(int(0));
+  const dirtOrm = texture(ormArray, dirtUv).depth(int(1));
+  const cobbleOrm = texture(ormArray, cobbleUv).depth(int(2));
+
+  // Village lane: gently curving cobbled road in front of the cottage (around z = 4.6 m).
+  const laneCenterZ = float(4.6).add(sin(wp.x.mul(0.06)).mul(1.3));
+  const laneDist = abs(wp.y.sub(laneCenterZ)).add(edgeNoise.mul(0.45));
+  const laneSpan = smoothstep(float(46.0), float(28.0), abs(wp.x));
+  const cobbleMask = float(1.0).sub(smoothstep(float(1.15), float(2.05), laneDist)).mul(laneSpan);
+
+  // Trampled warm dirt cottage yard + path connecting cottage porch (0, -2.5) to cobbled lane.
+  const yardDx = wp.x.sub(0.6).div(8.8);
+  const yardDz = wp.y.add(0.8).div(7.2);
+  const yardR = yardDx.mul(yardDx).add(yardDz.mul(yardDz)).add(edgeNoise.mul(0.18));
+  const yardDirtMask = float(1.0).sub(smoothstep(float(0.58), float(1.15), yardR));
+
+  // Soft dirt shoulder hugging the cobbled lane edges.
+  const shoulderMask = float(1.0).sub(smoothstep(float(1.8), float(3.2), laneDist)).mul(laneSpan);
+  const dirtMask = clamp(yardDirtMask.add(shoulderMask.mul(0.75)), 0.0, 1.0);
+
+  // Subtle green-olive meadow lift & macro variation on grass so countryside feels alive in autumn light.
+  const meadowTint = mix(vec3(0.88, 0.94, 0.78), vec3(1.14, 1.12, 0.88), macroA);
+  const grassCol = grassAlb.mul(meadowTint);
+  const dirtCol = dirtAlb.mul(vec3(1.26, 1.14, 0.96)).mul(mix(float(0.88), float(1.10), macroB));
+  const cobbleCol = cobbleAlb.mul(mix(float(0.92), float(1.08), macroB));
+
+  const grassDirtCol = mix(grassCol, dirtCol, dirtMask);
+  const finalCol = mix(grassDirtCol, cobbleCol, cobbleMask);
+  mat.colorNode = clamp(finalCol, vec3(0.02), vec3(0.72));
+
+  const grassDirtNor = mix(grassNor, dirtNor, dirtMask);
+  const finalNor = mix(grassDirtNor, cobbleNor, cobbleMask);
+  mat.normalNode = normalMap(finalNor, vec2(0.85, 0.85));
+
+  const grassDirtRough = mix(grassOrm.g, dirtOrm.g, dirtMask);
+  const finalRough = mix(grassDirtRough, cobbleOrm.g, cobbleMask);
+  mat.roughnessNode = clamp(finalRough, 0.62, 0.96);
+  mat.metalnessNode = float(0.0);
+
+  return mat;
+}

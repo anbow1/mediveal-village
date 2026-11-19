@@ -1,0 +1,112 @@
+{
+  "title": "Marchland Stage 1 · WebGPU · LOW · clearNoon",
+  "rows": [
+    {
+      "spot": "calibration",
+      "fps": 40,
+      "p95Ms": 49.9,
+      "cpuMs": 6.09,
+      "drawCalls": 24,
+      "triangles": 3298,
+      "gpuMs": null,
+      "gpu": {}
+    },
+    {
+      "spot": "town",
+      "fps": 45,
+      "p95Ms": 50,
+      "cpuMs": 3.03,
+      "drawCalls": 24,
+      "triangles": 3298,
+      "gpuMs": null,
+      "gpu": {}
+    },
+    {
+      "spot": "rally",
+      "fps": 60,
+      "p95Ms": 16.7,
+      "cpuMs": 1.6,
+      "drawCalls": 24,
+      "triangles": 3298,
+      "gpuMs": null,
+      "gpu": {}
+    },
+    {
+      "spot": "field",
+      "fps": 51,
+      "p95Ms": 33.3,
+      "cpuMs": 1.72,
+      "drawCalls": 22,
+      "triangles": 2506,
+      "gpuMs": null,
+      "gpu": {}
+    },
+    {
+      "spot": "close",
+      "fps": 21,
+      "p95Ms": 100,
+      "cpuMs": 157.16,
+      "drawCalls": 24,
+      "triangles": 3298,
+      "gpuMs": null,
+      "gpu": {}
+    },
+    {
+      "spot": "enemy",
+      "fps": 10,
+      "p95Ms": 100,
+      "cpuMs": 455.46,
+      "drawCalls": 22,
+      "triangles": 2506,
+      "gpuMs": 518.73,
+      "gpu": {
+        "scene": 261.22,
+        "shadows": 7.52,
+        "post": 249.99
+      }
+    },
+    {
+      "spot": "overview",
+      "fps": 11,
+      "p95Ms": 100,
+      "cpuMs": 413.11,
+      "drawCalls": 24,
+      "triangles": 3298,
+      "gpuMs": 518.73,
+      "gpu": {
+        "scene": 261.22,
+        "shadows": 7.52,
+        "post": 249.99
+      }
+    },
+    {
+      "spot": "ground_045m",
+      "fps": 11,
+      "p95Ms": 100,
+      "cpuMs": 410.27,
+      "drawCalls": 24,
+      "triangles": 3298,
+      "gpuMs": 518.73,
+      "gpu": {
+        "scene": 261.22,
+        "shadows": 7.52,
+        "post": 249.99
+      }
+    },
+    {
+      "spot": "eye_170m",
+      "fps": 10,
+      "p95Ms": 100,
+      "cpuMs": 213.17,
+      "drawCalls": 24,
+      "triangles": 3298,
+      "gpuMs": 518.73,
+      "gpu": {
+        "scene": 261.22,
+        "shadows": 7.52,
+        "post": 249.99
+      }
+    }
+  ],
+  "text": "Marchland Stage 1 · WebGPU · LOW · clearNoon\nspot            fps  p95ms  cpu  calls  Mtris  gpu ms (per pass)\ncalibration      40   49.9  6.1     24   0.00  n/a\ntown             45   50.0  3.0     24   0.00  n/a\nrally            60   16.7  1.6     24   0.00  n/a\nfield            51   33.3  1.7     22   0.00  n/a\nclose            21  100.0 157.2     24   0.00  n/a\nenemy            10  100.0 455.5     22   0.00  518.7 (scene 261.2, shadows 7.5, post 250.0)\noverview         11  100.0 413.1     24   0.00  518.7 (scene 261.2, shadows 7.5, post 250.0)\nground_045m      11  100.0 410.3     24   0.00  518.7 (scene 261.2, shadows 7.5, post 250.0)\neye_170m         10  100.0 213.2     24   0.00  518.7 (scene 261.2, shadows 7.5, post 250.0)"
+}

@@ -1,0 +1,221 @@
+{
+  "totalBytes": 15797525,
+  "files": [
+    {
+      "path": "assets/buildings/house_l1_impostor.ktx2",
+      "bytes": 163926
+    },
+    {
+      "path": "assets/buildings/house_l1_lod0.glb",
+      "bytes": 260136
+    },
+    {
+      "path": "assets/buildings/house_l1_lod1.glb",
+      "bytes": 99668
+    },
+    {
+      "path": "assets/buildings/house_l1_lod2.glb",
+      "bytes": 28912
+    },
+    {
+      "path": "assets/buildings/house_l1_shadow.glb",
+      "bytes": 5092
+    },
+    {
+      "path": "assets/props/barrel_lod0.glb",
+      "bytes": 2632948
+    },
+    {
+      "path": "assets/props/barrel_lod1.glb",
+      "bytes": 33920
+    },
+    {
+      "path": "assets/props/barrel_lod2.glb",
+      "bytes": 27084
+    },
+    {
+      "path": "assets/props/barrel_shadow.glb",
+      "bytes": 2264
+    },
+    {
+      "path": "assets/surfaces/ashlar_albedo.ktx2",
+      "bytes": 344427
+    },
+    {
+      "path": "assets/surfaces/ashlar_normal.ktx2",
+      "bytes": 337718
+    },
+    {
+      "path": "assets/surfaces/ashlar_orm.ktx2",
+      "bytes": 316185
+    },
+    {
+      "path": "assets/surfaces/bark_albedo.ktx2",
+      "bytes": 341987
+    },
+    {
+      "path": "assets/surfaces/bark_normal.ktx2",
+      "bytes": 342255
+    },
+    {
+      "path": "assets/surfaces/bark_orm.ktx2",
+      "bytes": 266407
+    },
+    {
+      "path": "assets/surfaces/beam_albedo.ktx2",
+      "bytes": 245510
+    },
+    {
+      "path": "assets/surfaces/beam_normal.ktx2",
+      "bytes": 123534
+    },
+    {
+      "path": "assets/surfaces/beam_orm.ktx2",
+      "bytes": 145687
+    },
+    {
+      "path": "assets/surfaces/boards_albedo.ktx2",
+      "bytes": 257827
+    },
+    {
+      "path": "assets/surfaces/boards_normal.ktx2",
+      "bytes": 109121
+    },
+    {
+      "path": "assets/surfaces/boards_orm.ktx2",
+      "bytes": 275776
+    },
+    {
+      "path": "assets/surfaces/cobble_albedo.ktx2",
+      "bytes": 317798
+    },
+    {
+      "path": "assets/surfaces/cobble_normal.ktx2",
+      "bytes": 322038
+    },
+    {
+      "path": "assets/surfaces/cobble_orm.ktx2",
+      "bytes": 281094
+    },
+    {
+      "path": "assets/surfaces/dirt_albedo.ktx2",
+      "bytes": 321332
+    },
+    {
+      "path": "assets/surfaces/dirt_normal.ktx2",
+      "bytes": 341925
+    },
+    {
+      "path": "assets/surfaces/dirt_orm.ktx2",
+      "bytes": 312219
+    },
+    {
+      "path": "assets/surfaces/grass_albedo.ktx2",
+      "bytes": 348516
+    },
+    {
+      "path": "assets/surfaces/grass_normal.ktx2",
+      "bytes": 338782
+    },
+    {
+      "path": "assets/surfaces/grass_orm.ktx2",
+      "bytes": 299597
+    },
+    {
+      "path": "assets/surfaces/linen_albedo.ktx2",
+      "bytes": 188150
+    },
+    {
+      "path": "assets/surfaces/linen_normal.ktx2",
+      "bytes": 246129
+    },
+    {
+      "path": "assets/surfaces/linen_orm.ktx2",
+      "bytes": 303754
+    },
+    {
+      "path": "assets/surfaces/plaster_albedo.ktx2",
+      "bytes": 106526
+    },
+    {
+      "path": "assets/surfaces/plaster_normal.ktx2",
+      "bytes": 279081
+    },
+    {
+      "path": "assets/surfaces/plaster_orm.ktx2",
+      "bytes": 114106
+    },
+    {
+      "path": "assets/surfaces/rubble_albedo.ktx2",
+      "bytes": 338696
+    },
+    {
+      "path": "assets/surfaces/rubble_normal.ktx2",
+      "bytes": 340471
+    },
+    {
+      "path": "assets/surfaces/rubble_orm.ktx2",
+      "bytes": 149542
+    },
+    {
+      "path": "assets/surfaces/shingles_albedo.ktx2",
+      "bytes": 327196
+    },
+    {
+      "path": "assets/surfaces/shingles_normal.ktx2",
+      "bytes": 303447
+    },
+    {
+      "path": "assets/surfaces/shingles_orm.ktx2",
+      "bytes": 265467
+    },
+    {
+      "path": "assets/surfaces/thatch_albedo.ktx2",
+      "bytes": 348591
+    },
+    {
+      "path": "assets/surfaces/thatch_normal.ktx2",
+      "bytes": 342174
+    },
+    {
+      "path": "assets/surfaces/thatch_orm.ktx2",
+      "bytes": 298406
+    },
+    {
+      "path": "assets/trees/oak_impostor.ktx2",
+      "bytes": 155460
+    },
+    {
+      "path": "assets/trees/oak_lod0.glb",
+      "bytes": 826908
+    },
+    {
+      "path": "assets/trees/oak_lod1.glb",
+      "bytes": 33200
+    },
+    {
+      "path": "assets/trees/oak_lod2.glb",
+      "bytes": 11160
+    },
+    {
+      "path": "assets/trees/oak_shadow.glb",
+      "bytes": 5604
+    },
+    {
+      "path": "assets/units/swordsman_lod0.glb",
+      "bytes": 1478888
+    },
+    {
+      "path": "assets/units/swordsman_lod1.glb",
+      "bytes": 48156
+    },
+    {
+      "path": "assets/units/swordsman_lod2.glb",
+      "bytes": 39832
+    },
+    {
+      "path": "assets/units/swordsman_shadow.glb",
+      "bytes": 2896
+    }
+  ]
+}

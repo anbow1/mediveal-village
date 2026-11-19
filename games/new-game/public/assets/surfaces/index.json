@@ -1,0 +1,245 @@
+{
+  "size": 512,
+  "layers": [
+    {
+      "id": "grass",
+      "index": 0,
+      "tileSizeM": 2,
+      "albedo": {
+        "file": "assets/surfaces/grass_albedo.ktx2",
+        "bytes": 348516,
+        "psnrDb": 35.67
+      },
+      "normal": {
+        "file": "assets/surfaces/grass_normal.ktx2",
+        "bytes": 338782,
+        "psnrDb": 30.74
+      },
+      "orm": {
+        "file": "assets/surfaces/grass_orm.ktx2",
+        "bytes": 299597,
+        "psnrDb": 36.01
+      }
+    },
+    {
+      "id": "dirt",
+      "index": 1,
+      "tileSizeM": 1.3,
+      "albedo": {
+        "file": "assets/surfaces/dirt_albedo.ktx2",
+        "bytes": 321332,
+        "psnrDb": 47.21
+      },
+      "normal": {
+        "file": "assets/surfaces/dirt_normal.ktx2",
+        "bytes": 341925,
+        "psnrDb": 30.28
+      },
+      "orm": {
+        "file": "assets/surfaces/dirt_orm.ktx2",
+        "bytes": 312219,
+        "psnrDb": 37.66
+      }
+    },
+    {
+      "id": "cobble",
+      "index": 2,
+      "tileSizeM": 1.8,
+      "albedo": {
+        "file": "assets/surfaces/cobble_albedo.ktx2",
+        "bytes": 317798,
+        "psnrDb": 40.05
+      },
+      "normal": {
+        "file": "assets/surfaces/cobble_normal.ktx2",
+        "bytes": 322038,
+        "psnrDb": 32.39
+      },
+      "orm": {
+        "file": "assets/surfaces/cobble_orm.ktx2",
+        "bytes": 281094,
+        "psnrDb": 36.36
+      }
+    },
+    {
+      "id": "plaster",
+      "index": 3,
+      "tileSizeM": 2,
+      "albedo": {
+        "file": "assets/surfaces/plaster_albedo.ktx2",
+        "bytes": 106526,
+        "psnrDb": 48.16
+      },
+      "normal": {
+        "file": "assets/surfaces/plaster_normal.ktx2",
+        "bytes": 279081,
+        "psnrDb": 43.68
+      },
+      "orm": {
+        "file": "assets/surfaces/plaster_orm.ktx2",
+        "bytes": 114106,
+        "psnrDb": 45.27
+      }
+    },
+    {
+      "id": "beam",
+      "index": 4,
+      "tileSizeM": 2,
+      "albedo": {
+        "file": "assets/surfaces/beam_albedo.ktx2",
+        "bytes": 245510,
+        "psnrDb": 40.97
+      },
+      "normal": {
+        "file": "assets/surfaces/beam_normal.ktx2",
+        "bytes": 123534,
+        "psnrDb": 49.81
+      },
+      "orm": {
+        "file": "assets/surfaces/beam_orm.ktx2",
+        "bytes": 145687,
+        "psnrDb": 41.78
+      }
+    },
+    {
+      "id": "boards",
+      "index": 5,
+      "tileSizeM": 1.2,
+      "albedo": {
+        "file": "assets/surfaces/boards_albedo.ktx2",
+        "bytes": 257827,
+        "psnrDb": 43.56
+      },
+      "normal": {
+        "file": "assets/surfaces/boards_normal.ktx2",
+        "bytes": 109121,
+        "psnrDb": 51.23
+      },
+      "orm": {
+        "file": "assets/surfaces/boards_orm.ktx2",
+        "bytes": 275776,
+        "psnrDb": 41.42
+      }
+    },
+    {
+      "id": "thatch",
+      "index": 6,
+      "tileSizeM": 2.5,
+      "albedo": {
+        "file": "assets/surfaces/thatch_albedo.ktx2",
+        "bytes": 348591,
+        "psnrDb": 40.26
+      },
+      "normal": {
+        "file": "assets/surfaces/thatch_normal.ktx2",
+        "bytes": 342174,
+        "psnrDb": 30.53
+      },
+      "orm": {
+        "file": "assets/surfaces/thatch_orm.ktx2",
+        "bytes": 298406,
+        "psnrDb": 34.89
+      }
+    },
+    {
+      "id": "shingles",
+      "index": 7,
+      "tileSizeM": 3,
+      "albedo": {
+        "file": "assets/surfaces/shingles_albedo.ktx2",
+        "bytes": 327196,
+        "psnrDb": 39.96
+      },
+      "normal": {
+        "file": "assets/surfaces/shingles_normal.ktx2",
+        "bytes": 303447,
+        "psnrDb": 35.78
+      },
+      "orm": {
+        "file": "assets/surfaces/shingles_orm.ktx2",
+        "bytes": 265467,
+        "psnrDb": 35.21
+      }
+    },
+    {
+      "id": "rubble",
+      "index": 8,
+      "tileSizeM": 2,
+      "albedo": {
+        "file": "assets/surfaces/rubble_albedo.ktx2",
+        "bytes": 338696,
+        "psnrDb": 42.5
+      },
+      "normal": {
+        "file": "assets/surfaces/rubble_normal.ktx2",
+        "bytes": 340471,
+        "psnrDb": 30.08
+      },
+      "orm": {
+        "file": "assets/surfaces/rubble_orm.ktx2",
+        "bytes": 149542,
+        "psnrDb": 42.23
+      }
+    },
+    {
+      "id": "ashlar",
+      "index": 9,
+      "tileSizeM": 2.5,
+      "albedo": {
+        "file": "assets/surfaces/ashlar_albedo.ktx2",
+        "bytes": 344427,
+        "psnrDb": 38.67
+      },
+      "normal": {
+        "file": "assets/surfaces/ashlar_normal.ktx2",
+        "bytes": 337718,
+        "psnrDb": 34.41
+      },
+      "orm": {
+        "file": "assets/surfaces/ashlar_orm.ktx2",
+        "bytes": 316185,
+        "psnrDb": 35.01
+      }
+    },
+    {
+      "id": "bark",
+      "index": 10,
+      "tileSizeM": 1,
+      "albedo": {
+        "file": "assets/surfaces/bark_albedo.ktx2",
+        "bytes": 341987,
+        "psnrDb": 42.16
+      },
+      "normal": {
+        "file": "assets/surfaces/bark_normal.ktx2",
+        "bytes": 342255,
+        "psnrDb": 31.75
+      },
+      "orm": {
+        "file": "assets/surfaces/bark_orm.ktx2",
+        "bytes": 266407,
+        "psnrDb": 36.15
+      }
+    },
+    {
+      "id": "linen",
+      "index": 11,
+      "tileSizeM": 0.271,
+      "albedo": {
+        "file": "assets/surfaces/linen_albedo.ktx2",
+        "bytes": 188150,
+        "psnrDb": 44.05
+      },
+      "normal": {
+        "file": "assets/surfaces/linen_normal.ktx2",
+        "bytes": 246129,
+        "psnrDb": 45.02
+      },
+      "orm": {
+        "file": "assets/surfaces/linen_orm.ktx2",
+        "bytes": 303754,
+        "psnrDb": 38.46
+      }
+    }
+  ]
+}
