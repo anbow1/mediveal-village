@@ -1,0 +1,33 @@
+{
+  "webgpuHigh": {
+    "backend": "WebGPU",
+    "drawCalls": 222,
+    "triangles": 1055960,
+    "simTick": 785,
+    "simTimeS": 13.08,
+    "regiments": 7,
+    "citizens": 32,
+    "buildings": 30,
+    "projectiles": 10,
+    "placedHouse": true,
+    "recruitClickMs": 0.8,
+    "prodClickMs": 0.5,
+    "pauseClickMs": 186.4,
+    "newPipelines": [],
+    "errors": []
+  },
+  "phoneLow": {
+    "backend": "WebGPU",
+    "drawCalls": 185,
+    "triangles": 872663,
+    "newPipelines": [],
+    "errors": []
+  },
+  "webgl2": {
+    "backend": "WebGL2",
+    "drawCalls": 185,
+    "triangles": 872603,
+    "simTick": 177,
+    "errors": []
+  }
+}

@@ -54,7 +54,9 @@ import {
   vec4,
   vertexColor,
 } from 'three/tsl';
+import { UNIT_DEFS } from '../config.ts';
 import { selectLodLevel, UNIT_LOD_THRESHOLDS, type LodLevel } from '../sim/lodMath.ts';
+import type { SimWorldState } from '../sim/types.ts';
 import type { AssetLoader, ByteProgressTracker } from './assetLoader.ts';
 import { SHADOW_ONLY_LAYER } from './lighting.ts';
 
@@ -87,6 +89,13 @@ export interface UnitInstancerHandles {
     cameraPos: Vector3,
     paused: boolean,
     heightAt?: (x: number, z: number) => number,
+  ) => void;
+  /** Stage 6: packs live SimWorldState soldiers & townsfolk into GPU buffers with zero foot slide! */
+  readonly syncFromSim: (
+    state: SimWorldState,
+    cameraPos: Vector3,
+    heightAt: (x: number, z: number) => number,
+    simClockS: number,
   ) => void;
   readonly getLodCounts: () => Record<string, number>;
   readonly getUnitCount: () => number;
@@ -399,7 +408,8 @@ export async function buildUnitInstancer(
     for (let i = 0; i < units.length; i++) {
       if (units[i]!.archetype === archetype) unitIndices.push(i);
     }
-    const maxInstances = Math.max(1, unitIndices.length);
+    const minCap = archetype === 'swordsman' ? 260 : archetype === 'archer' ? 160 : 180;
+    const maxInstances = Math.max(minCap, unitIndices.length);
 
     const [g0, g1, g2, gSh] = await Promise.all([
       loader.loadGlb(`assets/units/${archetype}_lod0.glb`, tracker),
@@ -609,14 +619,199 @@ export async function buildUnitInstancer(
     }
   };
 
+  let lastLiveCount = units.length;
+  const batchByType: Record<UnitArchetype, BakedArchetype> = {
+    swordsman: batches[0]!,
+    archer: batches[1]!,
+    citizen: batches[2]!,
+  };
+
+  /**
+   * Stage 6 live simulation sync: maps every alive soldier (infantry, archers, cavalry riders,
+   * siege crew & Captains) and townsfolk citizen directly into the pre-allocated LOD buckets.
+   * Walk clip frame advances strictly from `travelM / strideLengthM` -> ZERO foot slide!
+   */
+  const syncFromSim = (
+    state: SimWorldState,
+    cameraPos: Vector3,
+    heightAt: (x: number, z: number) => number,
+    simClockS: number,
+  ): void => {
+    lodCounts.lod0 = 0;
+    lodCounts.lod1 = 0;
+    lodCounts.lod2 = 0;
+
+    const lodCountsByArch: Record<UnitArchetype, [number, number, number]> = {
+      swordsman: [0, 0, 0],
+      archer: [0, 0, 0],
+      citizen: [0, 0, 0],
+    };
+    const shCountsByArch: Record<UnitArchetype, number> = {
+      swordsman: 0,
+      archer: 0,
+      citizen: 0,
+    };
+
+    let liveTotal = 0;
+
+    const pushActor = (
+      arch: UnitArchetype,
+      team: 0 | 1,
+      x: number,
+      y: number,
+      z: number,
+      yawRad: number,
+      scale: number,
+      clip: UnitAnimClip,
+      phase01: number,
+      tintVar: number,
+    ): void => {
+      const batch = batchByType[arch];
+      const dist = Math.hypot(cameraPos.x - x, cameraPos.y - y, cameraPos.z - z);
+      const clampedLod: 0 | 1 | 2 = dist < UNIT_LOD_THRESHOLDS.lod1M ? 0 : dist < UNIT_LOD_THRESHOLDS.lod2M ? 1 : 2;
+      const counts = lodCountsByArch[arch];
+      if (counts[clampedLod] >= batch.maxInstances) return;
+
+      const slot = counts[clampedLod]++;
+      if (clampedLod === 0) lodCounts.lod0!++;
+      else if (clampedLod === 1) lodCounts.lod1!++;
+      else lodCounts.lod2!++;
+      liveTotal++;
+
+      const clipSpan = batch.clips[clip];
+      const normPhase = ((phase01 % 1) + 1) % 1;
+      const frameInClip = Math.floor(normPhase * clipSpan.frameCount) % clipSpan.frameCount;
+      const frameRow = clipSpan.startRow + frameInClip;
+
+      const posArr = batch.lodPosAttrs[clampedLod].array as Float32Array;
+      const metaArr = batch.lodMetaAttrs[clampedLod].array as Float32Array;
+      const o = slot * 4;
+      posArr[o + 0] = x;
+      posArr[o + 1] = y;
+      posArr[o + 2] = z;
+      posArr[o + 3] = yawRad;
+      metaArr[o + 0] = frameRow;
+      metaArr[o + 1] = team;
+      metaArr[o + 2] = scale;
+      metaArr[o + 3] = tintVar;
+
+      if (dist < 145 && shCountsByArch[arch] < batch.maxInstances) {
+        TEMP_POS.set(x, y, z);
+        TEMP_QUAT.setFromAxisAngle(UP_AXIS, yawRad);
+        TEMP_SCALE.set(scale, scale, scale);
+        TEMP_MAT.compose(TEMP_POS, TEMP_QUAT, TEMP_SCALE);
+        batch.shadowMesh.setMatrixAt(shCountsByArch[arch]++, TEMP_MAT);
+      }
+    };
+
+    // 1. All living soldiers (infantry, ranged, mounted cavalry riders, siege gunners)
+    for (const reg of state.regiments) {
+      if (reg.garrisonedInBuildingId !== null) continue;
+      const def = UNIT_DEFS[reg.unitType];
+      const arch: UnitArchetype = def.visualArchetype;
+      const isCav = def.unitClass === 'cavalry';
+      const isSiege = def.unitClass === 'siege';
+      const baseScale =
+        reg.unitType === 'heavyCav'
+          ? 1.06
+          : reg.unitType === 'halberdiers' || reg.unitType === 'swordsmen'
+            ? 1.03
+            : reg.unitType === 'militia'
+              ? 0.96
+              : 1.0;
+
+      for (const s of reg.soldiers) {
+        if (!s.alive) continue;
+        const groundY = heightAt(s.x, s.z);
+        if (isSiege) {
+          // Place two visible gunners flanking each cannon/mortar piece
+          const rx = Math.cos(s.yawRad);
+          const rz = -Math.sin(s.yawRad);
+          for (const sideSign of [-1, 1] as const) {
+            const gx = s.x + rx * sideSign * 1.15;
+            const gz = s.z + rz * sideSign * 1.15;
+            const clip: UnitAnimClip = s.clip === 'walk' ? 'walk' : s.attackAnimTimerS > 0 ? 'attack' : 'idle';
+            const phase =
+              clip === 'walk'
+                ? s.travelM / 1.45
+                : clip === 'attack'
+                  ? 1 - s.attackAnimTimerS
+                  : simClockS * 0.42 + s.tintVar * 3.1 + sideSign * 0.3;
+            pushActor('citizen', reg.side, gx, heightAt(gx, gz), gz, s.yawRad, 0.98, clip, phase, s.tintVar);
+          }
+          continue;
+        }
+
+        const clip: UnitAnimClip = s.clip;
+        // Zero foot slide: walk cycle phase locks strictly to distance walked (1.45 m/cycle infantry, 2.6 m/cycle cavalry)!
+        const phase =
+          clip === 'walk'
+            ? s.travelM / (isCav ? 2.6 : 1.45)
+            : clip === 'attack'
+              ? Math.max(0, 1 - s.attackAnimTimerS * 1.15)
+              : simClockS * 0.42 + s.tintVar * 4.7;
+        const riderLift = isCav ? 0.58 + (clip === 'walk' ? Math.abs(Math.sin(s.travelM * 2.3)) * 0.12 : 0) : 0;
+        const capBoost = reg.captainAlive && s.slotIndex === 0 ? 1.07 : 1.0;
+        pushActor(arch, reg.side, s.x, groundY + riderLift, s.z, s.yawRad, baseScale * capBoost, clip, phase, s.tintVar);
+      }
+    }
+
+    // 2. All townsfolk (carriers, builders, workers, woodcutters, farmers, fishers)
+    for (const c of state.citizens) {
+      const groundY = heightAt(c.x, c.z);
+      const isMoving = c.path.length > 0 || c.fleeing || c.workPhase === 'toField' || c.workPhase === 'returning';
+      const isWorking = c.workPhase === 'working' || c.role === 'builder';
+      const clip: UnitAnimClip = isMoving ? 'walk' : isWorking ? 'attack' : 'idle';
+      const phase =
+        clip === 'walk'
+          ? c.travelM / 1.42
+          : clip === 'attack'
+            ? simClockS * 0.85 + c.id * 0.17
+            : simClockS * 0.38 + c.id * 0.31;
+      const tint = 0.92 + ((c.id * 37) % 17) * 0.01;
+      pushActor('citizen', c.side, c.x, groundY, c.z, c.yawRad, 0.97, clip, phase, tint);
+    }
+
+    lastLiveCount = liveTotal;
+
+    // Upload all 3 archetype LOD buckets + shadow proxy meshes cleanly (empty buckets stay count=1, scale=0!)
+    for (const batch of batches) {
+      const counts = lodCountsByArch[batch.archetype];
+      for (let li = 0; li < 3; li++) {
+        const c = counts[li]!;
+        const mesh = batch.lodMeshes[li]!;
+        const posAttr = batch.lodPosAttrs[li]!;
+        const metaAttr = batch.lodMetaAttrs[li]!;
+        if (c === 0) {
+          (metaAttr.array as Float32Array)[2] = 0.0;
+          mesh.count = 1;
+        } else {
+          mesh.count = c;
+        }
+        posAttr.needsUpdate = true;
+        metaAttr.needsUpdate = true;
+      }
+
+      const shCount = shCountsByArch[batch.archetype];
+      if (shCount === 0) {
+        batch.shadowMesh.setMatrixAt(0, ZERO_MAT);
+        batch.shadowMesh.count = 1;
+      } else {
+        batch.shadowMesh.count = shCount;
+      }
+      batch.shadowMesh.instanceMatrix.needsUpdate = true;
+    }
+  };
+
   // Seed initial transforms immediately before warmUp()
   update(0, new Vector3(0, 22, 36), true);
 
   return {
     units,
     update,
+    syncFromSim,
     getLodCounts: () => ({ ...lodCounts }),
-    getUnitCount: () => units.length,
+    getUnitCount: () => lastLiveCount,
     dispose() {
       for (const batch of batches) {
         for (const m of batch.lodMeshes) {

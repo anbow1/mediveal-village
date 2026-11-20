@@ -77,7 +77,7 @@ export class RtsCameraController {
         this.lastPointerX = e.clientX;
         this.lastPointerY = e.clientY;
         e.preventDefault();
-      } else if (e.button === 2) {
+      } else if (e.button === 2 && !e.ctrlKey) {
         this.dragMode = 'rotate';
         this.freePose = null;
         this.lastPointerX = e.clientX;
@@ -218,6 +218,25 @@ export class RtsCameraController {
   rotateBy(deltaYawRad: number): void {
     this.freePose = null;
     this.goal = clampRtsGoal({ ...this.goal, yawRad: this.goal.yawRad + deltaYawRad });
+  }
+
+  /** Smoothly pans RTS camera to focus on world (x, z) (used by minimap, alerts, bottlenecks, Home). */
+  jumpTo(x: number, z: number, immediate = false): void {
+    this.freePose = null;
+    this.goal = clampRtsGoal({ ...this.goal, targetX: x, targetZ: z });
+    if (immediate) {
+      this.current = { ...this.goal };
+      this.syncCamera();
+    }
+  }
+
+  getBookmark(): RtsCameraGoal {
+    return { ...this.goal };
+  }
+
+  applyBookmark(bm: RtsCameraGoal): void {
+    this.freePose = null;
+    this.goal = clampRtsGoal({ ...bm });
   }
 
   applySpotCamera(cam: BenchSpotCamera): void {

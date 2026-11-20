@@ -354,6 +354,11 @@ export class TerrainField {
     return 1 - this.normalAt(x, z).y;
   }
 
+  /** True on impassable cliff slopes (> 0.30) or sheer mountain peaks (> 13.5 m). */
+  isImpassable(x: number, z: number): boolean {
+    return this.slopeAt(x, z) > 0.30 || this.heightAt(x, z) > 13.5;
+  }
+
   /**
    * Builds a Float32Array R32F height grid [gridResolution x gridResolution] matching the exact
    * vertex grid used by `terrainMesh.ts` and `grassField.ts` (`textureLoad` exact triangle lookup).

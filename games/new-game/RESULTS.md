@@ -2,6 +2,47 @@
 
 > Newest entries first (`GUIDE.md` §1, §6). Every measurement includes date, commit, exact method (script, preset, view, alternating before/after runs), Before | After table (pipelines, draw calls / triangles, texture memory, ready / GPU idle, build size), screenshot comparison crops in `games/new-game/results/<date>/`, and the decision + number behind it. Reverted attempts are logged too.
 
+## 2026-11-20 · Stage 6 — Deterministic 60 Hz RTS Simulation, Live GPU Motion & VFX, Positional Web Audio & Full Bilingual HUD (base `8b77076`, pushed to `main`)
+
+- **Measured how:** Production build (`vite build --base ./`, `31 MB` total, `420 KB` JS gzip) served via `tools/measure/serve.mjs dist 4173`.
+  1. **Headless Pure-TS Simulation & Unit Test Suite (`npx vitest run`, 13 files / `54` tests in `22.21 s`):**
+     - `tests/economy.test.ts` (7/7): Starting stock/8 residents, shared pop allocator reserving ≥ 4 carriers/builders, physical carrier delivery + builder hammering + pig→tannery→leatherArmour chain, `yardFull` (`≥ 24`) bottleneck, Wine (`×1.8` tax, `×0.6` growth) & Well (`≤ 40 m` → `×0.75`) bonuses, Keep L1→L3 upgrades, Market 10-lot trade (60%/160%), 50% demolish refund, typed placement rejections & forest felling.
+     - `tests/crossing.test.ts` (3/3): 4 regiments cross `crossing` river ford (`0` deep-water steps), auto-opening 6 m friendly gate (4 regiments pass cleanly), 2 m A\* road preference (`1.4×`).
+     - `tests/combat.test.ts` (3/3): Equal Swordsmen duel avg **`55.8 s`** (`45–75 s` target), Heavy Cav flank vs Swordsmen **`10/10` (`22.1 s`)**, Archers vs marching Militia 78 m **`33.3%` attrition**, full **`10 × 10` balance matrix (`30 seeds/pair = 1,350 duels` in `1.46 s`)** verifying rock-paper-scissors counters (`Pikemen` vs `HeavyCav` `1.00`, `Swordsmen` vs `Pikemen`/`Halberdiers` `1.00`, `HeavyCav` vs `Swordsmen` `1.00`, `Crossbowmen` vs `Halberdiers` `0.63`, `LightCav` vs ranged/siege `1.00`), Militia `115 m` home limit, Merge, Refit, Cannon wall damage.
+     - `tests/ai.test.ts` (4/4): Fair-economy start (0 cheats), Builder ramps to 14 buildings & 24 men by min 16, counter selector verified, **Raider AI defeats completely passive player in `24.5 min` (`p0KeepHp = 0`, `72` men)**, all 3 personalities (`builder`, `raider`, `knight`) clean.
+     - `tests/campaign.test.ts` (4/4): **Bit-identical Save/Load fingerprint determinism** (3 min + `toSnapshot`/`fromSnapshot` + 2 min === 5 min uninterrupted), Tutorial 7 auto-steps, Campaign M1–M5 objectives & carry-over, Defence waves from min 7 + 30 min victory.
+     - All 8 Stage 1–5 suites (`33/33`) preserved green.
+  2. **Live Headless Chrome Verification (`verify_stage6.mjs`, strictly 1 browser at a time) + `tools/measure/load.mjs` (BC7 `--hide-features texture-compression-astc,texture-compression-etc2`):**
+     - Pass 1 (WebGPU High `960×540`): EN Build HUD + Minimap, in-page HUD interaction latency (`Recruit`, `Economy`, `Space` Active Pause), live PL language toggle + Active Pause + Regiment Inspector, dynamic House + Road placement + live Cavalry/Infantry Gatehouse battle with cannon/mortar smoke, 3-frame multi-second TRAA motion strip (`t1`, `t2 +3.0 s`, `t3 +6.0 s`), and runtime pipeline tracer (`newPipelines: []`).
+     - Pass 2 (Phone Landscape `800×380 @ 2× DPR = 1600×760`, WebGPU Low, Polish): live HUD & regiment controls + pipeline tracer (`newPipelines: []`).
+     - Pass 3 (WebGL2 Fallback `960×540`, Low, EN): identical scene/HUD/GPU-skinning parity, `0` errors.
+- **Stage 6 Before (Stage 5 Static World) | After (Stage 6 Playable RTS) table:**
+
+| Metric | Before — Stage 5 High (Low) | After — Stage 6 High (WebGPU) | After — Stage 6 Low (WebGPU / WebGL2) | Notes |
+|---|---|---|---|---|
+| Simulation & Gameplay | Static patrol/showcase scene | **Full 60 Hz pure-TS sim (`src/sim/`, 0 `three`/DOM imports): 31 buildings, 10 units, 21 goods, 2 m A\*, fair-economy AI, Campaign M1–M5, Skirmish, Defence, Tutorial, Save/Load** | Identical deterministic sim | `54/54` Vitest green; bit-identical Save/Load; 343 m/s positional Web Audio |
+| Pipelines (total / after load, `load.mjs`) | `138 / 0` (`124 / 0`) | **`149 / 0`** (`188` shader modules) | **`135 / 0`** (`174` shader modules) | Below `≤ 150` High budget (`markStaticInstances` cut `198 → 149`, **`−49` pipelines**!); **0 new pipelines** during live building, road stamping, combat & smoke |
+| Draw calls / frame (live play) | `148–200` (`130–168`) | **`222`** (live battle + dynamic house + smoke + banners + rings) | **`185`** Phone Low (`1600×760`) · **`185`** WebGL2 | Well under `≤ 500` High / `≤ 250` Low budgets |
+| Triangles / frame (live play) | `0.82–1.36 M` (`0.72–1.24 M`) | **`1.056 M`** (live battle w/ sculpted warhorses, banners & dynamic pools) | **`0.873 M`** Phone Low · **`0.873 M`** WebGL2 | Well under `≤ 12 M` High / `≤ 2 M` Low |
+| Uploaded texture VRAM (`load.mjs` BC7) | `40.5 MB` (`39.0 MB` BC7) | **`40.5 MB`** (`63` textures, **`39.0 MB` BC7**) | **`40.5 MB`** (`63` textures, **`39.0 MB` BC7**) | **`image uploads: 0, 0.00 s`**; **`+0.0 MB` extra texture VRAM** for all Stage 6 dynamic buildings, warhorses, cannons, banners & smoke |
+| Render-target VRAM (`load.mjs`) | `125.6 MB` (`45.6 MB`) | **`125.6 MB`** (`34` targets) | **`45.6 MB`** (`32` targets) | Zero increase over Stage 3–5 |
+| Load (ready / GPU idle, SwiftShader `load.mjs`) | `32.0 s / 38.6 s` (`31.0 s / 36.6 s`) | **`41.8 s / 49.2 s`** (`assets 7.22 s`, `scene 0.42 s`, `warmup 14.81 s`) | **`39.4 s / 45.2 s`** (`assets 8.92 s`, `scene 0.62 s`, `warmup 12.42 s`) | Pre-warms all 16 dynamic building pools + 8 CombatFx pools at boot → `0` mid-play stalls |
+| Production build size (`dist/`) | `31 MB` (`355 KB` JS gzip) | **`31 MB`** (`28.51 MB` assets + `1.44 MB` JS / `420 KB` gzip) | same | Less than 40% of `80 MB` ceiling |
+| HUD response latency (`< 200 ms` gate) | N/A | **`0.8 ms`** (Recruit tab) · **`0.5 ms`** (Economy tab) · **`186.4 ms`** (Active Pause) | Instant | All `< 200 ms`; **0 console/page errors** across all 3 passes |
+
+- **Comparison strips, hero JPEG & raw JSON (`games/new-game/results/2026-11-20/`):**
+  - `stage6-battle-hero.jpg` (live gatehouse battle with sculpted bay & dapple-grey warhorses, 3.4 m spear banners, soft feathered blackpowder smoke wisps, clean `Bottlenecks (0)` Economy panel & Minimap).
+  - `stage6-combat-motion-strip.jpg` (3-frame `t1` → `t2 +3.0 s` → `t3 +6.0 s` motion strip proving zero TRAA smear, zero foot slide & auto-opening gatehouse).
+  - `stage6-hud-and-pause.jpg` (`EN Build HUD + Minimap` | `PL Active Pause + Production + Regiment Inspector`).
+  - `stage6-phone-and-webgl2.jpg` (`Phone Landscape 800×380 @ 2× DPR Low PL` | `WebGL2 Fallback 960×540 EN Parity`).
+  - Raw JSON: `stage6-report.json`, `stage6-load-high.json`, `stage6-load-low.json`.
+- **Bugs caught & fixed during Stage 6 live verification (all re-verified via `view_file` & `load.mjs`):**
+  1. **`+60` redundant GPU pipelines (`198` High / `182` Low) & Meshopt `Int16` risk in dynamic building pools (`simRenderer.ts`, `combatFx.ts`):** New pre-warmed `InstancedMesh`es had distinct sub-1024 capacities without `markStaticInstances()`, generating separate uniform-buffer shaders per mesh. Applying `markStaticInstances()` + tight `addUpdateRange()` + `dequantizeGeometry()` slashed pipelines **`198 → 149` High (`−49`)** and **`182 → 135` Low (`−47`)**, returning under the `≤ 150` High budget and saving `~7 s` boot time!
+  2. **Blocky primitive warhorses, solid opaque smoke spheres, thick selection donuts & floating cone banners (`combatFx.ts`, `unitInstancer.ts`, `simRenderer.ts`):** First live battle screenshot revealed rectangular box horses, opaque tan/orange smoke spheres, thick yellow ground rings, and translucent box scaffolding. Upgraded `combatFx.ts` with sculpted anatomical warhorses (barrel chest, arched neck, head/ears, 4 jointed stride legs, tail & war-saddle; lowered rider seat lift `0.88 → 0.58 m`), wheeled field artillery, 3.4 m spear-pole swallowtail banners, camera-facing TSL soft radial feathered smoke wisps (`opacityNode`), thin `RingGeometry(0.91, 1.0)` tactical rings, and open 8-beam oak construction scaffolding — all re-verified visually with `0` extra textures and `0` console errors on WebGPU & WebGL2.
+  3. **False `No Worker` bottleneck spam while citizens walked to work (`economy.ts`):** Filtered `listBottlenecks()` to exclude buildings that already have an assigned citizen en route (`assignedWorkplaces.has(b.id)`).
+  4. **Vite dev server `KTX2Loader` hang fix (hotfix `8b77076`):** Excluded `three` from Vite `optimizeDeps` so `npx vite` resolves `basis_transcoder.js/.wasm` cleanly in dev mode too.
+  5. **Integrity checks:** `tsc --noEmit` (0 errors), `vitest run` (`13` files / `54/54` tests passed), `src/sim/` verified zero `three`/DOM imports, all 7 `shared-src/` files verified byte-identical.
+
 ## 2026-11-19 · Stage 5 — Whole 560 × 560 m World, 5 Campaign/Skirmish Maps, MakeHuman CC0 GPU-Instanced Characters & Poly Haven Photogrammetry Overhaul (base `ba9a7be`, pushed to `main`)
 
 - **Measured how:** Production build (`vite build --base ./`, `31 MB` total, `167` manifest assets / `28.51 MB`) served via `tools/measure/serve.mjs games/new-game/dist 8765`. Headless Chrome (`/usr/bin/google-chrome`, SwiftShader Vulkan WebGPU + ANGLE SwiftShader WebGL2), strictly one browser process at a time:

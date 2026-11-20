@@ -63,16 +63,30 @@ import {
   type MapLayoutSpec,
 } from '../sim/maps.ts';
 import { TerrainField, type MapLayoutId } from '../sim/terrain.ts';
+import type { SimWorldState } from '../sim/types.ts';
 import {
   type AssetLoader,
   type AssetManifest,
   createByteProgressTracker,
 } from './assetLoader.ts';
+import {
+  buildCombatFx,
+  type CombatFxHandles,
+  type FormationGhostPreview,
+  type PlacementGhostPreview,
+} from './combatFx.ts';
 import { ContactShadowBatch } from './contactShadows.ts';
 import { buildGrassField, type GrassFieldHandles } from './grassField.ts';
 import { markStaticInstances } from './instancing.ts';
 import { buildLakeWater, type LakeWaterHandles } from './lakeWater.ts';
 import { SHADOW_ONLY_LAYER } from './lighting.ts';
+import {
+  buildSimWorldRenderer,
+  type GateLeafHook,
+  type SimRendererHandles,
+  type StaticBuildingHook,
+  type TreeBatchHook,
+} from './simRenderer.ts';
 import type { PhysicalSkyUniforms } from './sky.ts';
 import { buildChimneySmoke, type ChimneySmokeHandles } from './smokeFx.ts';
 import { loadSurfaceLibrary, type SurfaceLibrary } from './surfaces.ts';
@@ -115,6 +129,7 @@ interface InstancedPlacement {
   readonly scale: number;
   readonly matrix: Matrix4;
   level: LodLevel;
+  hidden?: boolean;
 }
 
 interface MultiLodInstancedBatch {
@@ -138,7 +153,21 @@ export interface WorldHandles {
   readonly manifest: AssetManifest;
   readonly grass: GrassFieldHandles;
   readonly units: UnitInstancerHandles;
+  readonly combatFx: CombatFxHandles;
+  readonly simRenderer: SimRendererHandles;
   readonly update: (dtS: number, cameraPos: Vector3, cameraDir: Vector3, paused: boolean) => void;
+  /** Stage 6 live simulation synchronization driving GPU units, combat FX, dynamic buildings, felled trees & GroundWorks. */
+  readonly syncSimWorld: (
+    dtS: number,
+    state: SimWorldState,
+    cameraPos: Vector3,
+    cameraDir: Vector3,
+    selectedRegimentIds: ReadonlySet<number>,
+    selectedBuildingId: number | null,
+    formationGhost: FormationGhostPreview | null,
+    placementGhost: PlacementGhostPreview | null,
+    paused: boolean,
+  ) => void;
   readonly getLodSummary: () => Record<string, number>;
   readonly getWorldMetrics: () => {
     readonly mapId: MapLayoutId;
@@ -854,8 +883,25 @@ export async function buildStage5World(
     };
   };
 
-  // Determine which building kinds are actually used on this map (load only what we render!)
-  const usedBuildingKinds = Array.from(new Set(layout.buildings.map((b) => b.kind)));
+  // Pre-load all map building kinds + all player-buildable zero-texture templates (~0.3 MB total, 0 extra textures -> 0 mid-play GPU pipelines!)
+  const ALWAYS_BUILDABLE_KINDS: readonly BuildingKind[] = [
+    'keep_l1',
+    'house_l1',
+    'woodcutter_l1',
+    'farm_l1',
+    'windmill_l1',
+    'bakery_l1',
+    'watchtower_l1',
+    'gate_l1',
+    'chapel_l1',
+    'smithy_l1',
+    'barracks_l1',
+    'market_l1',
+    'well_l1',
+    'storehouse_l1',
+    'fisher_l1',
+  ];
+  const usedBuildingKinds = Array.from(new Set([...layout.buildings.map((b) => b.kind), ...ALWAYS_BUILDABLE_KINDS]));
   const buildingTemplates = new Map<BuildingKind, LodTemplate>();
   await Promise.all(
     usedBuildingKinds.map(async (kind) => {
@@ -864,8 +910,7 @@ export async function buildStage5World(
     }),
   );
 
-  // Load wall_segment (if map has walls), 3 tree species, 3 Poly Haven rocks, fern, cannon, and props in parallel!
-  const hasWalls = layout.walls.length > 0;
+  // Load wall_segment (always available for dynamic wall construction), 3 tree species, rocks, fern, cannon, and props in parallel!
   const hasCannons = layout.props.some((p) => p.kind === 'cannon');
   const [
     wallTpl,
@@ -884,7 +929,7 @@ export async function buildStage5World(
     stumpGltf,
     saplingGltf,
   ] = await Promise.all([
-    hasWalls ? loadLodTemplate('assets/buildings/wall_segment', { overrideMat: surfaces.buildingMaterial }) : Promise.resolve(null),
+    loadLodTemplate('assets/buildings/wall_segment', { overrideMat: surfaces.buildingMaterial }),
     loadLodTemplate('assets/trees/oak', { impostorUrl: 'assets/trees/oak_impostor.ktx2', impostorW: 11.8, impostorH: 11.8, impostorSink: 0.35, isFoliage: true }),
     loadLodTemplate('assets/trees/pine', { impostorUrl: 'assets/trees/pine_impostor.ktx2', impostorW: 13.0, impostorH: 13.0, impostorSink: 0.40, isFoliage: true }),
     loadLodTemplate('assets/trees/birch', { impostorUrl: 'assets/trees/birch_impostor.ktx2', impostorW: 11.2, impostorH: 11.2, impostorSink: 0.70, isFoliage: true }),
@@ -913,6 +958,9 @@ export async function buildStage5World(
   const multiLodBatches: MultiLodInstancedBatch[] = [];
   const windmillSails: Object3D[] = [];
   const smokePositions: Vector3[] = [];
+  const staticBuildings: StaticBuildingHook[] = [];
+  const staticGates: GateLeafHook[] = [];
+  const treeHooks: TreeBatchHook[] = [];
   const animatedBuildingKinds = new Set<BuildingKind>(['windmill_l1', 'gate_l1']);
 
   // Keep architectural timber framing, chapel belfries & watchtower galleries sharp across full RTS views
@@ -958,18 +1006,30 @@ export async function buildStage5World(
         const m = new Matrix4().compose(TEMP_POS, TEMP_QUAT, TEMP_SCALE);
         return { x: b.x, y, z: b.z, yawRad: b.yawRad, scale: 1, matrix: m, level: 0 };
       });
-      multiLodBatches.push(
-        createMultiLodBatch(
-          scene,
-          `BldBatch_${kind}`,
-          tpl,
-          placements,
-          stage5BuildingLod,
-          shadowProxyMat,
-          surfaces.buildingMaterial,
-          165,
-        ),
+      const bBatch = createMultiLodBatch(
+        scene,
+        `BldBatch_${kind}`,
+        tpl,
+        placements,
+        stage5BuildingLod,
+        shadowProxyMat,
+        surfaces.buildingMaterial,
+        165,
       );
+      multiLodBatches.push(bBatch);
+      for (const pl of placements) {
+        staticBuildings.push({
+          x: pl.x,
+          z: pl.z,
+          setVisible: (vis) => {
+            const wantHidden = !vis;
+            if (Boolean(pl.hidden) !== wantHidden) {
+              pl.hidden = wantHidden;
+              bBatch.dirtyBuckets = true;
+            }
+          },
+        });
+      }
       continue;
     }
 
@@ -990,7 +1050,7 @@ export async function buildStage5World(
       root.add(n0, n1, n2, sh);
       scene.add(root);
 
-      // Register rotating windmill sails & slightly open oak gate leaves
+      // Register rotating windmill sails & animated oak gate leaves
       if (kind === 'windmill_l1') {
         for (const node of [n0, n1, n2]) {
           node.traverse((o) => {
@@ -999,10 +1059,19 @@ export async function buildStage5World(
         }
       } else if (kind === 'gate_l1') {
         for (const node of [n0, n1, n2]) {
+          let leafL: Object3D | null = null;
+          let leafR: Object3D | null = null;
           node.traverse((o) => {
-            if (o.name === 'leaf_l') o.rotation.y = -1.12;
-            if (o.name === 'leaf_r') o.rotation.y = 1.12;
+            if (o.name === 'leaf_l') {
+              o.rotation.y = -1.12;
+              leafL = o;
+            }
+            if (o.name === 'leaf_r') {
+              o.rotation.y = 1.12;
+              leafR = o;
+            }
           });
+          staticGates.push({ x: b.x, z: b.z, leafL, leafR });
         }
       }
       if (smokeOffset) {
@@ -1018,6 +1087,15 @@ export async function buildStage5World(
         thresholds: stage5BuildingLod,
         level: 0,
       });
+      if (kind !== 'gate_l1') {
+        staticBuildings.push({
+          x: b.x,
+          z: b.z,
+          setVisible: (vis) => {
+            root.visible = vis;
+          },
+        });
+      }
     }
   }
 
@@ -1060,18 +1138,32 @@ export async function buildStage5World(
       TEMP_SCALE.set(t.scale, t.scale, t.scale);
       return { x: t.x, y, z: t.z, yawRad: t.yawRad, scale: t.scale, matrix: new Matrix4().compose(TEMP_POS, TEMP_QUAT, TEMP_SCALE), level: 0 };
     });
-    multiLodBatches.push(
-      createMultiLodBatch(
-        scene,
-        `Trees_${sp}`,
-        treeTpls[sp],
-        placements,
-        TREE_LOD_THRESHOLDS,
-        shadowProxyMat,
-        undefined,
-        145,
-      ),
+    const tBatch = createMultiLodBatch(
+      scene,
+      `Trees_${sp}`,
+      treeTpls[sp],
+      placements,
+      TREE_LOD_THRESHOLDS,
+      shadowProxyMat,
+      undefined,
+      145,
     );
+    multiLodBatches.push(tBatch);
+    treeHooks.push({
+      species: sp,
+      setTreeVisible: (x, z, vis) => {
+        for (const pl of placements) {
+          if (Math.abs(pl.x - x) < 0.8 && Math.abs(pl.z - z) < 0.8) {
+            const wantHidden = !vis;
+            if (Boolean(pl.hidden) !== wantHidden) {
+              pl.hidden = wantHidden;
+              tBatch.dirtyBuckets = true;
+            }
+            break;
+          }
+        }
+      },
+    });
   }
 
   // 6. Poly Haven CC0 Photogrammetry Mossy Rocks & Boulders (multi-LOD instanced!)
@@ -1301,6 +1393,7 @@ export async function buildStage5World(
       let changed = batch.dirtyBuckets;
       const hasImp = batch.impostorMesh !== null;
       for (const p of batch.placements) {
+        if (p.hidden) continue;
         const dist = Math.hypot(cameraPos.x - p.x, cameraPos.y - p.y, cameraPos.z - p.z);
         const rawNext = selectLodLevel(dist, p.level, batch.thresholds);
         const next = (hasImp ? rawNext : Math.min(2, rawNext)) as LodLevel;
@@ -1321,6 +1414,7 @@ export async function buildStage5World(
         let shCount = 0;
 
         for (const p of batch.placements) {
+          if (p.hidden) continue;
           if (p.level < 3) {
             const idx = c[p.level as 0 | 1 | 2]++;
             for (const m of batch.lodBuckets[p.level as 0 | 1 | 2]!) {
@@ -1376,12 +1470,62 @@ export async function buildStage5World(
       }
     }
 
-    // 3. GPU Bone-Instanced Characters
-    unitInstancer.update(dtS, cameraPos, paused, (x, z) => terrain.heightAt(x, z));
+    // 3. GPU Bone-Instanced Characters (Stage 5 standalone patrol fallback)
+    if (!simDrivenUnits) {
+      unitInstancer.update(dtS, cameraPos, paused, (x, z) => terrain.heightAt(x, z));
+    }
     const uLod = unitInstancer.getLodCounts();
     lodSummary.lod0! += uLod.lod0 ?? 0;
     lodSummary.lod1! += uLod.lod1 ?? 0;
     lodSummary.lod2! += uLod.lod2 ?? 0;
+  };
+
+  let simDrivenUnits = false;
+
+  // Stage 6 Pre-warmed Combat VFX & Live Dynamic Sim World Synchronizer (all added BEFORE warmUp!)
+  const combatFx = buildCombatFx(scene);
+  const simRenderer = buildSimWorldRenderer({
+    scene,
+    terrain,
+    groundWorks,
+    syncGroundWorks: () => terrainHandles.syncGroundWorks(),
+    buildingMaterial: surfaces.buildingMaterial,
+    buildingTemplates,
+    wallTemplate: wallTpl,
+    stumpRoot: stumpGltf.scene,
+    saplingRoot: saplingGltf.scene,
+    staticBuildings,
+    staticGates,
+    treeHooks,
+  });
+
+  const syncSimWorld: WorldHandles['syncSimWorld'] = (
+    dtS,
+    state,
+    cameraPos,
+    cameraDir,
+    selectedRegimentIds,
+    selectedBuildingId,
+    formationGhost,
+    placementGhost,
+    paused,
+  ) => {
+    simDrivenUnits = true;
+    const hAt = (x: number, z: number): number => terrain.heightAt(x, z);
+    simRenderer.sync(state);
+    unitInstancer.syncFromSim(state, cameraPos, hAt, state.timeS);
+    combatFx.update(
+      dtS,
+      state,
+      cameraPos,
+      hAt,
+      selectedRegimentIds,
+      selectedBuildingId,
+      formationGhost,
+      placementGhost,
+      paused,
+    );
+    update(dtS, cameraPos, cameraDir, paused);
   };
 
   // Seed initial LOD matrices & smoke immediately BEFORE renderer.warmUp() so every pipeline compiles at load!
@@ -1399,7 +1543,10 @@ export async function buildStage5World(
     manifest,
     grass,
     units: unitInstancer,
+    combatFx,
+    simRenderer,
     update,
+    syncSimWorld,
     getLodSummary: () => ({ ...lodSummary }),
     getWorldMetrics: () => ({
       mapId,
@@ -1415,6 +1562,8 @@ export async function buildStage5World(
       wheatClusters: wheat.count,
     }),
     dispose() {
+      combatFx.dispose();
+      simRenderer.dispose();
       scene.remove(terrainHandles.mesh);
       terrainHandles.dispose();
       scene.remove(waterHandles.mesh);

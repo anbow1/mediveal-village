@@ -1,0 +1,61 @@
+{
+ "readyS": 39.368,
+ "idleS": 45.151,
+ "stages": [
+  {
+   "stage": "renderer: 0.087 s"
+  },
+  {
+   "stage": "sky-probe: 0.174 s",
+   "createShaderModule": {
+    "n": 8,
+    "s": 0.00009999999962747097
+   },
+   "createRenderPipeline": {
+    "n": 6,
+    "s": 0.0002000000001862645
+   }
+  },
+  {
+   "stage": "assets: 8.923 s"
+  },
+  {
+   "stage": "scene: 0.615 s"
+  },
+  {
+   "stage": "warmup: 12.422 s",
+   "createShaderModule": {
+    "n": 164,
+    "s": 0.02419999999646096
+   },
+   "createRenderPipeline": {
+    "n": 128,
+    "s": 0.00430000000447035
+   }
+  },
+  {
+   "stage": "first-frames: 16.286 s",
+   "createShaderModule": {
+    "n": 2,
+    "s": 0
+   },
+   "createRenderPipeline": {
+    "n": 1,
+    "s": 0
+   }
+  },
+  {
+   "stage": "total: 38.509 s"
+  },
+  {
+   "stage": "(after the last stage)"
+  }
+ ],
+ "uploads": {},
+ "textureMemory": {
+  "sampledMB": 40.5,
+  "targetsMB": 45.6,
+  "sampledCount": 63,
+  "compressedMB": 39
+ }
+}
