@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BUILDING_DEFS, ECONOMY, type BuildingTypeId } from '../src/config.ts';
+import { ALL_GOODS, BUILDING_DEFS, ECONOMY, EQUIPMENT_WORKSHOP_TYPES, type BuildingTypeId } from '../src/config.ts';
 import { SimEngine } from '../src/sim/engine.ts';
 import { computeProductionRates, countPopulation, listBottlenecks } from '../src/sim/economy.ts';
 
@@ -66,7 +66,7 @@ describe('Stage 6 living town economy & logistics', () => {
     expect(pop.carriers + pop.builders).toBeGreaterThanOrEqual(ECONOMY.minFreeCarriers);
   });
 
-  it('constructs buildings physically via carrier delivery + builder hammering and runs pig -> tannery leather armour chain', () => {
+  it('constructs buildings physically via carrier delivery + builder hammering and runs pig -> tannery leather armour chain when ordered', () => {
     const sim = new SimEngine({ mapId: 'openField', mode: 'skirmish', disableAi: true, seed: 77 });
     const keep = sim.state.buildings.find((b) => b.side === 0 && b.type === 'keep')!;
     sim.state.sides[0].stock.gold = 1500;
@@ -82,11 +82,16 @@ describe('Stage 6 living town economy & logistics', () => {
     const tSp = findValidSpot(sim, 'tannery', keep.x, keep.z);
     expect(sim.execute({ type: 'placeBuilding', side: 0, buildingType: 'tannery', x: tSp.x, z: tSp.z, yawRad: 0 }).ok).toBe(true);
 
+    const tannery = sim.state.buildings.find((b) => b.side === 0 && b.type === 'tannery')!;
+    expect(tannery.pendingOrders ?? 0).toBe(0);
+    // Order equipment for pikemen via Barracks order command -> queues 12 leatherArmour on tannery!
+    expect(sim.execute({ type: 'orderUnitEquipment', side: 0, unitType: 'pikemen' }).ok).toBe(true);
+    expect(tannery.pendingOrders).toBe(12);
+
     stepMinutes(sim, 4.5);
 
     const house = sim.state.buildings.find((b) => b.side === 0 && b.type === 'house')!;
     const pigFarm = sim.state.buildings.find((b) => b.side === 0 && b.type === 'pigFarm')!;
-    const tannery = sim.state.buildings.find((b) => b.side === 0 && b.type === 'tannery')!;
     expect(house.buildProgress).toBe(1);
     expect(pigFarm.buildProgress).toBe(1);
     expect(tannery.buildProgress).toBe(1);
@@ -95,9 +100,57 @@ describe('Stage 6 living town economy & logistics', () => {
       sim.state.sides[0].stock.leatherArmour +
       (tannery.yard.leatherArmour ?? 0);
     expect(totalLeather).toBeGreaterThanOrEqual(1);
+    expect(tannery.pendingOrders).toBeLessThan(12);
 
     const rates = computeProductionRates(sim.state, 0);
     expect(rates.length).toBeGreaterThanOrEqual(5);
+  });
+
+  it('starts all weapon/equipment buildings with 0 orders (idle) and regulates production via Barracks orderUnitEquipment', () => {
+    const sim = new SimEngine({ mapId: 'openField', mode: 'skirmish', disableAi: true, seed: 64 });
+    const keep = sim.state.buildings.find((b) => b.side === 0 && b.type === 'keep')!;
+    const stock = sim.state.sides[0].stock;
+    stock.gold = 3000;
+    stock.timber = 400;
+    stock.planks = 200;
+    stock.stone = 300;
+    stock.iron = 60;
+    stock.hides = 60;
+    stock.grain = 60;
+
+    for (const wt of EQUIPMENT_WORKSHOP_TYPES) {
+      const sp = findValidSpot(sim, wt, keep.x, keep.z);
+      const res = sim.execute({ type: 'placeBuilding', side: 0, buildingType: wt, x: sp.x, z: sp.z, yawRad: 0 });
+      expect(res.ok).toBe(true);
+      const b = sim.state.buildings.find((x) => x.id === res.createdId)!;
+      b.buildProgress = 1;
+      b.inputs.iron = 10;
+      b.inputs.timber = 10;
+      b.inputs.hides = 10;
+      b.inputs.grain = 10;
+      expect(b.pendingOrders).toBe(0);
+    }
+
+    // Step 1.5 minutes with 0 orders -> workshops must NOT produce any weapons/bows/mail/leatherArmour/horses!
+    const wpnBefore = stock.weapons;
+    const bowsBefore = stock.bows;
+    stepMinutes(sim, 1.5);
+    const smithy = sim.state.buildings.find((b) => b.side === 0 && b.type === 'smithy')!;
+    const fletcher = sim.state.buildings.find((b) => b.side === 0 && b.type === 'fletcher')!;
+    expect(smithy.status).toBe('idle');
+    expect(fletcher.status).toBe('idle');
+    expect(stock.weapons + (smithy.yard.weapons ?? 0)).toBe(wpnBefore);
+    expect(stock.bows + (fletcher.yard.bows ?? 0)).toBe(bowsBefore);
+
+    // Now click unit icon in Barracks (`orderUnitEquipment` for archers -> 12 bows + 12 leatherArmour)
+    expect(sim.execute({ type: 'orderUnitEquipment', side: 0, unitType: 'archers' }).ok).toBe(true);
+    expect(fletcher.pendingOrders).toBe(12);
+    const tannery = sim.state.buildings.find((b) => b.side === 0 && b.type === 'tannery')!;
+    expect(tannery.pendingOrders).toBe(12);
+
+    stepMinutes(sim, 1.0);
+    expect(stock.bows + (fletcher.yard.bows ?? 0)).toBeGreaterThan(bowsBefore);
+    expect(fletcher.pendingOrders).toBeLessThan(12);
   });
 
   it('halts workshop output when yard reaches 24 units and reports bottleneck', () => {
@@ -160,11 +213,11 @@ describe('Stage 6 living town economy & logistics', () => {
     expect(houseA.residents).toBeGreaterThan(houseB.residents);
   });
 
-  it('validates Keep L1->L2->L3 upgrades, Market 10-lot trade (60%/160%), and 50% demolish refund', () => {
+  it('validates Keep L1->L2->L3 upgrades, Market 10-lot trade for all 20 non-gold goods (60%/160%), and 50% demolish refund', () => {
     const sim = new SimEngine({ mapId: 'openField', mode: 'skirmish', disableAi: true, seed: 33 });
     const keep = sim.state.buildings.find((b) => b.side === 0 && b.type === 'keep')!;
     const stock = sim.state.sides[0].stock;
-    stock.gold = 3000;
+    stock.gold = 9000;
     stock.timber = 500;
     stock.planks = 200;
     stock.stone = 500; // enough for L1->L2 (120) + L2->L3 (240) + market!
@@ -183,22 +236,25 @@ describe('Stage 6 living town economy & logistics', () => {
     stepMinutes(sim, 1.5);
     expect(keep.level).toBe(3);
 
-    // Place & complete Market -> test 10-lot sell & buy
+    // Place & complete Market -> test buying and selling EVERY non-gold good from raw materials to weapons!
     const mSp = findValidSpot(sim, 'market', keep.x, keep.z);
     const mRes = sim.execute({ type: 'placeBuilding', side: 0, buildingType: 'market', x: mSp.x, z: mSp.z, yawRad: 0 });
     expect(mRes.ok).toBe(true);
     const market = sim.state.buildings.find((b) => b.id === mRes.createdId)!;
     market.buildProgress = 1;
 
-    const goldBeforeSell = stock.gold;
-    const timberBeforeSell = stock.timber;
-    expect(sim.execute({ type: 'marketTrade', side: 0, action: 'sell', good: 'timber' }).ok).toBe(true);
-    expect(stock.timber).toBe(timberBeforeSell - ECONOMY.marketLotSize);
-    expect(stock.gold).toBeGreaterThan(goldBeforeSell);
+    const tradableGoods = ALL_GOODS.filter((g) => g !== 'gold');
+    expect(tradableGoods).toHaveLength(20);
+    for (const g of tradableGoods) {
+      const before = stock[g] ?? 0;
+      const buyRes = sim.execute({ type: 'marketTrade', side: 0, action: 'buy', good: g });
+      expect(buyRes.ok, `Market should allow buying ${g}`).toBe(true);
+      expect(stock[g]).toBe(before + ECONOMY.marketLotSize);
 
-    const goldBeforeBuy = stock.gold;
-    expect(sim.execute({ type: 'marketTrade', side: 0, action: 'buy', good: 'iron' }).ok).toBe(true);
-    expect(stock.gold).toBeLessThan(goldBeforeBuy);
+      const sellRes = sim.execute({ type: 'marketTrade', side: 0, action: 'sell', good: g });
+      expect(sellRes.ok, `Market should allow selling ${g}`).toBe(true);
+      expect(stock[g]).toBe(before);
+    }
 
     // Demolish Market -> 50% refund of gold + timber/stone
     const goldPreDemolish = stock.gold;
@@ -278,4 +334,5 @@ describe('Stage 6 living town economy & logistics', () => {
     expect(farm.strips).toHaveLength(8);
   });
 });
+
 

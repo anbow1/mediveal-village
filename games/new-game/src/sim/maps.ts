@@ -244,7 +244,18 @@ function appendRegiment(
   }
 }
 
-/** Emits a full medieval player settlement anchored around (ox, oz) with roads, farms, props & patrolling villagers. */
+/**
+ * Emits a grid-planned medieval player settlement anchored around (ox, oz):
+ *   - Main East-West High Street along `z = oz`
+ *   - West Cross Street along `x = ox - dir * 4` & East Cross Street along `x = ox + dir * 20`
+ *   - Every building sits off the street inside a grid block with its front entrance (`+Z` rotated by `yawRad`)
+ *     facing directly toward the adjacent street.
+ *   - Related buildings are grouped into 4 logistics districts:
+ *       1. Keep & Central Depot + Forestry (West block: Keep, Storehouse, Woodcutter)
+ *       2. Food Production Chain (South-West & South-Central: Farm -> Windmill -> Bakery)
+ *       3. Civic & Residential Quarter (Central block: Market, Well, Chapel, 4× House within Well radius)
+ *       4. Military & Armaments Quarter (East block: Smithy directly opposite Barracks)
+ */
 function appendPlayerTown(
   ox: number,
   oz: number,
@@ -257,67 +268,76 @@ function appendPlayerTown(
 ): void {
   const dir = facingEast ? 1 : -1;
   const fYaw = facingEast ? Math.PI * 0.5 : -Math.PI * 0.5;
+  const bYaw = facingEast ? -Math.PI * 0.5 : Math.PI * 0.5;
+  const sYaw = 0.0;
+  const nYaw = Math.PI;
 
-  // Core medieval town layout (spaced cleanly so yards never collide and lanes stay clear!)
   buildings.push(
-    { kind: 'keep_l1', x: ox - dir * 16, z: oz - 4, yawRad: facingEast ? 0.15 : -0.15, yardRx: 11.5, yardRz: 9.5, team: 0 },
-    { kind: 'market_l1', x: ox + dir * 4, z: oz + 2, yawRad: 0.06, yardRx: 8.5, yardRz: 7.5, team: 0 },
-    { kind: 'well_l1', x: ox + dir * 13, z: oz + 1, yawRad: 0.0, yardRx: 3.4, yardRz: 3.4, team: 0 },
-    { kind: 'chapel_l1', x: ox - dir * 4, z: oz - 24, yawRad: 0.04, yardRx: 7.5, yardRz: 9.5, team: 0 },
-    { kind: 'house_l1', x: ox + dir * 14, z: oz - 16, yawRad: -0.22, yardRx: 6.2, yardRz: 5.8, team: 0 },
-    { kind: 'house_l1', x: ox + dir * 24, z: oz - 12, yawRad: -0.14, yardRx: 6.0, yardRz: 5.6, team: 0 },
-    { kind: 'house_l1', x: ox - dir * 12, z: oz + 16, yawRad: 2.95, yardRx: 6.0, yardRz: 5.6, team: 0 },
-    { kind: 'house_l1', x: ox + dir * 2, z: oz + 20, yawRad: 3.08, yardRx: 6.0, yardRz: 5.6, team: 0 },
-    { kind: 'bakery_l1', x: ox + dir * 15, z: oz + 15, yawRad: 2.86, yardRx: 6.8, yardRz: 5.5, team: 0 },
-    { kind: 'smithy_l1', x: ox + dir * 26, z: oz + 12, yawRad: fYaw - 0.3, yardRx: 6.8, yardRz: 5.8, team: 0 },
-    { kind: 'barracks_l1', x: ox + dir * 26, z: oz - 26, yawRad: 0.18, yardRx: 9.5, yardRz: 7.2, team: 0 },
-    { kind: 'storehouse_l1', x: ox - dir * 22, z: oz + 12, yawRad: 0.25, yardRx: 7.5, yardRz: 6.2, team: 0 },
-    { kind: 'windmill_l1', x: ox - dir * 32, z: oz - 18, yawRad: 0.55, yardRx: 6.2, yardRz: 6.2, team: 0 },
-    { kind: 'farm_l1', x: ox - dir * 34, z: oz + 6, yawRad: 0.18, yardRx: 7.4, yardRz: 5.8, team: 0 },
-    { kind: 'woodcutter_l1', x: ox - dir * 20, z: oz - 34, yawRad: 0.35, yardRx: 6.8, yardRz: 5.8, team: 0 },
+    // 1. Keep, Central Depot & Forestry (West of West Cross Street x = ox - dir * 4, entrances facing East onto street)
+    { kind: 'keep_l1', x: ox - dir * 16, z: oz, yawRad: fYaw, yardRx: 11.5, yardRz: 9.5, team: 0 },
+    { kind: 'storehouse_l1', x: ox - dir * 14, z: oz - 14, yawRad: fYaw, yardRx: 7.5, yardRz: 6.2, team: 0 },
+    { kind: 'woodcutter_l1', x: ox - dir * 14, z: oz - 26, yawRad: fYaw, yardRx: 6.8, yardRz: 5.8, team: 0 },
+
+    // 2. Food Chain District (Farm -> Windmill -> Bakery grouped along South-West & Main Street)
+    { kind: 'farm_l1', x: ox - dir * 30, z: oz + 14, yawRad: fYaw, yardRx: 7.4, yardRz: 5.8, team: 0 },
+    { kind: 'windmill_l1', x: ox - dir * 14, z: oz + 14, yawRad: fYaw, yardRx: 6.2, yardRz: 6.2, team: 0 },
+    { kind: 'bakery_l1', x: ox + dir * 4, z: oz + 11, yawRad: nYaw, yardRx: 6.8, yardRz: 5.5, team: 0 },
+
+    // 3. Civic & Residential Quarter (Central grid block around Market & Well; all houses within 40 m of Well)
+    { kind: 'market_l1', x: ox + dir * 4, z: oz - 11, yawRad: sYaw, yardRx: 8.5, yardRz: 7.5, team: 0 },
+    { kind: 'well_l1', x: ox + dir * 12, z: oz - 8, yawRad: sYaw, yardRx: 3.4, yardRz: 3.4, team: 0 },
+    { kind: 'chapel_l1', x: ox + dir * 4, z: oz - 24, yawRad: bYaw, yardRx: 7.5, yardRz: 9.5, team: 0 },
+    { kind: 'house_l1', x: ox + dir * 13, z: oz + 11, yawRad: nYaw, yardRx: 6.0, yardRz: 5.6, team: 0 },
+    { kind: 'house_l1', x: ox + dir * 13, z: oz - 20, yawRad: fYaw, yardRx: 6.0, yardRz: 5.6, team: 0 },
+    { kind: 'house_l1', x: ox + dir * 4, z: oz + 22, yawRad: bYaw, yardRx: 6.0, yardRz: 5.6, team: 0 },
+    { kind: 'house_l1', x: ox + dir * 13, z: oz + 22, yawRad: fYaw, yardRx: 6.0, yardRz: 5.6, team: 0 },
+
+    // 4. Military & Armaments District (East block: Smithy & Barracks paired across Main High Street)
+    { kind: 'smithy_l1', x: ox + dir * 28, z: oz - 11, yawRad: sYaw, yardRx: 6.8, yardRz: 5.8, team: 0 },
+    { kind: 'barracks_l1', x: ox + dir * 28, z: oz + 12, yawRad: nYaw, yardRx: 9.5, yardRz: 7.2, team: 0 },
   );
 
-  // Golden ripening wheat strips behind the Farm & Windmill
+  // Golden ripening wheat strips neatly aligned behind the Farm
   for (let i = 0; i < 4; i++) {
     farmStrips.push({
-      cx: ox - dir * (44 + i * 0.5),
-      cz: oz - 6 + i * 5.8,
+      cx: ox - dir * 42,
+      cz: oz + 5 + i * 5.8,
       lenM: 16.5,
       widM: 4.4,
-      yawRad: 0.10,
+      yawRad: 0.0,
     });
   }
 
-  // Village props: Poly Haven crates, buckets, barrels, forestry stumps & saplings
+  // Village props tucked neatly beside workshop yards (off the streets)
   props.push(
-    { kind: 'crate', x: ox + dir * 9.5, z: oz + 8.5, yawRad: 0.42, scale: 1.05 },
-    { kind: 'barrel', x: ox + dir * 8.6, z: oz + 9.2, yawRad: 0.18, scale: 1.0 },
-    { kind: 'crate', x: ox + dir * 10.5, z: oz - 3.0, yawRad: 0.22, scale: 1.0 },
-    { kind: 'crate', x: ox + dir * 11.4, z: oz - 2.3, yawRad: 0.85, scale: 0.92 },
-    { kind: 'bucket', x: ox + dir * 14.4, z: oz + 2.2, yawRad: 0.3, scale: 1.0 },
-    { kind: 'bucket', x: ox + dir * 14.2, z: oz + 12.2, yawRad: 1.4, scale: 1.0 },
-    { kind: 'barrel', x: ox - dir * 17.5, z: oz + 14.5, yawRad: 0.15, scale: 1.0 },
-    { kind: 'barrel', x: ox - dir * 16.6, z: oz + 15.1, yawRad: 0.92, scale: 0.95 },
-    { kind: 'crate', x: ox - dir * 18.2, z: oz + 15.4, yawRad: 0.5, scale: 1.05 },
-    { kind: 'barrel', x: ox - dir * 29.0, z: oz + 13.0, yawRad: -0.45, scale: 1.0 },
+    { kind: 'crate', x: ox + dir * 7.5, z: oz - 7.5, yawRad: 0.0, scale: 1.05 },
+    { kind: 'barrel', x: ox + dir * 8.6, z: oz - 7.5, yawRad: 0.0, scale: 1.0 },
+    { kind: 'crate', x: ox + dir * 7.5, z: oz + 7.5, yawRad: 0.0, scale: 1.0 },
+    { kind: 'crate', x: ox + dir * 8.4, z: oz + 7.5, yawRad: 0.5, scale: 0.92 },
+    { kind: 'bucket', x: ox + dir * 12.8, z: oz - 6.2, yawRad: 0.3, scale: 1.0 },
+    { kind: 'bucket', x: ox + dir * 11.2, z: oz - 6.2, yawRad: 1.4, scale: 1.0 },
+    { kind: 'barrel', x: ox - dir * 10.5, z: oz - 12.5, yawRad: 0.0, scale: 1.0 },
+    { kind: 'barrel', x: ox - dir * 10.5, z: oz - 13.6, yawRad: 0.8, scale: 0.95 },
+    { kind: 'crate', x: ox - dir * 10.5, z: oz + 12.5, yawRad: 0.0, scale: 1.05 },
+    { kind: 'barrel', x: ox + dir * 25.0, z: oz - 7.5, yawRad: 0.0, scale: 1.0 },
   );
   for (let k = 0; k < 7; k++) {
     const a = k * 0.95;
     props.push({
       kind: k % 2 === 0 ? 'stump' : 'sapling',
-      x: ox - dir * (25 + Math.cos(a) * 6.5),
-      z: oz - 39 + Math.sin(a) * 5.2,
+      x: ox - dir * (22 + Math.cos(a) * 5.5),
+      z: oz - 34 + Math.sin(a) * 4.8,
       yawRad: rng() * Math.PI * 2,
       scale: 0.88 + rng() * 0.35,
     });
   }
 
-  // 16 living MakeHuman villagers walking lanes around Market, Well, Bakery, Chapel, Farm, Keep
+  // 16 living MakeHuman villagers patrolling along the orthogonal grid streets
   const loops: readonly (readonly (readonly [number, number])[])[] = [
-    [[ox + dir * 8, oz + 7], [ox + dir * 18, oz + 7], [ox + dir * 18, oz - 6], [ox + dir * 6, oz - 6]],
-    [[ox - dir * 6, oz + 8], [ox + dir * 10, oz + 11], [ox + dir * 11, oz + 2], [ox - dir * 8, oz + 2]],
-    [[ox - dir * 26, oz + 4], [ox - dir * 14, oz + 6], [ox - dir * 12, oz - 10], [ox - dir * 26, oz - 10]],
-    [[ox + dir * 16, oz - 8], [ox + dir * 28, oz - 8], [ox + dir * 28, oz + 6], [ox + dir * 16, oz + 6]],
+    [[ox - dir * 4, oz], [ox + dir * 20, oz], [ox + dir * 20, oz - 18], [ox - dir * 4, oz - 18]],
+    [[ox - dir * 4, oz], [ox + dir * 20, oz], [ox + dir * 20, oz + 18], [ox - dir * 4, oz + 18]],
+    [[ox - dir * 4, oz - 22], [ox - dir * 4, oz + 22], [ox + dir * 20, oz + 22], [ox + dir * 20, oz - 22]],
+    [[ox + dir * 20, oz - 16], [ox + dir * 20, oz + 16], [ox + dir * 32, oz], [ox - dir * 4, oz]],
   ];
   for (let i = 0; i < 16; i++) {
     const loop = loops[i % loops.length]!;
@@ -326,8 +346,8 @@ function appendPlayerTown(
     units.push({
       archetype: 'citizen',
       team: 0,
-      x: p0[0] + (rng() - 0.5) * 3.0,
-      z: p0[1] + (rng() - 0.5) * 3.0,
+      x: p0[0] + (rng() - 0.5) * 2.0,
+      z: p0[1] + (rng() - 0.5) * 2.0,
       yawRad: rng() * Math.PI * 2,
       scale: 0.95 + rng() * 0.10,
       clip: moving ? 'walk' : i % 2 === 0 ? 'attack' : 'idle',
@@ -337,6 +357,16 @@ function appendPlayerTown(
       patrol: moving ? loop : undefined,
     });
   }
+}
+
+/** Returns the orthogonal internal town street network for a grid-planned player town anchored at (ox, oz). */
+function getPlayerTownGridRoads(ox: number, oz: number, facingEast: boolean): (readonly (readonly [number, number])[])[] {
+  const dir = facingEast ? 1 : -1;
+  return [
+    // West Cross Street & East Cross Street
+    [[ox - dir * 4, oz - 26], [ox - dir * 4, oz], [ox - dir * 4, oz + 26]],
+    [[ox + dir * 20, oz - 24], [ox + dir * 20, oz], [ox + dir * 20, oz + 24]],
+  ];
 }
 
 /**
@@ -652,16 +682,16 @@ function buildCrossingMap(): MapLayoutSpec {
   appendWallRun(walls, -16, -15, -16, 2.2, [], false);
   appendWallRun(walls, -16, 9.8, -16, 27, [], false);
 
-  // 2. East Bank Enemy Crimson War Camp (clearly visible across the river causeway!)
+  // 2. East Bank Enemy Crimson War Camp (grid-aligned along camp road z = 6, entrances facing the road!)
   buildings.push(
     { kind: 'gate_l1', x: 78, z: 6, yawRad: -Math.PI * 0.5, yardRx: 5.5, yardRz: 5.5, team: 1 },
     { kind: 'watchtower_l1', x: 78, z: -14, yawRad: -Math.PI * 0.5, yardRx: 4.5, yardRz: 4.5, team: 1 },
     { kind: 'watchtower_l1', x: 78, z: 26, yawRad: -Math.PI * 0.5, yardRx: 4.5, yardRz: 4.5, team: 1 },
-    { kind: 'camp_tent_l1', x: 102, z: -6, yawRad: -1.45, yardRx: 5.5, yardRz: 5.5, team: 1 },
-    { kind: 'camp_tent_l1', x: 104, z: 12, yawRad: -1.62, yardRx: 5.5, yardRz: 5.5, team: 1 },
-    { kind: 'camp_tent_l1', x: 118, z: 4, yawRad: -1.55, yardRx: 6.2, yardRz: 6.2, team: 1 },
-    { kind: 'camp_tent_l1', x: 114, z: -18, yawRad: -1.25, yardRx: 5.5, yardRz: 5.5, team: 1 },
-    { kind: 'camp_tent_l1', x: 115, z: 24, yawRad: -1.85, yardRx: 5.5, yardRz: 5.5, team: 1 },
+    { kind: 'camp_tent_l1', x: 100, z: -6, yawRad: 0.0, yardRx: 5.5, yardRz: 5.5, team: 1 },
+    { kind: 'camp_tent_l1', x: 112, z: -6, yawRad: 0.0, yardRx: 5.5, yardRz: 5.5, team: 1 },
+    { kind: 'camp_tent_l1', x: 100, z: 18, yawRad: Math.PI, yardRx: 5.5, yardRz: 5.5, team: 1 },
+    { kind: 'camp_tent_l1', x: 112, z: 18, yawRad: Math.PI, yardRx: 5.5, yardRz: 5.5, team: 1 },
+    { kind: 'camp_tent_l1', x: 124, z: 6, yawRad: -Math.PI * 0.5, yardRx: 6.2, yardRz: 6.2, team: 1 },
   );
   appendWallRun(walls, 78, -11, 78, 2.2, [], true);
   appendWallRun(walls, 78, 9.8, 78, 23, [], true);
@@ -669,9 +699,9 @@ function buildCrossingMap(): MapLayoutSpec {
   props.push(
     { kind: 'cannon', x: 64, z: -3, yawRad: -Math.PI * 0.5, scale: 1.0 },
     { kind: 'cannon', x: 64, z: 15, yawRad: -Math.PI * 0.5, scale: 1.0 },
-    { kind: 'crate', x: 96, z: 3, yawRad: 0.4, scale: 1.0 },
-    { kind: 'barrel', x: 97.5, z: 4.2, yawRad: 0.1, scale: 1.0 },
-    { kind: 'crate', x: 95, z: 16, yawRad: 2.1, scale: 1.05 },
+    { kind: 'crate', x: 96, z: -2, yawRad: 0.0, scale: 1.0 },
+    { kind: 'barrel', x: 97.5, z: -2, yawRad: 0.0, scale: 1.0 },
+    { kind: 'crate', x: 96, z: 14, yawRad: 0.0, scale: 1.05 },
   );
 
   // 3. Opposing Armies (160+ total GPU-instanced MakeHuman soldiers & villagers!)
@@ -690,8 +720,9 @@ function buildCrossingMap(): MapLayoutSpec {
   appendRegiment(units, 'swordsman', 1, 90, 6, 4, 3, -Math.PI * 0.5, 1.6, rng, 'walk');
 
   const roads: readonly (readonly (readonly [number, number])[])[] = [
-    [[-108, 4], [-74, 2], [-48, 5], [-16, 6], [24, 6], [78, 6], [116, 6]],
-    [[-56, -24], [-56, 4], [-52, 24], [-30, 44]],
+    [[-74, 0], [-30, 0], [-16, 6], [24, 6], [78, 6], [116, 6]],
+    ...getPlayerTownGridRoads(-66, 0, true),
+    [[-46, 24], [-30, 44]],
     [[-16, -18], [-12, -55], [24, -90], [64, -84], [78, -14]],
     [[-16, 30], [-6, 68], [24, 96], [66, 86], [78, 26]],
   ];
@@ -758,14 +789,14 @@ function buildOpenFieldMap(): MapLayoutSpec {
   appendPlayerTown(-118, 0, true, buildings, farmStrips, props, units, rng);
   buildings.push(
     { kind: 'fisher_l1', x: -115, z: 78, yawRad: 0.75, yardRx: 5.5, yardRz: 5.0, team: 0 },
-    // East rival lord's fortified manor & garrison
-    { kind: 'keep_l1', x: 136, z: -2, yawRad: Math.PI, yardRx: 11.5, yardRz: 9.5, team: 1 },
-    { kind: 'barracks_l1', x: 112, z: -22, yawRad: Math.PI, yardRx: 9.5, yardRz: 7.0, team: 1 },
-    { kind: 'house_l1', x: 116, z: 16, yawRad: Math.PI, yardRx: 6.0, yardRz: 5.5, team: 1 },
-    { kind: 'camp_tent_l1', x: 96, z: -12, yawRad: -1.55, yardRx: 5.5, yardRz: 5.5, team: 1 },
-    { kind: 'camp_tent_l1', x: 96, z: 12, yawRad: -1.55, yardRx: 5.5, yardRz: 5.5, team: 1 },
-    { kind: 'watchtower_l1', x: 86, z: -24, yawRad: -Math.PI * 0.5, yardRx: 4.5, yardRz: 4.5, team: 1 },
-    { kind: 'watchtower_l1', x: 86, z: 24, yawRad: -Math.PI * 0.5, yardRx: 4.5, yardRz: 4.5, team: 1 },
+    // East rival lord's fortified manor & garrison (grid-aligned along z = 0 road, entrances facing road!)
+    { kind: 'keep_l1', x: 136, z: 0, yawRad: -Math.PI * 0.5, yardRx: 11.5, yardRz: 9.5, team: 1 },
+    { kind: 'barracks_l1', x: 116, z: -12, yawRad: 0.0, yardRx: 9.5, yardRz: 7.0, team: 1 },
+    { kind: 'house_l1', x: 116, z: 12, yawRad: Math.PI, yardRx: 6.0, yardRz: 5.5, team: 1 },
+    { kind: 'camp_tent_l1', x: 98, z: -10, yawRad: 0.0, yardRx: 5.5, yardRz: 5.5, team: 1 },
+    { kind: 'camp_tent_l1', x: 98, z: 10, yawRad: Math.PI, yardRx: 5.5, yardRz: 5.5, team: 1 },
+    { kind: 'watchtower_l1', x: 86, z: -20, yawRad: -Math.PI * 0.5, yardRx: 4.5, yardRz: 4.5, team: 1 },
+    { kind: 'watchtower_l1', x: 86, z: 20, yawRad: -Math.PI * 0.5, yardRx: 4.5, yardRz: 4.5, team: 1 },
   );
   props.push(
     { kind: 'pier', x: -108, z: 83, yawRad: 0.75, scale: 0.95 },
@@ -782,8 +813,9 @@ function buildOpenFieldMap(): MapLayoutSpec {
   appendRegiment(units, 'archer', 1, 44, 4, 8, 3, -Math.PI * 0.5, 1.6, rng, 'attack');
 
   const roads: readonly (readonly (readonly [number, number])[])[] = [
-    [[-150, 2], [-90, 2], [0, 0], [90, 2], [136, 2]],
-    [[-115, 2], [-112, 72]],
+    [[-126, 0], [-82, 0], [0, 0], [88, 0], [126, 0]],
+    ...getPlayerTownGridRoads(-118, 0, true),
+    [[-122, 26], [-115, 72]],
   ];
   const capturePoints: readonly CapturePointSpec[] = [
     { id: 'cp_north', label: 'Northern Meadow', x: 0, z: -72 },
@@ -842,13 +874,14 @@ function buildForestMap(): MapLayoutSpec {
 
   appendPlayerTown(-110, -12, true, buildings, farmStrips, props, units, rng);
   buildings.push(
-    { kind: 'woodcutter_l1', x: -55, z: -26, yawRad: 0.6, yardRx: 6.5, yardRz: 6.0, team: 0 },
+    { kind: 'woodcutter_l1', x: -55, z: -24, yawRad: 0.0, yardRx: 6.5, yardRz: 6.0, team: 0 },
     { kind: 'fisher_l1', x: -12, z: -56, yawRad: 1.0, yardRx: 5.5, yardRz: 5.0, team: 0 },
-    { kind: 'watchtower_l1', x: 0, z: 4, yawRad: 0.0, yardRx: 4.5, yardRz: 4.5, team: 1 },
-    { kind: 'camp_tent_l1', x: 105, z: 12, yawRad: -1.6, yardRx: 5.5, yardRz: 5.5, team: 1 },
-    { kind: 'camp_tent_l1', x: 118, z: 24, yawRad: -1.8, yardRx: 5.5, yardRz: 5.5, team: 1 },
-    { kind: 'camp_tent_l1', x: 112, z: -2, yawRad: -1.4, yardRx: 5.5, yardRz: 5.5, team: 1 },
-    { kind: 'barracks_l1', x: 128, z: 14, yawRad: Math.PI, yardRx: 9.0, yardRz: 7.0, team: 1 },
+    { kind: 'watchtower_l1', x: 0, z: -6, yawRad: 0.0, yardRx: 4.5, yardRz: 4.5, team: 1 },
+    // East bandit camp grid-aligned along z = 16 road with entrances facing the road
+    { kind: 'camp_tent_l1', x: 102, z: 6, yawRad: 0.0, yardRx: 5.5, yardRz: 5.5, team: 1 },
+    { kind: 'camp_tent_l1', x: 114, z: 6, yawRad: 0.0, yardRx: 5.5, yardRz: 5.5, team: 1 },
+    { kind: 'camp_tent_l1', x: 108, z: 26, yawRad: Math.PI, yardRx: 5.5, yardRz: 5.5, team: 1 },
+    { kind: 'barracks_l1', x: 128, z: 16, yawRad: -Math.PI * 0.5, yardRx: 9.0, yardRz: 7.0, team: 1 },
   );
   props.push({ kind: 'pier', x: -5, z: -59, yawRad: 1.0, scale: 0.92 });
 
@@ -860,7 +893,8 @@ function buildForestMap(): MapLayoutSpec {
   appendRegiment(units, 'archer', 1, 68, 18, 6, 3, -1.5, 1.6, rng, 'attack');
 
   const roads: readonly (readonly (readonly [number, number])[])[] = [
-    [[-140, -10], [-76, -8], [-22, -4], [24, 6], [76, 14], [116, 16]],
+    [[-118, -12], [-74, -12], [-22, -4], [24, 6], [76, 16], [118, 16]],
+    ...getPlayerTownGridRoads(-110, -12, true),
     [[-16, -4], [-8, -50]],
     [[4, 4], [10, 74]],
   ];
@@ -938,24 +972,24 @@ function buildValleyMap(): MapLayoutSpec {
   appendPlayerTown(-140, 0, true, buildings, farmStrips, props, units, rng);
 
   // Central Valley Village centered at (+118, 0) — EXACTLY 274 m from Player Keep (-156, 0)!
-  // Contains intact core buildings + Watchtower + 6 charred rebuildable `ruin_house`s (Mission 3-4!)
+  // Grid-planned around the main valley road (z = 0) and cross street (x = 118), with all entrances facing the streets!
   buildings.push(
-    { kind: 'market_l1', x: 118, z: 0, yawRad: 0.0, yardRx: 8.5, yardRz: 7.5, team: 1 },
-    { kind: 'well_l1', x: 110, z: -2, yawRad: 0.0, yardRx: 3.4, yardRz: 3.4, team: 1 },
-    { kind: 'watchtower_l1', x: 98, z: -12, yawRad: -Math.PI * 0.5, yardRx: 4.8, yardRz: 4.8, team: 1 },
-    { kind: 'house_l1', x: 124, z: -18, yawRad: 0.12, yardRx: 6.2, yardRz: 5.8, team: 1 },
-    { kind: 'house_l1', x: 134, z: 12, yawRad: 3.02, yardRx: 6.2, yardRz: 5.8, team: 1 },
-    { kind: 'house_l1', x: 116, z: 22, yawRad: 3.12, yardRx: 6.2, yardRz: 5.8, team: 1 },
-    // 6 Rebuildable Burned Cottage Ruins encircling the central valley village square (docs/CAMPAIGN.md M4!)
-    { kind: 'ruin_house', x: 102, z: 18, yawRad: 0.35, yardRx: 5.5, yardRz: 5.0, team: 1 },
-    { kind: 'ruin_house', x: 108, z: -22, yawRad: -0.25, yardRx: 5.5, yardRz: 5.0, team: 1 },
-    { kind: 'ruin_house', x: 138, z: -14, yawRad: 1.45, yardRx: 5.5, yardRz: 5.0, team: 1 },
-    { kind: 'ruin_house', x: 144, z: 2, yawRad: -1.65, yardRx: 5.5, yardRz: 5.0, team: 1 },
-    { kind: 'ruin_house', x: 128, z: 28, yawRad: 2.85, yardRx: 5.5, yardRz: 5.0, team: 1 },
-    { kind: 'ruin_house', x: 92, z: 6, yawRad: 0.65, yardRx: 5.5, yardRz: 5.0, team: 1 },
-    // East pass enemy relief camp
-    { kind: 'camp_tent_l1', x: 212, z: -12, yawRad: -1.55, yardRx: 5.5, yardRz: 5.5, team: 1 },
-    { kind: 'camp_tent_l1', x: 212, z: 12, yawRad: -1.55, yardRx: 5.5, yardRz: 5.5, team: 1 },
+    { kind: 'market_l1', x: 110, z: -11, yawRad: 0.0, yardRx: 8.5, yardRz: 7.5, team: 1 },
+    { kind: 'well_l1', x: 126, z: -9, yawRad: 0.0, yardRx: 3.4, yardRz: 3.4, team: 1 },
+    { kind: 'watchtower_l1', x: 96, z: -11, yawRad: 0.0, yardRx: 4.8, yardRz: 4.8, team: 1 },
+    { kind: 'house_l1', x: 110, z: 11, yawRad: Math.PI, yardRx: 6.2, yardRz: 5.8, team: 1 },
+    { kind: 'house_l1', x: 126, z: 11, yawRad: Math.PI, yardRx: 6.2, yardRz: 5.8, team: 1 },
+    { kind: 'house_l1', x: 110, z: 22, yawRad: Math.PI * 0.5, yardRx: 6.2, yardRz: 5.8, team: 1 },
+    // 6 Rebuildable Burned Cottage Ruins neatly aligned on the village street grid facing z = 0 and x = 118 (docs/CAMPAIGN.md M4!)
+    { kind: 'ruin_house', x: 96, z: 11, yawRad: Math.PI, yardRx: 5.5, yardRz: 5.0, team: 1 },
+    { kind: 'ruin_house', x: 110, z: -22, yawRad: Math.PI * 0.5, yardRx: 5.5, yardRz: 5.0, team: 1 },
+    { kind: 'ruin_house', x: 126, z: -20, yawRad: -Math.PI * 0.5, yardRx: 5.5, yardRz: 5.0, team: 1 },
+    { kind: 'ruin_house', x: 138, z: -11, yawRad: 0.0, yardRx: 5.5, yardRz: 5.0, team: 1 },
+    { kind: 'ruin_house', x: 138, z: 11, yawRad: Math.PI, yardRx: 5.5, yardRz: 5.0, team: 1 },
+    { kind: 'ruin_house', x: 126, z: 22, yawRad: -Math.PI * 0.5, yardRx: 5.5, yardRz: 5.0, team: 1 },
+    // East pass enemy relief camp aligned along z = 0 road
+    { kind: 'camp_tent_l1', x: 212, z: -11, yawRad: 0.0, yardRx: 5.5, yardRz: 5.5, team: 1 },
+    { kind: 'camp_tent_l1', x: 212, z: 11, yawRad: Math.PI, yardRx: 5.5, yardRz: 5.5, team: 1 },
   );
 
   // Player liberation column advancing down the valley road + Enemy village garrison
@@ -968,8 +1002,10 @@ function buildValleyMap(): MapLayoutSpec {
   appendRegiment(units, 'swordsman', 1, 198, 0, 5, 4, -Math.PI * 0.5, 1.6, rng, 'walk');
 
   const roads: readonly (readonly (readonly [number, number])[])[] = [
-    [[-175, 2], [-120, 2], [0, 0], [118, 0], [235, 0]],
-    [[-140, 2], [-140, -32], [-45, -72]],
+    [[-148, 0], [-104, 0], [0, 0], [118, 0], [235, 0]],
+    ...getPlayerTownGridRoads(-140, 0, true),
+    [[118, -26], [118, 0], [118, 26]],
+    [[-144, -26], [-120, -42], [-45, -72]],
   ];
   const capturePoints: readonly CapturePointSpec[] = [
     { id: 'cp_west_gate', label: 'Valley Road', x: -16, z: 0 },
@@ -1113,26 +1149,26 @@ function buildFortressMap(): MapLayoutSpec {
   appendWallRun(walls, fcx - ix, fcz - iz + 2.5, fcx - ix, fcz + iz - 2.5, [[iz + 2.2, iz + 8.8]], false);
   appendWallRun(walls, fcx + ix, fcz - iz + 2.5, fcx + ix, fcz + iz - 2.5, [], true);
 
-  // 4. Working Enemy Garrison Town tucked inside the Fortress walls (docs/CAMPAIGN.md M5!)
+  // 4. Working Enemy Garrison Town tucked inside the Fortress walls (grid-aligned, entrances facing courtyard lanes!)
   buildings.push(
-    { kind: 'barracks_l1', x: fcx + 22, z: fcz + 18, yawRad: 0.0, yardRx: 8.5, yardRz: 6.5, team: 1 },
-    { kind: 'smithy_l1', x: fcx - 22, z: fcz - 18, yawRad: 0.2, yardRx: 6.5, yardRz: 5.5, team: 1 },
-    { kind: 'bakery_l1', x: fcx + 24, z: fcz - 18, yawRad: -0.2, yardRx: 6.5, yardRz: 5.5, team: 1 },
-    { kind: 'storehouse_l1', x: fcx - 24, z: fcz + 20, yawRad: 0.0, yardRx: 7.5, yardRz: 6.0, team: 1 },
-    { kind: 'house_l1', x: fcx - 50, z: fcz - 24, yawRad: 1.55, yardRx: 5.5, yardRz: 5.2, team: 1 },
-    { kind: 'house_l1', x: fcx - 50, z: fcz - 8, yawRad: 1.55, yardRx: 5.5, yardRz: 5.2, team: 1 },
-    { kind: 'house_l1', x: fcx + 50, z: fcz - 16, yawRad: -1.55, yardRx: 5.5, yardRz: 5.2, team: 1 },
-    { kind: 'house_l1', x: fcx + 50, z: fcz + 14, yawRad: -1.55, yardRx: 5.5, yardRz: 5.2, team: 1 },
-    { kind: 'well_l1', x: fcx - 18, z: fcz + 4, yawRad: 0.0, yardRx: 3.2, yardRz: 3.2, team: 1 },
+    { kind: 'barracks_l1', x: fcx + 22, z: fcz + 20, yawRad: -Math.PI * 0.5, yardRx: 8.5, yardRz: 6.5, team: 1 },
+    { kind: 'smithy_l1', x: fcx + 22, z: fcz - 18, yawRad: -Math.PI * 0.5, yardRx: 6.5, yardRz: 5.5, team: 1 },
+    { kind: 'bakery_l1', x: fcx - 22, z: fcz - 18, yawRad: Math.PI * 0.5, yardRx: 6.5, yardRz: 5.5, team: 1 },
+    { kind: 'storehouse_l1', x: fcx - 24, z: fcz + 20, yawRad: Math.PI * 0.5, yardRx: 7.5, yardRz: 6.0, team: 1 },
+    { kind: 'house_l1', x: fcx - 50, z: fcz - 24, yawRad: Math.PI * 0.5, yardRx: 5.5, yardRz: 5.2, team: 1 },
+    { kind: 'house_l1', x: fcx - 50, z: fcz - 8, yawRad: Math.PI * 0.5, yardRx: 5.5, yardRz: 5.2, team: 1 },
+    { kind: 'house_l1', x: fcx + 50, z: fcz - 16, yawRad: -Math.PI * 0.5, yardRx: 5.5, yardRz: 5.2, team: 1 },
+    { kind: 'house_l1', x: fcx + 50, z: fcz + 14, yawRad: -Math.PI * 0.5, yardRx: 5.5, yardRz: 5.2, team: 1 },
+    { kind: 'well_l1', x: fcx - 18, z: fcz - 2, yawRad: 0.0, yardRx: 3.2, yardRz: 3.2, team: 1 },
   );
 
-  // 5. Player Siege Camp South of the River (z = +168..184) with Siege Cannons & Assault Divisions!
+  // 5. Player Siege Camp South of the River (grid-aligned along x = 0 approach road, grouped for logistics!)
   buildings.push(
-    { kind: 'barracks_l1', x: -18, z: 176, yawRad: Math.PI, yardRx: 9.5, yardRz: 7.0, team: 0 },
-    { kind: 'smithy_l1', x: 18, z: 176, yawRad: Math.PI, yardRx: 7.0, yardRz: 6.0, team: 0 },
-    { kind: 'storehouse_l1', x: 0, z: 188, yawRad: Math.PI, yardRx: 8.0, yardRz: 6.5, team: 0 },
-    { kind: 'camp_tent_l1', x: -34, z: 168, yawRad: 3.0, yardRx: 5.5, yardRz: 5.5, team: 0 },
-    { kind: 'camp_tent_l1', x: 34, z: 168, yawRad: -3.0, yardRx: 5.5, yardRz: 5.5, team: 0 },
+    { kind: 'barracks_l1', x: -16, z: 172, yawRad: Math.PI * 0.5, yardRx: 9.5, yardRz: 7.0, team: 0 },
+    { kind: 'smithy_l1', x: -16, z: 186, yawRad: Math.PI * 0.5, yardRx: 7.0, yardRz: 6.0, team: 0 },
+    { kind: 'storehouse_l1', x: 16, z: 178, yawRad: -Math.PI * 0.5, yardRx: 8.0, yardRz: 6.5, team: 0 },
+    { kind: 'camp_tent_l1', x: -32, z: 172, yawRad: Math.PI * 0.5, yardRx: 5.5, yardRz: 5.5, team: 0 },
+    { kind: 'camp_tent_l1', x: 32, z: 172, yawRad: -Math.PI * 0.5, yardRx: 5.5, yardRz: 5.5, team: 0 },
     { kind: 'watchtower_l1', x: -42, z: 156, yawRad: Math.PI, yardRx: 4.5, yardRz: 4.5, team: 0 },
     { kind: 'watchtower_l1', x: 42, z: 156, yawRad: Math.PI, yardRx: 4.5, yardRz: 4.5, team: 0 },
   );

@@ -1024,7 +1024,13 @@ export function stepCombat(
         // March / Run / RetreatFacing / FallbackKeep
         const isRun = ord.kind === 'run' || ord.kind === 'fallbackKeep';
         const done = moveRegimentAlongPath(reg, ord.x, ord.z, isRun, dtS, nav, ord.kind === 'retreatFacing');
-        if (ord.width !== undefined) reg.width = Math.max(4, Math.min(12, ord.width));
+        if (ord.ranks !== undefined) {
+          reg.ranks = Math.max(1, Math.min(8, ord.ranks));
+          reg.width = Math.max(1, Math.ceil(aliveMen / reg.ranks));
+        } else if (ord.width !== undefined) {
+          reg.width = Math.max(1, Math.min(20, ord.width));
+          reg.ranks = Math.max(1, Math.ceil(aliveMen / reg.width));
+        }
         if (done) {
           if (ord.facingYawRad !== undefined) reg.yawRad = ord.facingYawRad;
           reg.order = reg.orderQueue.shift() ?? null;
@@ -1387,8 +1393,13 @@ function updateSoldierSlotPositions(
     !nav.isWalkableAt(reg.x, reg.z + 3.2, reg.side) ||
     !nav.isWalkableAt(reg.x, reg.z - 3.2, reg.side);
 
+  const baseWidth =
+    reg.ranks && reg.ranks >= 1
+      ? Math.max(1, Math.ceil(totalAlive / reg.ranks))
+      : reg.width;
+  reg.width = baseWidth;
   const effFormation: FormationKind = nearNarrowEdge && reg.currentSpeedMs > 0.3 ? 'column' : reg.formation;
-  const effWidth = nearNarrowEdge && reg.currentSpeedMs > 0.3 ? Math.min(2, reg.width) : reg.width;
+  const effWidth = nearNarrowEdge && reg.currentSpeedMs > 0.3 ? Math.min(2, baseWidth) : baseWidth;
 
   const fx = Math.sin(reg.yawRad);
   const fz = Math.cos(reg.yawRad);

@@ -8,10 +8,16 @@
 
 import { Raycaster, Vector2, Vector3, type PerspectiveCamera } from 'three/webgpu';
 import { BUILDING_DEFS, UNIT_DEFS, WORLD, type BuildingTypeId } from '../config.ts';
-import type { FormationGhostPreview, PlacementGhostPreview } from '../render/combatFx.ts';
+import type { FormationGhostPreview, FormationGhostUnitPreview, PlacementGhostPreview } from '../render/combatFx.ts';
 import { countAliveSoldiers } from '../sim/combat.ts';
 import type { SimEngine } from '../sim/engine.ts';
-import type { PlacementRejectionReason, RegimentEntity, SimCommand } from '../sim/types.ts';
+import type {
+  FormationKind,
+  PlacementRejectionReason,
+  RegimentEntity,
+  SavedArmyFormation,
+  SimCommand,
+} from '../sim/types.ts';
 import type { RtsCameraGoal } from '../sim/cameraMath.ts';
 import type { RtsCameraController } from './rtsCamera.ts';
 
@@ -20,7 +26,8 @@ export type PlacementTool =
   | { readonly kind: 'building'; readonly buildingType: BuildingTypeId }
   | { readonly kind: 'road' }
   | { readonly kind: 'wall' }
-  | { readonly kind: 'gate' };
+  | { readonly kind: 'gate' }
+  | { readonly kind: 'regimentPose' };
 
 export interface RtsInputCallbacks {
   readonly getSim: () => SimEngine;
@@ -36,6 +43,7 @@ export class RtsInputController {
   selectedBuildingId: number | null = null;
   placementTool: PlacementTool = null;
   placementYawRad = 0;
+  activeSavedFormationId: number | null = null;
 
   readonly controlGroups = new Map<number, number[]>();
   readonly cameraBookmarks = new Map<number, RtsCameraGoal>();
@@ -60,6 +68,9 @@ export class RtsInputController {
 
   private lineDragStart: { x: number; z: number } | null = null;
   private lineJustStarted = false;
+  private poseAnchor: { x: number; z: number } | null = null;
+  private poseYawRad = 0;
+  private poseJustAnchored = false;
   private gridSnap = false;
   private hoverWorld: { x: number; z: number } | null = null;
   private lastHoverReason: PlacementRejectionReason | null = null;
@@ -121,15 +132,24 @@ export class RtsInputController {
     this.placementTool = tool;
     this.lineDragStart = null;
     this.lineJustStarted = false;
+    this.poseAnchor = null;
+    this.poseJustAnchored = false;
     this.placementGhost = null;
+    this.formationGhost = null;
     if (!tool) {
       this.cb.onPlacementHover(null, 0, 0);
     }
     this.cb.onSelectionChanged();
   }
 
-  /** Cancels line start point first if active, or exits active placement tool (docs/MANUAL.md §4.1). */
+  /** Cancels line/pose anchor point first if active, or exits active placement tool (docs/MANUAL.md §4.1). */
   cancelPlacementStepOrTool(): boolean {
+    if (this.poseAnchor) {
+      this.poseAnchor = null;
+      this.poseJustAnchored = false;
+      this.formationGhost = null;
+      return true;
+    }
     if (this.lineDragStart) {
       this.lineDragStart = null;
       this.lineJustStarted = false;
@@ -150,18 +170,28 @@ export class RtsInputController {
     }
   }
 
-  selectRegiments(ids: readonly number[], additive = false): void {
+  selectRegiments(ids: readonly number[], additive = false, savedFormationId: number | null = null): void {
     if (!additive) {
       this.selectedRegimentIds.clear();
       this.selectedBuildingId = null;
     }
     for (const id of ids) this.selectedRegimentIds.add(id);
+    this.activeSavedFormationId = savedFormationId;
+    if (this.selectedRegimentIds.size === 0 && this.placementTool?.kind === 'regimentPose') {
+      this.setPlacementTool(null);
+      return;
+    }
     this.cb.onSelectionChanged();
   }
 
   selectBuilding(buildingId: number | null): void {
     this.selectedRegimentIds.clear();
+    this.activeSavedFormationId = null;
     this.selectedBuildingId = buildingId;
+    if (this.placementTool?.kind === 'regimentPose') {
+      this.setPlacementTool(null);
+      return;
+    }
     this.cb.onSelectionChanged();
   }
 
@@ -407,46 +437,131 @@ export class RtsInputController {
       }
     }
 
-    // 4. Open ground -> fan out multi-regiment line march (or run on double right-click!)
+    // 4. Open ground -> multi-regiment saved formation or line march (or run on double right-click!)
     const kind = forceRun ? 'run' : 'march';
-    if (ids.length === 1) {
-      const reg = sim.state.regiments.find((r) => r.id === ids[0]);
-      const facing = reg ? Math.atan2(wx - reg.x, wz - reg.z) : 0;
+    let cx = 0;
+    let cz = 0;
+    let cnt = 0;
+    for (const id of ids) {
+      const r = sim.state.regiments.find((x) => x.id === id);
+      if (r) {
+        cx += r.x;
+        cz += r.z;
+        cnt++;
+      }
+    }
+    const facing = cnt > 0 ? Math.atan2(wx - cx / cnt, wz - cz / cnt) : 0;
+    const targets = this.computePoseTargets(wx, wz, facing);
+    for (const t of targets) {
       this.cb.onExecute({
         type: 'issueOrder',
         side: 0,
-        regimentIds: ids,
-        order: { kind, x: wx, z: wz, facingYawRad: facing },
+        regimentIds: [t.regiment.id],
+        order: { kind, x: t.x, z: t.z, facingYawRad: t.yawRad, width: t.width, ranks: t.ranks },
         queue,
       });
-    } else {
-      let cx = 0;
-      let cz = 0;
-      let cnt = 0;
-      for (const id of ids) {
-        const r = sim.state.regiments.find((x) => x.id === id);
-        if (r) {
-          cx += r.x;
-          cz += r.z;
-          cnt++;
-        }
-      }
-      const facing = cnt > 0 ? Math.atan2(wx - cx / cnt, wz - cz / cnt) : 0;
-      const rx = Math.cos(facing);
-      const rz = -Math.sin(facing);
-      const spacing = 12;
-      for (let i = 0; i < ids.length; i++) {
-        const off = (i - (ids.length - 1) * 0.5) * spacing;
-        this.cb.onExecute({
-          type: 'issueOrder',
-          side: 0,
-          regimentIds: [ids[i]!],
-          order: { kind, x: wx + rx * off, z: wz + rz * off, facingYawRad: facing },
-          queue,
-        });
-      }
     }
     this.cb.onPlayUiSound('uiClick');
+  }
+
+  private findMatchingSavedFormation(ids: readonly number[]): SavedArmyFormation | null {
+    const sim = this.cb.getSim();
+    const savedList = sim.state.sides[0].savedFormations ?? [];
+    if (savedList.length === 0) return null;
+
+    if (this.activeSavedFormationId !== null) {
+      const active = savedList.find((f) => f.id === this.activeSavedFormationId);
+      if (active && ids.every((id) => active.slots.some((s) => s.regimentId === id))) {
+        return active;
+      }
+    }
+    if (ids.length >= 2) {
+      for (const f of savedList) {
+        const aliveSlots = f.slots.filter((s) =>
+          sim.state.regiments.some((r) => r.id === s.regimentId && r.side === 0 && countAliveSoldiers(r) > 0),
+        );
+        if (
+          aliveSlots.length === ids.length &&
+          ids.every((id) => aliveSlots.some((s) => s.regimentId === id))
+        ) {
+          return f;
+        }
+      }
+    }
+    return null;
+  }
+
+  private computePoseTargets(
+    wx: number,
+    wz: number,
+    yawRad: number,
+  ): {
+    regiment: RegimentEntity;
+    x: number;
+    z: number;
+    yawRad: number;
+    width: number;
+    ranks: number;
+    formation: FormationKind;
+  }[] {
+    const sim = this.cb.getSim();
+    const ids = [...this.selectedRegimentIds];
+    const regs = ids
+      .map((id) => sim.state.regiments.find((r) => r.id === id && r.side === 0 && countAliveSoldiers(r) > 0))
+      .filter((r): r is RegimentEntity => r !== undefined);
+    if (regs.length === 0) return [];
+
+    const saved = this.findMatchingSavedFormation(regs.map((r) => r.id));
+    const fx = Math.sin(yawRad);
+    const fz = Math.cos(yawRad);
+    const rx = Math.cos(yawRad);
+    const rz = -Math.sin(yawRad);
+
+    if (saved) {
+      return regs.map((r) => {
+        const slot = saved.slots.find((s) => s.regimentId === r.id);
+        const alive = Math.max(1, countAliveSoldiers(r));
+        const ranks = Math.min(alive, Math.max(1, slot?.ranks ?? r.ranks ?? Math.ceil(alive / Math.max(1, r.width))));
+        const width = Math.max(1, Math.ceil(alive / ranks));
+        const rightM = slot?.rightM ?? 0;
+        const forwardM = slot?.forwardM ?? 0;
+        const relYaw = slot?.relYawRad ?? 0;
+        return {
+          regiment: r,
+          x: wx + rx * rightM + fx * forwardM,
+          z: wz + rz * rightM + fz * forwardM,
+          yawRad: yawRad + relYaw,
+          width,
+          ranks,
+          formation: slot?.formation ?? r.formation,
+        };
+      });
+    }
+
+    if (regs.length === 1) {
+      const r = regs[0]!;
+      const alive = Math.max(1, countAliveSoldiers(r));
+      const ranks = Math.min(alive, Math.max(1, r.ranks ?? Math.ceil(alive / Math.max(1, r.width))));
+      const width = Math.max(1, Math.ceil(alive / ranks));
+      return [{ regiment: r, x: wx, z: wz, yawRad, width, ranks, formation: r.formation }];
+    }
+
+    const spacing = 12;
+    return regs.map((r, i) => {
+      const alive = Math.max(1, countAliveSoldiers(r));
+      const ranks = Math.min(alive, Math.max(1, r.ranks ?? Math.ceil(alive / Math.max(1, r.width))));
+      const width = Math.max(1, Math.ceil(alive / ranks));
+      const off = (i - (regs.length - 1) * 0.5) * spacing;
+      return {
+        regiment: r,
+        x: wx + rx * off,
+        z: wz + rz * off,
+        yawRad,
+        width,
+        ranks,
+        formation: r.formation,
+      };
+    });
   }
 
   private updatePlacementPreview(clientX: number, clientY: number): void {
@@ -458,11 +573,69 @@ export class RtsInputController {
     this.hoverWorld = pt;
     if (!pt) {
       this.placementGhost = null;
+      if (this.placementTool.kind === 'regimentPose' && !this.poseAnchor) {
+        this.formationGhost = null;
+      }
       this.cb.onPlacementHover(null, clientX, clientY);
       return;
     }
 
     const sim = this.cb.getSim();
+    if (this.placementTool.kind === 'regimentPose') {
+      this.placementGhost = null;
+      this.cb.onPlacementHover(null, clientX, clientY);
+      const anchor = this.poseAnchor ?? pt;
+      if (this.poseAnchor) {
+        const dx = pt.x - this.poseAnchor.x;
+        const dz = pt.z - this.poseAnchor.z;
+        if (Math.hypot(dx, dz) > 0.6) {
+          this.poseYawRad = Math.atan2(dx, dz);
+        }
+      } else {
+        let cx = 0;
+        let cz = 0;
+        let cnt = 0;
+        for (const id of this.selectedRegimentIds) {
+          const r = sim.state.regiments.find((x) => x.id === id);
+          if (r) {
+            cx += r.x;
+            cz += r.z;
+            cnt++;
+          }
+        }
+        if (cnt > 0 && Math.hypot(pt.x - cx / cnt, pt.z - cz / cnt) > 0.6) {
+          this.poseYawRad = Math.atan2(pt.x - cx / cnt, pt.z - cz / cnt);
+        }
+      }
+      const targets = this.computePoseTargets(anchor.x, anchor.z, this.poseYawRad);
+      const first = targets[0];
+      const units: FormationGhostUnitPreview[] = targets.map((t) => ({
+        x: t.x,
+        z: t.z,
+        yawRad: t.yawRad,
+        width: t.width,
+        ranks: t.ranks,
+        count: countAliveSoldiers(t.regiment),
+        unitClass: UNIT_DEFS[t.regiment.unitType].unitClass,
+        formation: t.formation,
+      }));
+      this.formationGhost = first
+        ? {
+            active: true,
+            x: anchor.x,
+            z: anchor.z,
+            yawRad: this.poseYawRad,
+            width: first.width,
+            ranks: first.ranks,
+            count: countAliveSoldiers(first.regiment),
+            unitClass: UNIT_DEFS[first.regiment.unitType].unitClass,
+            formation: first.formation,
+            units,
+          }
+        : null;
+      return;
+    }
+
     if (this.placementTool.kind === 'building') {
       const snapped = this.snapBuildingPoint(pt);
       const reason = sim.validatePlacement(0, this.placementTool.buildingType, snapped.x, snapped.z, this.placementYawRad, true);
@@ -552,7 +725,15 @@ export class RtsInputController {
         const pt = this.screenToGround(e.clientX, e.clientY);
         if (this.placementTool) {
           if (pt) {
-            if (this.placementTool.kind === 'building') {
+            if (this.placementTool.kind === 'regimentPose') {
+              if (!this.poseAnchor) {
+                this.poseAnchor = pt;
+                this.poseJustAnchored = true;
+                this.updatePlacementPreview(e.clientX, e.clientY);
+              } else {
+                this.poseJustAnchored = false;
+              }
+            } else if (this.placementTool.kind === 'building') {
               const snapped = this.snapBuildingPoint(pt);
               const ok = this.cb.onExecute({
                 type: 'placeBuilding',
@@ -656,6 +837,44 @@ export class RtsInputController {
     const onMouseUp = (e: MouseEvent): void => {
       if (!this.cb.isPlaying()) return;
       if (e.button === 0) {
+        // Regiment Target Position & Mouse Rotation tool (`regimentPose`):
+        // 1st click anchors position `(x, z)`, mouse movement rotates direction `yawRad`, 2nd click (or drag release) confirms!
+        if (this.placementTool && this.placementTool.kind === 'regimentPose' && this.poseAnchor) {
+          const endPt = this.screenToGround(e.clientX, e.clientY) ?? this.hoverWorld;
+          const dist = endPt ? Math.hypot(endPt.x - this.poseAnchor.x, endPt.z - this.poseAnchor.z) : 0;
+          if (this.poseJustAnchored && dist < 2.2) {
+            this.poseJustAnchored = false;
+            this.cb.onPlayUiSound('uiClick');
+            return;
+          }
+          if (endPt && dist >= 0.6) {
+            this.poseYawRad = Math.atan2(endPt.x - this.poseAnchor.x, endPt.z - this.poseAnchor.z);
+          }
+          const targets = this.computePoseTargets(this.poseAnchor.x, this.poseAnchor.z, this.poseYawRad);
+          for (const t of targets) {
+            this.cb.onExecute({
+              type: 'issueOrder',
+              side: 0,
+              regimentIds: [t.regiment.id],
+              order: {
+                kind: 'march',
+                x: t.x,
+                z: t.z,
+                facingYawRad: t.yawRad,
+                width: t.width,
+                ranks: t.ranks,
+              },
+              queue: e.shiftKey,
+            });
+          }
+          this.cb.onPlayUiSound('uiClick');
+          this.poseAnchor = null;
+          this.poseJustAnchored = false;
+          this.formationGhost = null;
+          if (!e.shiftKey) this.setPlacementTool(null);
+          return;
+        }
+
         // Road or Wall: supports BOTH click-start -> click-end AND press-drag-release!
         if (this.placementTool && (this.placementTool.kind === 'road' || this.placementTool.kind === 'wall') && this.lineDragStart) {
           const endPt = this.screenToGround(e.clientX, e.clientY) ?? this.hoverWorld;

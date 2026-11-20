@@ -34,6 +34,7 @@ export interface RegimentOrder {
   readonly z: number;
   readonly facingYawRad?: number;
   readonly width?: number;
+  readonly ranks?: number;
   readonly targetRegimentId?: number;
   readonly targetBuildingId?: number;
   readonly targetWallId?: number;
@@ -132,6 +133,8 @@ export interface BuildingEntity {
   /** Workshop input buffer (max 8 per good) and yard output buffer (max 24 total). */
   inputs: ResourceMap;
   yard: ResourceMap;
+  /** Remaining production orders for armament workshops (starts at 0; regulated via Barracks). */
+  pendingOrders?: number;
   /** House residents & pantry (rations + wine casks). */
   residents: number;
   houseFoodRations: number;
@@ -220,8 +223,10 @@ export interface RegimentEntity {
   formation: FormationKind;
   stance: StanceKind;
   holdFire: boolean;
-  /** Number of soldiers in front rank (4..12). */
+  /** Number of soldiers in front rank (1..20). */
   width: number;
+  /** Configured number of ranks/rows (szeregi, 1..6). */
+  ranks?: number;
   maxMen: number;
   soldiers: SoldierEntity[];
   /** Regiment Captain alive behind ranks (not present on artillery). */
@@ -338,6 +343,26 @@ export interface ProductionWindowSample {
   readonly consumed: ResourceMap;
 }
 
+export interface SavedFormationSlot {
+  readonly regimentId: number;
+  readonly unitType: UnitTypeId;
+  /** Local right offset (m) relative to formation centroid & facing. */
+  readonly rightM: number;
+  /** Local forward offset (m) relative to formation centroid & facing. */
+  readonly forwardM: number;
+  /** Relative yaw offset (rad) from overall formation facing. */
+  readonly relYawRad: number;
+  readonly formation: FormationKind;
+  readonly ranks: number;
+  readonly width: number;
+}
+
+export interface SavedArmyFormation {
+  readonly id: number;
+  readonly name: string;
+  readonly slots: readonly SavedFormationSlot[];
+}
+
 export interface SideState {
   readonly side: SideId;
   /** Shared town warehouse (Keep + all completed Storehouses). */
@@ -359,6 +384,10 @@ export interface SideState {
   totalLosses: number;
   buildingsLost: number;
   tributePaid: boolean;
+  /** Queued barracks equipment orders waiting for a workshop of that type to be built/assigned. */
+  equipmentOrders?: ResourceMap;
+  /** Multi-regiment formations saved by the player/side. */
+  savedFormations?: SavedArmyFormation[];
 }
 
 export interface TimelinePoint {
@@ -456,11 +485,16 @@ export type SimCommand =
   | { readonly type: 'placeGate'; readonly side: SideId; readonly x: number; readonly z: number; readonly yawRad: number }
   | { readonly type: 'marketTrade'; readonly side: SideId; readonly good: GoodId; readonly action: 'buy' | 'sell' }
   | { readonly type: 'recruit'; readonly side: SideId; readonly unitType: UnitTypeId; readonly buildingId?: number }
+  | { readonly type: 'orderUnitEquipment'; readonly side: SideId; readonly unitType: UnitTypeId; readonly count?: number }
+  | { readonly type: 'setBuildingOrder'; readonly side: SideId; readonly buildingId: number; readonly orders: number }
   | { readonly type: 'refitRegiment'; readonly side: SideId; readonly regimentId: number; readonly targetType: UnitTypeId }
   | { readonly type: 'mergeRegiments'; readonly side: SideId; readonly primaryId: number; readonly secondaryId: number }
   | { readonly type: 'disbandRegiment'; readonly side: SideId; readonly regimentId: number }
   | { readonly type: 'issueOrder'; readonly side: SideId; readonly regimentIds: readonly number[]; readonly order: RegimentOrder; readonly queue?: boolean }
   | { readonly type: 'setFormation'; readonly side: SideId; readonly regimentIds: readonly number[]; readonly formation: FormationKind }
+  | { readonly type: 'setRanks'; readonly side: SideId; readonly regimentIds: readonly number[]; readonly ranks: number }
+  | { readonly type: 'saveArmyFormation'; readonly side: SideId; readonly regimentIds: readonly number[]; readonly name?: string }
+  | { readonly type: 'deleteArmyFormation'; readonly side: SideId; readonly formationId: number }
   | { readonly type: 'setStance'; readonly side: SideId; readonly regimentIds: readonly number[]; readonly stance: StanceKind }
   | { readonly type: 'setHoldFire'; readonly side: SideId; readonly regimentIds: readonly number[]; readonly holdFire: boolean }
   | { readonly type: 'payTribute'; readonly side: SideId };

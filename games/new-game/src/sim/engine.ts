@@ -59,6 +59,8 @@ function createSideState(side: SideId): SideState {
     totalLosses: 0,
     buildingsLost: 0,
     tributePaid: false,
+    equipmentOrders: {},
+    savedFormations: [],
   };
 }
 
@@ -287,6 +289,7 @@ export class SimEngine {
         status: 'idle',
         inputs: {},
         yard: {},
+        pendingOrders: 0,
         residents: type === 'keep' ? ECONOMY.keepResidents : type === 'house' ? 4 : 0,
         houseFoodRations: type === 'house' ? 5 : 0,
         houseWineCasks: 0,

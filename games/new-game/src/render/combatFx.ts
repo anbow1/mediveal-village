@@ -34,9 +34,20 @@ import { float, length, smoothstep, uv, vec2 } from 'three/tsl';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { markStaticInstances } from './instancing.ts';
 import { BUILDING_DEFS, UNIT_DEFS, type BuildingTypeId, type GoodId } from '../config.ts';
-import type { FxEvent, SimWorldState } from '../sim/types.ts';
+import type { FormationKind, FxEvent, SimWorldState } from '../sim/types.ts';
 import { computeFormationSlotOffset, countAliveSoldiers } from '../sim/combat.ts';
 import { computeBuildingStripTransform } from '../sim/economy.ts';
+
+export interface FormationGhostUnitPreview {
+  readonly x: number;
+  readonly z: number;
+  readonly yawRad: number;
+  readonly width: number;
+  readonly ranks?: number;
+  readonly count: number;
+  readonly unitClass: 'infantry' | 'ranged' | 'cavalry' | 'siege';
+  readonly formation?: FormationKind;
+}
 
 export interface FormationGhostPreview {
   readonly active: boolean;
@@ -44,8 +55,11 @@ export interface FormationGhostPreview {
   readonly z: number;
   readonly yawRad: number;
   readonly width: number;
+  readonly ranks?: number;
   readonly count: number;
   readonly unitClass: 'infantry' | 'ranged' | 'cavalry' | 'siege';
+  readonly formation?: FormationKind;
+  readonly units?: readonly FormationGhostUnitPreview[];
 }
 
 export interface PlacementGhostPreview {
@@ -395,11 +409,11 @@ export function buildCombatFx(scene: Scene): CombatFxHandles {
   geos.push(bannerGeo);
   const bannerMesh = makeInstanced(scene, 'Fx_RegimentBanners', bannerGeo, solidMat, 64, false);
 
-  // 8. Sleek Tactical Ground Rings (cap 128)
+  // 8. Sleek Tactical Ground Rings (cap 256)
   const ringGeo = new RingGeometry(0.91, 1.0, 36);
   ringGeo.rotateX(-Math.PI * 0.5);
   geos.push(ringGeo);
-  const ringMesh = makeInstanced(scene, 'Fx_TacticalRings', ringGeo, ringMat, 128, false);
+  const ringMesh = makeInstanced(scene, 'Fx_TacticalRings', ringGeo, ringMat, 256, false);
 
   // Active particle pool (bounded at 180 puffs, zero GC thrash)
   const puffs: PuffParticle[] = [];
@@ -564,7 +578,7 @@ export function buildCombatFx(scene: Scene): CombatFxHandles {
       }
 
       // Sleek tactical selection ring under selected regiments
-      if (selectedRegimentIds.has(reg.id) && ringCount < 128) {
+      if (selectedRegimentIds.has(reg.id) && ringCount < 256) {
         const ry = heightAt(reg.x, reg.z) + 0.12;
         const rad = def.unitClass === 'cavalry' ? 4.8 : def.unitClass === 'siege' ? 3.8 : 4.0;
         TEMP_POS.set(reg.x, ry, reg.z);
@@ -578,7 +592,7 @@ export function buildCombatFx(scene: Scene): CombatFxHandles {
     }
 
     // Selected building ring
-    if (selectedBuildingId !== null && ringCount < 128) {
+    if (selectedBuildingId !== null && ringCount < 256) {
       const sb = state.buildings.find((b) => b.id === selectedBuildingId && b.hp > 0);
       if (sb) {
         const rad = BUILDING_DEFS[sb.type].radiusM + 1.4;
@@ -594,7 +608,7 @@ export function buildCombatFx(scene: Scene): CombatFxHandles {
 
     // Capture point ownership rings (always live on the 3 strategic points!)
     for (const cp of state.capturePoints) {
-      if (ringCount >= 128) break;
+      if (ringCount >= 256) break;
       const pulse = 1.0 + Math.sin(animClockS * 2.6) * 0.03;
       TEMP_POS.set(cp.x, heightAt(cp.x, cp.z) + 0.13, cp.z);
       TEMP_QUAT.identity();
@@ -605,40 +619,57 @@ export function buildCombatFx(scene: Scene): CombatFxHandles {
       ringCount++;
     }
 
-    // Ctrl+right-drag formation slot ghost preview
+    // Target position & direction formation slot ghost preview (supports single unit, ranks, and multi-unit formations!)
     if (formationGhost && formationGhost.active) {
-      const fx = Math.sin(formationGhost.yawRad);
-      const fz = Math.cos(formationGhost.yawRad);
-      const rx = Math.cos(formationGhost.yawRad);
-      const rz = -Math.sin(formationGhost.yawRad);
-      const slots = Math.min(36, formationGhost.count);
-      for (let i = 0; i < slots && ringCount < 128; i++) {
-        const off = computeFormationSlotOffset(
-          i,
-          slots,
-          formationGhost.width,
-          'line',
-          formationGhost.unitClass,
-        );
-        const gx = formationGhost.x + rx * off.right + fx * off.forward;
-        const gz = formationGhost.z + rz * off.right + fz * off.forward;
-        TEMP_POS.set(gx, heightAt(gx, gz) + 0.16, gz);
-        TEMP_QUAT.identity();
-        TEMP_SCALE.set(0.68, 1, 0.68);
-        TEMP_MAT.compose(TEMP_POS, TEMP_QUAT, TEMP_SCALE);
-        ringMesh.setMatrixAt(ringCount, TEMP_MAT);
-        ringMesh.setColorAt(ringCount, COL_VALID);
-        ringCount++;
+      const unitsToDraw: readonly FormationGhostUnitPreview[] =
+        formationGhost.units && formationGhost.units.length > 0
+          ? formationGhost.units
+          : [
+              {
+                x: formationGhost.x,
+                z: formationGhost.z,
+                yawRad: formationGhost.yawRad,
+                width: formationGhost.width,
+                count: formationGhost.count,
+                formation: formationGhost.formation ?? 'line',
+                unitClass: formationGhost.unitClass,
+              },
+            ];
+      for (const u of unitsToDraw) {
+        const fx = Math.sin(u.yawRad);
+        const fz = Math.cos(u.yawRad);
+        const rx = Math.cos(u.yawRad);
+        const rz = -Math.sin(u.yawRad);
+        const slots = Math.min(36, u.count);
+        const form = u.formation ?? 'line';
+        for (let i = 0; i < slots && ringCount < 256; i++) {
+          const off = computeFormationSlotOffset(
+            i,
+            slots,
+            u.width,
+            form,
+            u.unitClass,
+          );
+          const gx = u.x + rx * off.right + fx * off.forward;
+          const gz = u.z + rz * off.right + fz * off.forward;
+          TEMP_POS.set(gx, heightAt(gx, gz) + 0.16, gz);
+          TEMP_QUAT.identity();
+          TEMP_SCALE.set(0.68, 1, 0.68);
+          TEMP_MAT.compose(TEMP_POS, TEMP_QUAT, TEMP_SCALE);
+          ringMesh.setMatrixAt(ringCount, TEMP_MAT);
+          ringMesh.setColorAt(ringCount, COL_VALID);
+          ringCount++;
+        }
       }
     }
 
     // Building / Road / Wall / Gate placement ghost ring(s)
-    if (placementGhost && placementGhost.active && ringCount < 128) {
+    if (placementGhost && placementGhost.active && ringCount < 256) {
       const col = placementGhost.valid ? COL_VALID : COL_INVALID;
       if ((placementGhost.mode === 'road' || placementGhost.mode === 'wall') && placementGhost.x1 !== undefined && placementGhost.z1 !== undefined) {
         const dist = Math.hypot(placementGhost.x1 - placementGhost.x, placementGhost.z1 - placementGhost.z);
         const steps = Math.max(2, Math.min(24, Math.ceil(dist / 3.5)));
-        for (let i = 0; i <= steps && ringCount < 128; i++) {
+        for (let i = 0; i <= steps && ringCount < 256; i++) {
           const t = i / steps;
           const px = placementGhost.x + (placementGhost.x1 - placementGhost.x) * t;
           const pz = placementGhost.z + (placementGhost.z1 - placementGhost.z) * t;
@@ -661,7 +692,7 @@ export function buildCombatFx(scene: Scene): CombatFxHandles {
         ringCount++;
 
         // Front entrance / doorway apron ring pointing out the building's doorway direction (+Z local rotated by yawRad)!
-        if (ringCount < 128) {
+        if (ringCount < 256) {
           const fx = Math.sin(placementGhost.yawRad);
           const fz = Math.cos(placementGhost.yawRad);
           const ex = placementGhost.x + fx * (rad + 1.45);
@@ -687,7 +718,7 @@ export function buildCombatFx(scene: Scene): CombatFxHandles {
           const reqDist = BUILDING_DEFS[placementGhost.buildingType!].terrainReqDistM ?? 15;
           COL_TMP.setHex(wantKind === 'stone' ? 0xd8ecff : 0xf09543);
           for (const oc of state.outcrops) {
-            if (oc.kind !== wantKind || ringCount >= 128) continue;
+            if (oc.kind !== wantKind || ringCount >= 256) continue;
             TEMP_POS.set(oc.x, heightAt(oc.x, oc.z) + 0.22, oc.z);
             TEMP_QUAT.identity();
             TEMP_SCALE.set(reqDist * pulse, 1, reqDist * pulse);
@@ -767,6 +798,10 @@ export function buildCombatFx(scene: Scene): CombatFxHandles {
         crateCount++;
       }
     };
+
+    if (formationGhost && formationGhost.active) {
+      pushEntranceDirectionArrow(formationGhost.x, formationGhost.z, formationGhost.yawRad, 2.6, COL_VALID);
+    }
 
     if (placementGhost && placementGhost.active && (placementGhost.mode === 'building' || placementGhost.mode === 'gate')) {
       const rad = placementGhost.buildingType ? BUILDING_DEFS[placementGhost.buildingType].radiusM : 3.4;

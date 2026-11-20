@@ -615,6 +615,41 @@ export const BUILDING_DEFS: Record<BuildingTypeId, BuildingDef> = {
   campTent:    { id: 'campTent',    branch: 'military',  modelKind: 'camp_tent_l1',   cost: {}, maxHp: 220, workers: 0, radiusM: 3.8, terrainReq: 'any', maxLevel: 1, buildable: false },
 };
 
+/** Military equipment goods produced by order-regulated armament workshops (started at 0 orders, ordered via Barracks). */
+export const EQUIPMENT_GOODS: readonly GoodId[] = [
+  'weapons',
+  'bows',
+  'mail',
+  'leatherArmour',
+  'horses',
+];
+
+export const EQUIPMENT_WORKSHOP_TYPES: readonly BuildingTypeId[] = [
+  'smithy',
+  'fletcher',
+  'armourer',
+  'tannery',
+  'stable',
+];
+
+export const GOOD_TO_WORKSHOP: Partial<Record<GoodId, BuildingTypeId>> = {
+  weapons: 'smithy',
+  bows: 'fletcher',
+  mail: 'armourer',
+  leatherArmour: 'tannery',
+  horses: 'stable',
+};
+
+export function isEquipmentWorkshop(type: BuildingTypeId): boolean {
+  return (
+    type === 'smithy' ||
+    type === 'fletcher' ||
+    type === 'armourer' ||
+    type === 'tannery' ||
+    type === 'stable'
+  );
+}
+
 export type UnitTypeId =
   | 'militia'
   | 'pikemen'

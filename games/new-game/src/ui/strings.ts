@@ -101,6 +101,9 @@ export interface Strings {
   readonly resumeShopBtn: string;
   readonly marketSell: string;
   readonly marketBuy: string;
+  readonly ordersLabel: string;
+  readonly orderEquipTitle: string;
+  readonly clearOrdersBtn: string;
   readonly statusLabels: Record<string, string>;
 
   // Regiment inspector
@@ -112,6 +115,11 @@ export interface Strings {
   readonly routingLabel: string;
   readonly formations: Record<FormationKind, string>;
   readonly stances: Record<StanceKind, string>;
+  readonly ranksLabel: string;
+  readonly setPoseBtn: string;
+  readonly setPoseHint: string;
+  readonly saveFormationBtn: string;
+  readonly savedFormationsLabel: string;
   readonly holdFireLabel: string;
   readonly fallbackBtn: string;
   readonly refitBtn: string;
@@ -253,6 +261,9 @@ const EN: Strings = {
   resumeShopBtn: 'Resume',
   marketSell: 'Sell 10',
   marketBuy: 'Buy 10',
+  ordersLabel: 'Orders',
+  orderEquipTitle: 'Order equipment for unit (click icon):',
+  clearOrdersBtn: 'Zero orders',
   statusLabels: {
     constructing: 'Constructing',
     upgrading: 'Upgrading',
@@ -283,6 +294,11 @@ const EN: Strings = {
     guard: 'Guard',
     skirmish: 'Skirmish',
   },
+  ranksLabel: 'Ranks',
+  setPoseBtn: '⌖ Set Position',
+  setPoseHint: 'Click target spot, move mouse to rotate direction, click to confirm',
+  saveFormationBtn: '⚑ Save Formation',
+  savedFormationsLabel: 'Formations',
   holdFireLabel: 'Hold Fire',
   fallbackBtn: 'Fall Back',
   refitBtn: 'Refit',
@@ -554,6 +570,9 @@ const PL: Strings = {
   resumeShopBtn: 'Wznów',
   marketSell: 'Sprzedaj 10',
   marketBuy: 'Kup 10',
+  ordersLabel: 'Zamówienia',
+  orderEquipTitle: 'Zamów wyposażenie dla jednostki (kliknij ikonę):',
+  clearOrdersBtn: 'Zeruj zamówienia',
   statusLabels: {
     constructing: 'W budowie',
     upgrading: 'Ulepszanie',
@@ -584,6 +603,11 @@ const PL: Strings = {
     guard: 'Warta',
     skirmish: 'Harcownik',
   },
+  ranksLabel: 'Szeregi',
+  setPoseBtn: '⌖ Ustaw pozycję',
+  setPoseHint: 'Kliknij miejsce docelowe, obróć myszką kierunek i kliknij ponownie',
+  saveFormationBtn: '⚑ Zapisz formację',
+  savedFormationsLabel: 'Formacje',
   holdFireLabel: 'Wstrzymaj ogień',
   fallbackBtn: 'Odwrót',
   refitBtn: 'Przezbrój',

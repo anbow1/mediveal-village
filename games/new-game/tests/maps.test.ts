@@ -106,4 +106,59 @@ describe('Stage 5 full 560 x 560 m Campaign & Skirmish maps', () => {
     expect(layout.walls.length).toBeGreaterThan(280);
     expect(layout.props.filter((p) => p.kind === 'cannon').length).toBe(4);
   });
+
+  it('plans starting settlements on an orthogonal grid with building entrances facing the street and grouped logistics chains', () => {
+    for (const mapId of ['crossing', 'openField', 'forest', 'valley'] as const) {
+      const layout = buildMapLayout(mapId);
+      const townBlds = layout.buildings.slice(0, 15);
+      const keep = townBlds.find((b) => b.kind === 'keep_l1')!;
+      // Town grid anchor (ox, oz): Keep sits at (ox - 16, oz)
+      const ox = keep.x + 16;
+      const oz = keep.z;
+
+      // 1. No town building sits on any of the 3 grid streets: Main Street (z = oz, x >= ox - 6), West Cross (x = ox - 4), East Cross (x = ox + 20)
+      for (const b of townBlds) {
+        if (b.kind !== 'keep_l1') {
+          expect(Math.abs(b.z - oz), `${b.kind} on ${mapId} must not sit on Main High Street`).toBeGreaterThanOrEqual(7);
+        }
+        expect(Math.abs(b.x - (ox - 4)), `${b.kind} on ${mapId} must not sit on West Cross Street`).toBeGreaterThanOrEqual(6);
+        expect(Math.abs(b.x - (ox + 20)), `${b.kind} on ${mapId} must not sit on East Cross Street`).toBeGreaterThanOrEqual(6);
+      }
+
+      // 2. Every town building has an orthogonal street-aligned orientation and its doorway (+Z local) faces toward its street
+      for (const b of townBlds) {
+        const doorX = b.x + Math.sin(b.yawRad) * 5;
+        const doorZ = b.z + Math.cos(b.yawRad) * 5;
+        if (Math.abs(Math.sin(b.yawRad)) > 0.5) {
+          // Faces East/West onto Cross Street (x = ox - 4 or x = ox + 20)
+          const before = Math.min(Math.abs(b.x - (ox - 4)), Math.abs(b.x - (ox + 20)));
+          const after = Math.min(Math.abs(doorX - (ox - 4)), Math.abs(doorX - (ox + 20)));
+          expect(after, `${b.kind} doorway on ${mapId} should face toward cross street`).toBeLessThan(before);
+        } else {
+          // Faces North/South onto Main High Street (z = oz)
+          expect(Math.abs(doorZ - oz), `${b.kind} doorway on ${mapId} should face toward Main High Street`).toBeLessThan(
+            Math.abs(b.z - oz),
+          );
+        }
+      }
+
+      // 3. Logistics grouping: Farm -> Windmill -> Bakery grouped closely, Smithy paired with Barracks, Houses within Well radius
+      const farm = townBlds.find((b) => b.kind === 'farm_l1')!;
+      const mill = townBlds.find((b) => b.kind === 'windmill_l1')!;
+      const bakery = townBlds.find((b) => b.kind === 'bakery_l1')!;
+      expect(Math.hypot(farm.x - mill.x, farm.z - mill.z)).toBeLessThanOrEqual(20);
+      expect(Math.hypot(mill.x - bakery.x, mill.z - bakery.z)).toBeLessThanOrEqual(20);
+
+      const smithy = townBlds.find((b) => b.kind === 'smithy_l1')!;
+      const barracks = townBlds.find((b) => b.kind === 'barracks_l1')!;
+      expect(Math.hypot(smithy.x - barracks.x, smithy.z - barracks.z)).toBeLessThanOrEqual(25);
+
+      const well = townBlds.find((b) => b.kind === 'well_l1')!;
+      const houses = townBlds.filter((b) => b.kind === 'house_l1');
+      for (const h of houses) {
+        expect(Math.hypot(h.x - well.x, h.z - well.z)).toBeLessThanOrEqual(35);
+      }
+    }
+  });
 });
+

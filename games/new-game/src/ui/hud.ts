@@ -2,11 +2,15 @@
 // All DOM lives cleanly inside #loading, #ui, #hud, and #stats (title-safe & mobile-landscape responsive).
 
 import {
+  ALL_GOODS,
   ALL_UNIT_TYPES,
   BUILDING_DEFS,
   CAMPAIGN,
   ECONOMY,
+  EQUIPMENT_GOODS,
+  GOOD_TO_WORKSHOP,
   GOOD_VALUE_GOLD,
+  isEquipmentWorkshop,
   UNIT_DEFS,
   WORLD,
   type BuildingBranch,
@@ -95,7 +99,55 @@ export interface PerfSnapshot {
 
 const LIGHTING_ORDER: readonly LightingPresetId[] = ['clearNoon', 'lateAutumn', 'goldenHour', 'overcast'];
 const BUILD_BRANCHES: readonly BuildingBranch[] = ['town', 'materials', 'food', 'craft', 'military'];
-const MARKET_GOODS: readonly GoodId[] = ['timber', 'planks', 'stone', 'grain', 'bread', 'wine', 'iron', 'weapons', 'leatherArmour', 'mail', 'bows', 'horses'];
+const MARKET_GOODS: readonly GoodId[] = ALL_GOODS.filter((g) => g !== 'gold');
+const RANK_CHOICES: readonly number[] = [1, 2, 3, 4, 6];
+
+const GOOD_ICONS: Record<GoodId, string> = {
+  gold: '🪙',
+  timber: '🪵',
+  planks: '🪚',
+  stone: '🪨',
+  grain: '🌾',
+  flour: '🥡',
+  bread: '🍞',
+  fish: '🐟',
+  meat: '🥩',
+  sausages: '🌭',
+  grapes: '🍇',
+  wine: '🍷',
+  ale: '🍺',
+  hides: '🦌',
+  leatherArmour: '🦺',
+  ironOre: '⛏',
+  iron: '🔩',
+  weapons: '⚔',
+  mail: '🛡',
+  bows: '🏹',
+  horses: '🐎',
+};
+
+const UNIT_ICONS: Record<UnitTypeId, string> = {
+  militia: '🪓',
+  pikemen: '🔱',
+  archers: '🏹',
+  swordsmen: '⚔',
+  halberdiers: '⚜',
+  crossbowmen: '🎯',
+  lightCav: '🐎',
+  heavyCav: '🏇',
+  cannon: '💣',
+  mortar: '☄',
+};
+
+const EQUIP_ORDER_UNITS: readonly UnitTypeId[] = [
+  'pikemen',
+  'archers',
+  'swordsmen',
+  'halberdiers',
+  'crossbowmen',
+  'lightCav',
+  'heavyCav',
+];
 
 function formatCostShort(cost: ResourceMap): string {
   const abbr: Partial<Record<GoodId, string>> = {
@@ -632,6 +684,84 @@ export class GameHud {
   setActiveTool(tool: PlacementTool): void {
     this.activeTool = tool;
     this.rebuildDrawer();
+    if (this.latestState) this.refreshInspector(true);
+  }
+
+  private buildBarracksEquipPanel(state: SimWorldState): HTMLDivElement {
+    const s = this.str;
+    const wrap = document.createElement('div');
+    wrap.className = 'insp-equip-panel';
+
+    const title = document.createElement('div');
+    title.className = 'rts-sec-title';
+    title.textContent = s.orderEquipTitle;
+    wrap.appendChild(title);
+
+    const grid = document.createElement('div');
+    grid.className = 'insp-equip-grid';
+    for (const uId of EQUIP_ORDER_UNITS) {
+      const def = UNIT_DEFS[uId];
+      const eqParts: string[] = [];
+      for (const g of EQUIPMENT_GOODS) {
+        const amt = def.cost[g] ?? 0;
+        if (amt > 0) eqParts.push(`${GOOD_ICONS[g]}${amt}`);
+      }
+      const btn = document.createElement('button');
+      btn.className = 'insp-equip-btn';
+      btn.setAttribute('data-order-equip', uId);
+      btn.title = `${s.units[uId]} (${eqParts.join(' ')})`;
+      btn.innerHTML =
+        `<span class="eq-icon">${UNIT_ICONS[uId]}</span>` +
+        `<span class="eq-name">${s.units[uId]}</span>` +
+        `<small class="eq-cost">${eqParts.join(' ')}</small>`;
+      btn.addEventListener('click', () => {
+        this.cb.onExecute({ type: 'orderUnitEquipment', side: 0, unitType: uId });
+        this.refreshInspector(true);
+        if (this.activeTab === 'recruit') this.rebuildDrawer(true);
+      });
+      grid.appendChild(btn);
+    }
+    wrap.appendChild(grid);
+
+    const sumRow = document.createElement('div');
+    sumRow.className = 'insp-orders-summary';
+    const lbl = document.createElement('span');
+    lbl.className = 'insp-inline-lbl';
+    lbl.textContent = `${s.ordersLabel}:`;
+    sumRow.appendChild(lbl);
+
+    let totalAll = 0;
+    for (const g of EQUIPMENT_GOODS) {
+      const wType = GOOD_TO_WORKSHOP[g];
+      const shopOrders = wType
+        ? state.buildings
+            .filter((x) => x.side === 0 && x.hp > 0 && x.type === wType)
+            .reduce((sum, x) => sum + (x.pendingOrders ?? 0), 0)
+        : 0;
+      const queued = state.sides[0].equipmentOrders?.[g] ?? 0;
+      const tot = shopOrders + queued;
+      totalAll += tot;
+      const chip = document.createElement('span');
+      chip.className = `eq-order-chip ${tot > 0 ? 'active' : ''}`;
+      chip.title = `${s.goods[g]}: ${tot}`;
+      chip.innerHTML = `${GOOD_ICONS[g]} ${s.goods[g]}: <strong>${tot}</strong>`;
+      sumRow.appendChild(chip);
+    }
+
+    if (totalAll > 0) {
+      const clr = document.createElement('button');
+      clr.className = 'insp-btn danger';
+      clr.setAttribute('data-clear-orders', '1');
+      clr.textContent = `✕ ${s.clearOrdersBtn}`;
+      clr.addEventListener('click', () => {
+        this.cb.onExecute({ type: 'setBuildingOrder', side: 0, buildingId: -1, orders: 0 });
+        this.refreshInspector(true);
+        if (this.activeTab === 'recruit') this.rebuildDrawer(true);
+      });
+      sumRow.appendChild(clr);
+    }
+    wrap.appendChild(sumRow);
+    return wrap;
   }
 
   setPlacementHover(reason: PlacementRejectionReason | null, screenX: number, screenY: number): void {
@@ -831,9 +961,13 @@ export class GameHud {
       }
       this.drawerBodyEl.appendChild(grid);
     } else if (this.activeTab === 'recruit') {
+      const state = this.latestState;
+      if (state) {
+        this.drawerBodyEl.appendChild(this.buildBarracksEquipPanel(state));
+      }
+
       const grid = document.createElement('div');
       grid.className = 'rts-recruit-list';
-      const state = this.latestState;
       const stock = state?.sides[0].stock;
       const maxBarracks = state
         ? state.buildings.filter((b) => b.side === 0 && b.type === 'barracks' && b.buildProgress >= 1 && b.hp > 0).reduce((m, b) => Math.max(m, b.level), 0)
@@ -863,7 +997,7 @@ export class GameHud {
               ? `Barracks L${def.barracksLevel}`
               : 'Keep';
         btn.innerHTML =
-          `<div class="u-head"><strong>${s.units[uId]}</strong><span>${formatCostShort(def.cost)}</span></div>` +
+          `<div class="u-head"><strong>${UNIT_ICONS[uId]} ${s.units[uId]}</strong><span>${formatCostShort(def.cost)}</span></div>` +
           `<div class="u-hint">${s.unitCounterHint[uId]} <em class="u-req">[${reqTag}]</em></div>`;
         btn.addEventListener('click', () => {
           this.cb.onExecute({ type: 'recruit', side: 0, unitType: uId });
@@ -995,30 +1129,6 @@ export class GameHud {
     const armyCap = getArmyCap(state);
     const rations = Math.floor(countFoodRationsInStock(p0.stock));
 
-    // Complete 21-good Top Resource Bar grouped into Materials, Food, Craft & Military + Pop & Army (docs/MANUAL.md §3.1)!
-    const GOOD_ICONS: Record<GoodId, string> = {
-      gold: '🪙',
-      timber: '🪵',
-      planks: '🪚',
-      stone: '🪨',
-      grain: '🌾',
-      flour: '🥡',
-      bread: '🍞',
-      fish: '🐟',
-      meat: '🥩',
-      sausages: '🌭',
-      grapes: '🍇',
-      wine: '🍷',
-      ale: '🍺',
-      hides: '🦌',
-      leatherArmour: '🦺',
-      ironOre: '⛏',
-      iron: '🔩',
-      weapons: '⚔',
-      mail: '🛡',
-      bows: '🏹',
-      horses: '🐎',
-    };
     const chip = (g: GoodId, extraCls = ''): string => {
       const val = Math.floor(p0.stock[g] ?? 0);
       const lbl = this.showResLabels ? ` ${s.goods[g]}` : '';
@@ -1180,12 +1290,16 @@ export class GameHud {
       const primary = regs[0]!;
       const def = UNIT_DEFS[primary.unitType];
       const alive = countAliveSoldiers(primary);
+      const primaryRanks = primary.ranks ?? Math.max(1, Math.ceil(Math.max(1, alive) / Math.max(1, primary.width)));
       const ids = regs.map((r) => r.id);
-      const regSig = `r:${ids.join(',')}:${primary.unitType}:${primary.formation}:${primary.stance}:${primary.holdFire}:${primary.routing}`;
+      const isPose = this.activeTool?.kind === 'regimentPose';
+      const savedForms = state.sides[0].savedFormations ?? [];
+      const savedSig = savedForms.map((f) => `${f.id}:${f.slots.length}`).join('|');
+      const regSig = `r:${ids.join(',')}:${primary.unitType}:${primary.formation}:${primaryRanks}:${primary.width}:${primary.stance}:${primary.holdFire}:${primary.routing}:${isPose}:${savedSig}:${this.lang}`;
 
       const headHtml =
-        `<strong>${regs.length > 1 ? `${regs.length}× ` : ''}${s.units[primary.unitType]}</strong>` +
-        `<span>${alive}/${primary.maxMen} · ${s.moraleLabel} ${Math.round(primary.morale)}/${Math.round(primary.maxMorale)} · ${s.fatigueLabel} ${Math.round(primary.fatigue * 100)}%</span>` +
+        `<strong>${regs.length > 1 ? `${regs.length}× ` : ''}${UNIT_ICONS[primary.unitType]} ${s.units[primary.unitType]}</strong>` +
+        `<span>${alive}/${primary.maxMen} · ${s.ranksLabel}: ${primaryRanks} (${primary.width}×${primaryRanks}) · ${s.moraleLabel} ${Math.round(primary.morale)}/${Math.round(primary.maxMorale)} · ${s.fatigueLabel} ${Math.round(primary.fatigue * 100)}%</span>` +
         `<span class="insp-cap">${primary.routing ? s.routingLabel : def.unitClass === 'siege' ? '' : primary.captainAlive ? s.captainAlive : s.captainFallen}${primary.veteranTier > 0 ? ` · ${s.veteranLabel} ${'★'.repeat(primary.veteranTier)}` : ''}</span>`;
 
       if (!force && regSig === this.lastInspectorSig) {
@@ -1204,6 +1318,30 @@ export class GameHud {
       const actRow = document.createElement('div');
       actRow.className = 'insp-actions';
 
+      // Target Position & Mouse Rotation tool (`⌖ Ustaw pozycję`)
+      const poseBtn = document.createElement('button');
+      poseBtn.className = `insp-btn ${isPose ? 'active' : 'btn-primary'}`;
+      poseBtn.setAttribute('data-set-pose', '1');
+      poseBtn.textContent = s.setPoseBtn;
+      poseBtn.title = s.setPoseHint;
+      poseBtn.addEventListener('click', () => {
+        this.cb.onSelectTool(isPose ? null : { kind: 'regimentPose' });
+      });
+      actRow.appendChild(poseBtn);
+
+      // Save multi-unit formation button when 2+ regiments are selected
+      if (regs.length >= 2) {
+        const saveFormBtn = document.createElement('button');
+        saveFormBtn.className = 'insp-btn';
+        saveFormBtn.setAttribute('data-save-formation', '1');
+        saveFormBtn.textContent = s.saveFormationBtn;
+        saveFormBtn.addEventListener('click', () => {
+          this.cb.onExecute({ type: 'saveArmyFormation', side: 0, regimentIds: ids });
+          this.refreshInspector(true);
+        });
+        actRow.appendChild(saveFormBtn);
+      }
+
       // Formations
       const forms: FormationKind[] = ['line', 'column', 'loose'];
       if (def.antiCavBonus > 0) forms.push('schiltron');
@@ -1212,8 +1350,29 @@ export class GameHud {
         const btn = document.createElement('button');
         btn.className = `insp-btn ${primary.formation === f ? 'active' : ''}`;
         btn.textContent = s.formations[f];
-        btn.addEventListener('click', () => this.cb.onExecute({ type: 'setFormation', side: 0, regimentIds: ids, formation: f }));
+        btn.addEventListener('click', () => {
+          this.cb.onExecute({ type: 'setFormation', side: 0, regimentIds: ids, formation: f });
+          this.refreshInspector(true);
+        });
         actRow.appendChild(btn);
+      }
+
+      // Ranks (`Szeregi`: 1, 2, 3, 4, 6)
+      const rankLbl = document.createElement('span');
+      rankLbl.className = 'insp-inline-lbl';
+      rankLbl.textContent = `${s.ranksLabel}:`;
+      actRow.appendChild(rankLbl);
+      for (const rk of RANK_CHOICES) {
+        const rkBtn = document.createElement('button');
+        rkBtn.className = `insp-btn ${primaryRanks === rk ? 'active' : ''}`;
+        rkBtn.setAttribute('data-rank', String(rk));
+        rkBtn.textContent = `${rk}`;
+        rkBtn.title = `${s.ranksLabel}: ${rk}`;
+        rkBtn.addEventListener('click', () => {
+          this.cb.onExecute({ type: 'setRanks', side: 0, regimentIds: ids, ranks: rk });
+          this.refreshInspector(true);
+        });
+        actRow.appendChild(rkBtn);
       }
 
       // Stances
@@ -1221,7 +1380,10 @@ export class GameHud {
         const btn = document.createElement('button');
         btn.className = `insp-btn ${primary.stance === st ? 'active' : ''}`;
         btn.textContent = s.stances[st];
-        btn.addEventListener('click', () => this.cb.onExecute({ type: 'setStance', side: 0, regimentIds: ids, stance: st }));
+        btn.addEventListener('click', () => {
+          this.cb.onExecute({ type: 'setStance', side: 0, regimentIds: ids, stance: st });
+          this.refreshInspector(true);
+        });
         actRow.appendChild(btn);
       }
 
@@ -1229,7 +1391,10 @@ export class GameHud {
         const hf = document.createElement('button');
         hf.className = `insp-btn ${primary.holdFire ? 'active' : ''}`;
         hf.textContent = s.holdFireLabel;
-        hf.addEventListener('click', () => this.cb.onExecute({ type: 'setHoldFire', side: 0, regimentIds: ids, holdFire: !primary.holdFire }));
+        hf.addEventListener('click', () => {
+          this.cb.onExecute({ type: 'setHoldFire', side: 0, regimentIds: ids, holdFire: !primary.holdFire });
+          this.refreshInspector(true);
+        });
         actRow.appendChild(hf);
       }
 
@@ -1274,6 +1439,49 @@ export class GameHud {
       actRow.appendChild(dis);
 
       this.inspectorEl.appendChild(actRow);
+
+      if (isPose) {
+        const hint = document.createElement('div');
+        hint.className = 'insp-upgrade-note';
+        hint.textContent = `⌖ ${s.setPoseHint}`;
+        this.inspectorEl.appendChild(hint);
+      }
+
+      // Saved Multi-Unit Formations list (selects units + enters target position preview!)
+      if (savedForms.length > 0) {
+        const sfRow = document.createElement('div');
+        sfRow.className = 'insp-actions';
+        const sfLbl = document.createElement('span');
+        sfLbl.className = 'insp-inline-lbl';
+        sfLbl.textContent = `${s.savedFormationsLabel}:`;
+        sfRow.appendChild(sfLbl);
+
+        for (const f of savedForms) {
+          const aliveIds = f.slots
+            .map((sl) => sl.regimentId)
+            .filter((id) => state.regiments.some((r) => r.id === id && r.side === 0 && countAliveSoldiers(r) > 0));
+          if (aliveIds.length === 0) continue;
+          const isMatched =
+            aliveIds.length === ids.length && aliveIds.every((id) => this.latestSelectedRegs.has(id));
+          const fBtn = document.createElement('button');
+          fBtn.className = `insp-btn ${isMatched ? 'active' : ''}`;
+          fBtn.setAttribute('data-saved-formation', String(f.id));
+          fBtn.textContent = `⚑ ${f.name} (${aliveIds.length})`;
+          fBtn.addEventListener('click', () => {
+            aliveIds.forEach((id, idx) => this.cb.onSelectRegiment(id, idx > 0, false));
+            this.cb.onSelectTool({ kind: 'regimentPose' });
+          });
+          const delBtn = document.createElement('button');
+          delBtn.className = 'insp-btn danger';
+          delBtn.textContent = '✕';
+          delBtn.addEventListener('click', () => {
+            this.cb.onExecute({ type: 'deleteArmyFormation', side: 0, formationId: f.id });
+            this.refreshInspector(true);
+          });
+          sfRow.append(fBtn, delBtn);
+        }
+        this.inspectorEl.appendChild(sfRow);
+      }
       return;
     }
 
@@ -1314,6 +1522,9 @@ export class GameHud {
         return parts.length > 0 ? ` (${parts.join(', ')})` : '';
       };
 
+      const isEquipShop = isEquipmentWorkshop(b.type);
+      const equipOrdersStr = isEquipShop ? ` · ${s.ordersLabel}: ${b.pendingOrders ?? 0}` : '';
+
       const extra =
         b.type === 'house'
           ? ` · ${s.residentsLabel}: ${b.residents}/${ECONOMY.houseCapacityByLevel[b.level - 1]} · 🍞${b.houseFoodRations.toFixed(1)} 🍷${b.houseWineCasks.toFixed(1)}`
@@ -1323,7 +1534,7 @@ export class GameHud {
               ? ` · → ${s.levelLabel}${b.upgradingToLevel}${matProgressStr()}`
               : (b.type === 'farm' || b.type === 'vineyard') && b.strips.length > 0
                 ? ` · ${this.lang === 'pl' ? 'Pola' : 'Strips'}: ${b.strips.length}/12`
-                : '';
+                : equipOrdersStr;
 
       const headHtml =
         `<strong>${s.buildings[b.type]} ${s.levelLabel}${b.level}/${def.maxLevel}</strong>` +
@@ -1356,7 +1567,19 @@ export class GameHud {
       const missingSig = Object.keys(uCheck.missing)
         .map((g) => `${g}:${uCheck.missing[g as GoodId]}`)
         .join(',');
-      const bldSig = `b:${b.id}:${b.type}:${b.level}:${b.upgradingToLevel}:${b.paused}:${b.buildProgress < 1}:${uCheck.canUpgrade}:${uCheck.reason}:${missingSig}:${this.lang}`;
+      const equipSig =
+        b.type === 'barracks'
+          ? EQUIPMENT_GOODS.map((g) => {
+              const wt = GOOD_TO_WORKSHOP[g];
+              const sh = wt
+                ? state.buildings
+                    .filter((x) => x.side === 0 && x.hp > 0 && x.type === wt)
+                    .reduce((sum, x) => sum + (x.pendingOrders ?? 0), 0)
+                : 0;
+              return `${g}:${sh + (state.sides[0].equipmentOrders?.[g] ?? 0)}`;
+            }).join(',')
+          : String(b.pendingOrders ?? 0);
+      const bldSig = `b:${b.id}:${b.type}:${b.level}:${b.upgradingToLevel}:${b.paused}:${b.buildProgress < 1}:${uCheck.canUpgrade}:${uCheck.reason}:${missingSig}:${equipSig}:${this.lang}`;
 
       if (!force && bldSig === this.lastInspectorSig) {
         const existingHead = this.inspectorEl.querySelector('.insp-head');
@@ -1428,6 +1651,25 @@ export class GameHud {
             actRow.appendChild(rotB);
           }
 
+          if (isEquipShop && b.buildProgress >= 1) {
+            for (const delta of [12, 1, -12, 0] as const) {
+              const oBtn = document.createElement('button');
+              oBtn.className = 'insp-btn';
+              oBtn.textContent =
+                delta === 0
+                  ? `${s.ordersLabel}: 0`
+                  : delta > 0
+                    ? `${s.ordersLabel} +${delta}`
+                    : `${s.ordersLabel} ${delta}`;
+              oBtn.addEventListener('click', () => {
+                const nextOrders = delta === 0 ? 0 : Math.max(0, (b.pendingOrders ?? 0) + delta);
+                this.cb.onExecute({ type: 'setBuildingOrder', side: 0, buildingId: b.id, orders: nextOrders });
+                this.refreshInspector(true);
+              });
+              actRow.appendChild(oBtn);
+            }
+          }
+
           if (b.type !== 'keep' && b.buildProgress >= 1) {
             const ps = document.createElement('button');
             ps.className = 'insp-btn';
@@ -1458,22 +1700,42 @@ export class GameHud {
           this.inspectorEl.appendChild(note);
         }
 
-        // Market 10-lot trade bar when Market is selected!
+        // Barracks (`Koszary`): equipment ordering panel with clickable unit icons!
+        if (b.type === 'barracks' && b.buildProgress >= 1) {
+          this.inspectorEl.appendChild(this.buildBarracksEquipPanel(state));
+        }
+
+        // Market (`Targ`): full 20-good trade grid (from raw materials to weapons & armour)!
         if (b.type === 'market' && b.buildProgress >= 1) {
           const mRow = document.createElement('div');
-          mRow.className = 'insp-market-row';
-          for (const g of MARKET_GOODS.slice(0, 6)) {
+          mRow.className = 'insp-market-grid';
+          for (const g of MARKET_GOODS) {
             const sellP = Math.round(ECONOMY.marketLotSize * GOOD_VALUE_GOLD[g] * ECONOMY.marketSellMul);
             const buyP = Math.round(ECONOMY.marketLotSize * GOOD_VALUE_GOLD[g] * ECONOMY.marketBuyMul);
-            const sBtn = document.createElement('button');
-            sBtn.className = 'insp-btn';
-            sBtn.textContent = `${s.marketSell} ${s.goods[g]} (+${sellP}g)`;
-            sBtn.addEventListener('click', () => this.cb.onExecute({ type: 'marketTrade', side: 0, action: 'sell', good: g }));
+            const cell = document.createElement('div');
+            cell.className = 'insp-market-cell';
+            const lbl = document.createElement('span');
+            lbl.className = 'mk-good';
+            lbl.title = `${s.goods[g]} (${Math.floor(state.sides[0].stock[g] ?? 0)})`;
+            lbl.textContent = `${GOOD_ICONS[g]} ${s.goods[g]}`;
             const bBtn = document.createElement('button');
-            bBtn.className = 'insp-btn';
-            bBtn.textContent = `${s.marketBuy} ${s.goods[g]} (-${buyP}g)`;
-            bBtn.addEventListener('click', () => this.cb.onExecute({ type: 'marketTrade', side: 0, action: 'buy', good: g }));
-            mRow.append(sBtn, bBtn);
+            bBtn.className = 'insp-btn mk-btn';
+            bBtn.setAttribute('data-market-buy', g);
+            bBtn.title = `${s.marketBuy} ${s.goods[g]} (-${buyP}g)`;
+            bBtn.textContent = `+10 (-${buyP}g)`;
+            bBtn.addEventListener('click', () =>
+              this.cb.onExecute({ type: 'marketTrade', side: 0, action: 'buy', good: g }),
+            );
+            const sBtn = document.createElement('button');
+            sBtn.className = 'insp-btn mk-btn';
+            sBtn.setAttribute('data-market-sell', g);
+            sBtn.title = `${s.marketSell} ${s.goods[g]} (+${sellP}g)`;
+            sBtn.textContent = `-10 (+${sellP}g)`;
+            sBtn.addEventListener('click', () =>
+              this.cb.onExecute({ type: 'marketTrade', side: 0, action: 'sell', good: g }),
+            );
+            cell.append(lbl, bBtn, sBtn);
+            mRow.appendChild(cell);
           }
           this.inspectorEl.appendChild(mRow);
         }

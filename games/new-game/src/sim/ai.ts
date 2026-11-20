@@ -152,17 +152,62 @@ function findLegalSiteForBuilding(
     return null;
   }
 
-  // Standard town ring & outer village farm ring
-  const minR = bType === 'farm' || bType === 'vineyard' ? 28 : 14;
-  const maxR = bType === 'farm' || bType === 'vineyard' ? 102 : 76;
-  for (let r = minR; r <= maxR; r += 8) {
+  // Grid-based town planner: leaves axial streets (|dx| < 8 or |dz| < 8) open, groups related buildings by sector,
+  // and aligns every building entrance orthogonally toward the nearest street!
+  const stepM = 12;
+  const isFarm = bType === 'farm' || bType === 'vineyard';
+  const minR = isFarm ? 24 : 12;
+  const maxR = isFarm ? 96 : 72;
+  const frontSign = keepX <= 0 ? 1 : -1;
+
+  // Preferred sector direction per building branch so related chains cluster together
+  const prefX =
+    def.branch === 'military' || def.branch === 'craft'
+      ? frontSign
+      : def.branch === 'food'
+        ? -frontSign
+        : 0;
+  const prefZ = def.branch === 'food' ? 1 : def.branch === 'craft' ? -1 : 0;
+
+  const candidates: { x: number; z: number; yawRad: number; score: number }[] = [];
+  for (let gx = -maxR; gx <= maxR; gx += stepM) {
+    for (let gz = -maxR; gz <= maxR; gz += stepM) {
+      if (Math.abs(gx) < 8 || Math.abs(gz) < 8) continue; // Keep axial streets clear!
+      const dist = Math.hypot(gx, gz);
+      if (dist < minR || dist > maxR) continue;
+      const x = Math.round((keepX + gx) / 4) * 4;
+      const z = Math.round((keepZ + gz) / 4) * 4;
+      // Face entrance orthogonally toward the nearest axial street (z = keepZ or x = keepX)
+      const yawRad =
+        Math.abs(gz) <= Math.abs(gx)
+          ? gz < 0
+            ? 0.0
+            : Math.PI
+          : gx < 0
+            ? Math.PI * 0.5
+            : -Math.PI * 0.5;
+      const sectorAlign = (prefX * Math.sign(gx) + prefZ * Math.sign(gz)) * 10;
+      const score = dist - sectorAlign;
+      candidates.push({ x, z, yawRad, score });
+    }
+  }
+  candidates.sort((a, b) => a.score - b.score);
+
+  for (const c of candidates) {
+    if (validateBuildingPlacement(state, side, bType, c.x, c.z, c.yawRad, terrain, forest, true) === 'ok') {
+      return { x: c.x, z: c.z, yawRad: c.yawRad };
+    }
+  }
+
+  // Fallback spiral if grid cells are full
+  for (let r = minR; r <= maxR + 16; r += 8) {
     const steps = 16;
     const offset = nextSimRand(state) * Math.PI * 2;
     for (let i = 0; i < steps; i++) {
       const ang = offset + (i / steps) * Math.PI * 2;
       const x = keepX + Math.cos(ang) * r;
       const z = keepZ + Math.sin(ang) * r;
-      const yaw = Math.atan2(keepX - x, keepZ - z);
+      const yaw = Math.round(Math.atan2(keepX - x, keepZ - z) / (Math.PI * 0.5)) * (Math.PI * 0.5);
       if (validateBuildingPlacement(state, side, bType, x, z, yaw, terrain, forest, true) === 'ok') {
         return { x, z, yawRad: yaw };
       }
@@ -259,10 +304,12 @@ export function stepAiForSide(
       );
       if (res.ok) {
         if (stock.stone >= 45) {
-          // Lay cobbled road connecting new building doorway toward Keep gate!
+          // Lay orthogonal cobbled street segment connecting the new block toward the Keep axial street!
+          const roadCornerX = Math.abs(site.z - keep.z) <= Math.abs(site.x - keep.x) ? site.x : keep.x;
+          const roadCornerZ = Math.abs(site.z - keep.z) <= Math.abs(site.x - keep.x) ? keep.z : site.z;
           executeCommand(
             state,
-            { type: 'placeRoad', side, x0: site.x, z0: site.z, x1: keep.x, z1: keep.z },
+            { type: 'placeRoad', side, x0: roadCornerX, z0: roadCornerZ, x1: keep.x, z1: keep.z },
             terrain,
             nav,
             forest,
@@ -280,6 +327,39 @@ export function stepAiForSide(
     executeCommand(state, { type: 'upgradeBuilding', side, buildingId: keep.id }, terrain, nav, forest, onNavDirty);
   } else if (barracks && barracks.level < keep.level && barracks.upgradingToLevel === null) {
     executeCommand(state, { type: 'upgradeBuilding', side, buildingId: barracks.id }, terrain, nav, forest, onNavDirty);
+  }
+
+  // 2b. Regulate armament workshop orders through Barracks (`orderUnitEquipment`) when equipment stock + pendingOrders are low
+  const stock = state.sides[side].stock;
+  const orderUnits: readonly UnitTypeId[] =
+    personality === 'raider'
+      ? ['archers', 'pikemen', 'lightCav', 'swordsmen']
+      : personality === 'knight'
+        ? ['pikemen', 'archers', 'swordsmen', 'heavyCav']
+        : ['pikemen', 'archers', 'swordsmen', 'crossbowmen'];
+  for (const u of orderUnits) {
+    const uDef = UNIT_DEFS[u];
+    for (const eqGood of ['weapons', 'bows', 'leatherArmour', 'mail', 'horses'] as const) {
+      const req = uDef.cost[eqGood] ?? 0;
+      if (req <= 0) continue;
+      const wType =
+        eqGood === 'weapons'
+          ? 'smithy'
+          : eqGood === 'bows'
+            ? 'fletcher'
+            : eqGood === 'leatherArmour'
+              ? 'tannery'
+              : eqGood === 'mail'
+                ? 'armourer'
+                : 'stable';
+      const shops = sideBuildings.filter((b) => b.type === wType);
+      if (shops.length === 0) continue;
+      const pending = shops.reduce((s, b) => s + (b.pendingOrders ?? 0), 0);
+      if ((stock[eqGood] ?? 0) + pending < req) {
+        executeCommand(state, { type: 'orderUnitEquipment', side, unitType: u }, terrain, nav, forest, onNavDirty);
+        break;
+      }
+    }
   }
 
   // 3. Recruitment & Militia refitting

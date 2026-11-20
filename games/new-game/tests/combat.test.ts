@@ -240,4 +240,42 @@ describe('Stage 6 combat system & 10x10 unit balance matrix', () => {
     }
     expect(wall.hp).toBeLessThan(wall.maxHp);
   });
+
+  it('supports setting regiment ranks (szeregi), target position with facing rotation, and multi-unit saved formations', () => {
+    const sim = new SimEngine({ mapId: 'openField', mode: 'skirmish', disableAi: true, seed: 808 });
+    const keep = sim.state.buildings.find((b) => b.side === 0 && b.type === 'keep')!;
+    const r1 = spawnRegiment(sim.state, 0, 'pikemen', keep.x + 20, keep.z - 8, Math.PI * 0.5);
+    const r2 = spawnRegiment(sim.state, 0, 'archers', keep.x + 12, keep.z + 4, Math.PI * 0.5);
+    const r3 = spawnRegiment(sim.state, 0, 'swordsmen', keep.x + 20, keep.z + 8, Math.PI * 0.5);
+
+    // 1. Set ranks (szeregi): 12 soldiers in 1 rank -> width 12; in 3 ranks -> width 4; in 4 ranks -> width 3
+    expect(sim.execute({ type: 'setRanks', side: 0, regimentIds: [r1.id], ranks: 1 }).ok).toBe(true);
+    expect(r1.ranks).toBe(1);
+    expect(r1.width).toBe(12);
+
+    expect(sim.execute({ type: 'setRanks', side: 0, regimentIds: [r1.id], ranks: 3 }).ok).toBe(true);
+    expect(r1.ranks).toBe(3);
+    expect(r1.width).toBe(4);
+
+    // 2. Save multi-unit formation of 3 regiments
+    const saveRes = sim.execute({
+      type: 'saveArmyFormation',
+      side: 0,
+      regimentIds: [r1.id, r2.id, r3.id],
+      name: 'Szyk Bojowy',
+    });
+    expect(saveRes.ok).toBe(true);
+    const saved = sim.state.sides[0].savedFormations ?? [];
+    expect(saved).toHaveLength(1);
+    expect(saved[0]!.name).toBe('Szyk Bojowy');
+    expect(saved[0]!.slots).toHaveLength(3);
+    const slot1 = saved[0]!.slots.find((s) => s.regimentId === r1.id)!;
+    expect(slot1.ranks).toBe(3);
+    expect(slot1.width).toBe(4);
+
+    // 3. Delete saved formation
+    expect(sim.execute({ type: 'deleteArmyFormation', side: 0, formationId: saved[0]!.id }).ok).toBe(true);
+    expect(sim.state.sides[0].savedFormations).toHaveLength(0);
+  });
 });
+

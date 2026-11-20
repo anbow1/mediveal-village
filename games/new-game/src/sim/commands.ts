@@ -6,7 +6,10 @@ import {
   CAMPAIGN,
   COMBAT,
   ECONOMY,
+  EQUIPMENT_GOODS,
+  GOOD_TO_WORKSHOP,
   GOOD_VALUE_GOLD,
+  isEquipmentWorkshop,
   UNIT_DEFS,
   WORLD,
   type BuildingTypeId,
@@ -18,10 +21,11 @@ import {
   countSideArmyMen,
   disbandRegimentToTown,
   getArmyCap,
+  normalizeAngle,
   pushAlert,
   refreshRegimentStats,
 } from './combat.ts';
-import { findKeep } from './economy.ts';
+import { distributeQueuedEquipmentOrders, findKeep } from './economy.ts';
 import type { NavGrid } from './pathing.ts';
 import type { TerrainField } from './terrain.ts';
 import type { ForestGrid } from './trees.ts';
@@ -29,6 +33,7 @@ import type {
   BuildingEntity,
   CommandResult,
   PlacementRejectionReason,
+  SavedFormationSlot,
   SideId,
   SimCommand,
   SimWorldState,
@@ -306,8 +311,10 @@ export function executeCommand(
         garrisonRegimentIds: [],
         garrisonType: null,
         garrisonCount: 0,
+        pendingOrders: 0,
       };
       state.buildings.push(b);
+      distributeQueuedEquipmentOrders(state, cmd.side);
       onNavDirty();
       state.visualRevision++;
       return { ok: true, reason: 'ok', createdId: b.id };
@@ -761,6 +768,13 @@ export function executeCommand(
         if (cmd.queue && reg.order !== null) {
           reg.orderQueue.push(resolvedOrder);
         } else {
+          if (resolvedOrder.ranks !== undefined) {
+            reg.ranks = Math.max(1, Math.min(8, resolvedOrder.ranks));
+            reg.width = Math.max(1, Math.ceil(Math.max(1, countAliveSoldiers(reg)) / reg.ranks));
+          } else if (resolvedOrder.width !== undefined) {
+            reg.width = Math.max(1, Math.min(20, resolvedOrder.width));
+            reg.ranks = Math.max(1, Math.ceil(Math.max(1, countAliveSoldiers(reg)) / reg.width));
+          }
           reg.order = resolvedOrder;
           reg.orderQueue = [];
           reg.path = [];
@@ -768,6 +782,47 @@ export function executeCommand(
         issued++;
       }
       return { ok: issued > 0, reason: issued > 0 ? 'ok' : 'noEligibleRegiments' };
+    }
+
+    case 'orderUnitEquipment': {
+      const def = UNIT_DEFS[cmd.unitType];
+      const countMul = Math.max(1, Math.round(cmd.count ?? 1));
+      if (!sideState.equipmentOrders) sideState.equipmentOrders = {};
+      let orderedAny = false;
+      for (const g of EQUIPMENT_GOODS) {
+        const amt = Math.round((def.cost[g] ?? 0) * countMul);
+        if (amt <= 0) continue;
+        orderedAny = true;
+        const wType = GOOD_TO_WORKSHOP[g];
+        const shops = wType
+          ? state.buildings.filter((b) => b.side === cmd.side && b.hp > 0 && b.type === wType)
+          : [];
+        if (shops.length > 0) {
+          shops.sort((a, b) => (a.pendingOrders ?? 0) - (b.pendingOrders ?? 0));
+          const target = shops[0]!;
+          target.pendingOrders = (target.pendingOrders ?? 0) + amt;
+        } else {
+          sideState.equipmentOrders[g] = (sideState.equipmentOrders[g] ?? 0) + amt;
+        }
+      }
+      return { ok: orderedAny, reason: orderedAny ? 'ok' : 'noEquipmentNeeded' };
+    }
+
+    case 'setBuildingOrder': {
+      if (cmd.buildingId === -1) {
+        // Clear all equipment orders across all workshops and side queue
+        sideState.equipmentOrders = {};
+        for (const b of state.buildings) {
+          if (b.side === cmd.side && isEquipmentWorkshop(b.type)) {
+            b.pendingOrders = 0;
+          }
+        }
+        return { ok: true, reason: 'ok' };
+      }
+      const b = state.buildings.find((x) => x.id === cmd.buildingId && x.side === cmd.side && x.hp > 0);
+      if (!b || !isEquipmentWorkshop(b.type)) return { ok: false, reason: 'invalidBuilding' };
+      b.pendingOrders = Math.max(0, Math.round(cmd.orders));
+      return { ok: true, reason: 'ok' };
     }
 
     case 'setFormation': {
@@ -780,6 +835,103 @@ export function executeCommand(
         reg.formation = cmd.formation;
       }
       return { ok: true, reason: 'ok' };
+    }
+
+    case 'setRanks': {
+      const clampedRanks = Math.max(1, Math.min(8, Math.round(cmd.ranks)));
+      let updated = 0;
+      for (const rId of cmd.regimentIds) {
+        const reg = state.regiments.find((r) => r.id === rId && r.side === cmd.side);
+        if (!reg) continue;
+        const alive = Math.max(1, countAliveSoldiers(reg));
+        reg.ranks = Math.min(alive, clampedRanks);
+        reg.width = Math.max(1, Math.ceil(alive / reg.ranks));
+        updated++;
+      }
+      return { ok: updated > 0, reason: updated > 0 ? 'ok' : 'noEligibleRegiments' };
+    }
+
+    case 'saveArmyFormation': {
+      const regs = cmd.regimentIds
+        .map((id) => state.regiments.find((r) => r.id === id && r.side === cmd.side && countAliveSoldiers(r) > 0))
+        .filter((r): r is NonNullable<typeof r> => r !== undefined);
+      if (regs.length < 2) return { ok: false, reason: 'needMultipleRegiments' };
+
+      if (!sideState.savedFormations) sideState.savedFormations = [];
+      let cx = 0;
+      let cz = 0;
+      let sumSin = 0;
+      let sumCos = 0;
+      for (const r of regs) {
+        cx += r.x;
+        cz += r.z;
+        sumSin += Math.sin(r.yawRad);
+        sumCos += Math.cos(r.yawRad);
+      }
+      cx /= regs.length;
+      cz /= regs.length;
+      const baseYaw = Math.hypot(sumSin, sumCos) > 1e-3 ? Math.atan2(sumSin, sumCos) : regs[0]!.yawRad;
+      const fx = Math.sin(baseYaw);
+      const fz = Math.cos(baseYaw);
+      const rx = Math.cos(baseYaw);
+      const rz = -Math.sin(baseYaw);
+
+      // Check if regiments are overly clumped (< 4 m apart); if so, arrange into a neat tactical multi-line formation
+      let clumped = false;
+      for (let i = 0; i < regs.length && !clumped; i++) {
+        for (let j = i + 1; j < regs.length; j++) {
+          if (Math.hypot(regs[i]!.x - regs[j]!.x, regs[i]!.z - regs[j]!.z) < 4.0) {
+            clumped = true;
+            break;
+          }
+        }
+      }
+
+      const slots: SavedFormationSlot[] = regs.map((r, idx) => {
+        const alive = Math.max(1, countAliveSoldiers(r));
+        const ranks = r.ranks ?? Math.max(1, Math.ceil(alive / Math.max(1, r.width)));
+        const width = Math.max(1, Math.ceil(alive / ranks));
+        if (clumped) {
+          const def = UNIT_DEFS[r.unitType];
+          const isRear = def.unitClass === 'ranged' || def.unitClass === 'siege';
+          const rightM = (idx - (regs.length - 1) * 0.5) * 11.5;
+          const forwardM = isRear ? -5.5 : 3.5;
+          return {
+            regimentId: r.id,
+            unitType: r.unitType,
+            rightM,
+            forwardM,
+            relYawRad: 0,
+            formation: r.formation,
+            ranks,
+            width,
+          };
+        }
+        const dx = r.x - cx;
+        const dz = r.z - cz;
+        return {
+          regimentId: r.id,
+          unitType: r.unitType,
+          rightM: Number((dx * rx + dz * rz).toFixed(2)),
+          forwardM: Number((dx * fx + dz * fz).toFixed(2)),
+          relYawRad: Number(normalizeAngle(r.yawRad - baseYaw).toFixed(3)),
+          formation: r.formation,
+          ranks,
+          width,
+        };
+      });
+
+      const nextId = sideState.savedFormations.reduce((m, f) => Math.max(m, f.id), 0) + 1;
+      const name = cmd.name?.trim() || `F${nextId}`;
+      sideState.savedFormations.push({ id: nextId, name, slots });
+      return { ok: true, reason: 'ok', createdId: nextId };
+    }
+
+    case 'deleteArmyFormation': {
+      if (!sideState.savedFormations) return { ok: false, reason: 'notFound' };
+      const before = sideState.savedFormations.length;
+      sideState.savedFormations = sideState.savedFormations.filter((f) => f.id !== cmd.formationId);
+      return { ok: sideState.savedFormations.length < before, reason: 'ok' };
     }
 
     case 'setStance': {

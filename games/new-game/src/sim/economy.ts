@@ -5,8 +5,11 @@ import {
   ALL_GOODS,
   BUILDING_DEFS,
   ECONOMY,
+  EQUIPMENT_GOODS,
   FOOD_GOODS,
   FOOD_RATIONS_PER_UNIT,
+  GOOD_TO_WORKSHOP,
+  isEquipmentWorkshop,
   type GoodId,
   type ResourceMap,
 } from '../config.ts';
@@ -176,8 +179,27 @@ export function computeBuildingStripTransform(
   };
 }
 
+/** Distributes any queued side-level equipment orders onto existing workshops of the matching type. */
+export function distributeQueuedEquipmentOrders(state: SimWorldState, side: SideId): void {
+  const eqOrders = state.sides[side].equipmentOrders;
+  if (!eqOrders) return;
+  for (const g of EQUIPMENT_GOODS) {
+    const amt = Math.floor(eqOrders[g] ?? 0);
+    if (amt <= 0) continue;
+    const wType = GOOD_TO_WORKSHOP[g];
+    if (!wType) continue;
+    const shops = state.buildings.filter((b) => b.side === side && b.hp > 0 && b.type === wType);
+    if (shops.length === 0) continue;
+    shops.sort((a, b) => (a.pendingOrders ?? 0) - (b.pendingOrders ?? 0));
+    const target = shops[0]!;
+    target.pendingOrders = (target.pendingOrders ?? 0) + amt;
+    eqOrders[g] = 0;
+  }
+}
+
 /** Runs every 1 s: automatically allocates workers -> builders (30% of free, max 3/site) -> carriers (min 4 free!). */
 export function allocateRolesForSide(state: SimWorldState, side: SideId): void {
+  distributeQueuedEquipmentOrders(state, side);
   const citizens = state.citizens.filter((c) => c.side === side && c.role !== 'recruit');
   const activeSites = state.buildings.filter(
     (b) => b.side === side && b.hp > 0 && (b.buildProgress < 1 || b.upgradingToLevel !== null),
@@ -189,7 +211,8 @@ export function allocateRolesForSide(state: SimWorldState, side: SideId): void {
       b.buildProgress >= 1 &&
       b.upgradingToLevel === null &&
       !b.paused &&
-      BUILDING_DEFS[b.type].workers > 0,
+      BUILDING_DEFS[b.type].workers > 0 &&
+      (!isEquipmentWorkshop(b.type) || (b.pendingOrders ?? 0) > 0),
   );
 
   // Reserve at least 4 carriers + 1 builder if any site is building/upgrading (docs/ECONOMY.md §2)
@@ -836,7 +859,14 @@ export function stepEconomy(
     // Worker assigned to workshop / gatherer
     if (c.role === 'worker' && c.assignedBuildingId !== null) {
       const shop = buildingById.get(c.assignedBuildingId);
-      if (!shop || shop.hp <= 0 || shop.paused || shop.buildProgress < 1 || shop.upgradingToLevel !== null) {
+      if (
+        !shop ||
+        shop.hp <= 0 ||
+        shop.paused ||
+        shop.buildProgress < 1 ||
+        shop.upgradingToLevel !== null ||
+        (isEquipmentWorkshop(shop.type) && (shop.pendingOrders ?? 0) <= 0)
+      ) {
         c.role = 'carrier';
         c.assignedBuildingId = null;
         c.workPhase = 'atShop';
@@ -1274,6 +1304,11 @@ export function stepEconomy(
 
     // Standard recipe workshops (all remaining craft/food/extraction buildings)
     if (def.recipe) {
+      if (isEquipmentWorkshop(b.type) && (b.pendingOrders ?? 0) <= 0) {
+        b.status = 'idle';
+        b.cycleTimerS = 0;
+        continue;
+      }
       const worker = workerAtShop.get(b.id);
       if (!worker) {
         b.status = 'noWorker';
@@ -1314,14 +1349,23 @@ export function stepEconomy(
           b.inputs[g] = Math.max(0, (b.inputs[g] ?? 0) - req);
           recordConsumed(sideState, g, req);
         }
+        let totalOut = 0;
         for (const g of Object.keys(def.recipe.outputs) as GoodId[]) {
           const out = def.recipe.outputs[g] ?? 0;
+          totalOut += out;
           if (g === 'gold') {
             sideState.stock.gold += out;
           } else {
             b.yard[g] = (b.yard[g] ?? 0) + out;
           }
           recordProduced(sideState, g, out);
+        }
+        if (isEquipmentWorkshop(b.type)) {
+          b.pendingOrders = Math.max(0, (b.pendingOrders ?? 0) - Math.max(1, totalOut));
+          if (b.pendingOrders <= 0) {
+            b.cycleTimerS = 0;
+            b.status = 'idle';
+          }
         }
       }
     } else if (def.workers > 0) {
