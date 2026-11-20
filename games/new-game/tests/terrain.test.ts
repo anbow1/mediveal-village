@@ -86,17 +86,19 @@ describe('Stage 4 TerrainField and GroundWorksMap (pure TS)', () => {
     expect(clean.dirt + clean.cobble + clean.farm + clean.canopy).toBe(0);
   });
 
-  it('keeps ground_045m and eye_170m fixed views strictly +0.45 m and +1.70 m above local terrain', () => {
+  it('keeps ground_045m and eye_170m fixed views strictly +0.45 m and +1.70 m above local terrain', async () => {
+    const { buildMapLayout } = await import('../src/sim/maps.ts');
+    const defaultTerrain = new TerrainField(buildMapLayout('crossing').terrainConfig);
     expect(BENCH_SPOTS.length).toBe(12);
     const g045 = findBenchSpot('ground_045m').camera;
     const e170 = findBenchSpot('eye_170m').camera;
     expect(g045.mode).toBe('free');
     expect(e170.mode).toBe('free');
     if (g045.mode === 'free') {
-      expect(g045.pose.y - terrain.heightAt(g045.pose.x, g045.pose.z)).toBeCloseTo(0.45, 4);
+      expect(g045.pose.y - defaultTerrain.heightAt(g045.pose.x, g045.pose.z)).toBeCloseTo(0.45, 4);
     }
     if (e170.mode === 'free') {
-      expect(e170.pose.y - terrain.heightAt(e170.pose.x, e170.pose.z)).toBeCloseTo(1.7, 4);
+      expect(e170.pose.y - defaultTerrain.heightAt(e170.pose.x, e170.pose.z)).toBeCloseTo(1.7, 4);
     }
   });
 });

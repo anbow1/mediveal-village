@@ -1,12 +1,15 @@
-// Physical enclosed village lake water surface (playbook §7.1 & §7.2b, GUIDE.md §4).
-// Driven by the exact same `sky.ts` analytic physical sky function + real seabed depth (`TerrainField`),
-// Beer-Lambert shallow-to-deep absorption, Schlick Fresnel, fetch-damped wind ripples, and thin-film shore fade.
+// Unified physical water surface for enclosed village lakes, meandering rivers & shallow fords
+// (playbook §7.1 & §7.2b, GUIDE.md §4).
+// Uses the EXACT `TerrainField` height grid vertices (2.0 m cells over 560 x 560 m), emitting ONLY
+// wet cells + a 2 m shoreline skirt into 1 single draw call with zero shoreline seams or Z-fighting,
+// driven by `sky.ts` analytic physical sky reflection, Beer-Lambert depth absorption, Schlick Fresnel,
+// domain-warped fetch-damped wind ripples, and smooth thin-film shoreline alpha fade.
 
 import {
+  BufferGeometry,
   Float32BufferAttribute,
   Mesh,
   MeshBasicNodeMaterial,
-  PlaneGeometry,
 } from 'three/webgpu';
 import {
   attribute,
@@ -35,27 +38,69 @@ export interface LakeWaterHandles {
 }
 
 /**
- * Builds the enclosed village lake mesh sitting at `terrain.config.lake.waterLevelM` (0.0 m)
- * with exact per-vertex seabed depth from `terrain.heightAt(x, z)` so shorelines never clip or float.
+ * Builds 1 unified physical water mesh covering every lake, pond, river channel, and shallow ford
+ * on the active 560 x 560 m `TerrainField` (skipping dry land cells to stay ultra-lean).
  */
-export function buildLakeWater(terrain: TerrainField, skyUniforms: PhysicalSkyUniforms): LakeWaterHandles {
-  const lk = terrain.config.lake;
-  const spanX = lk.radiusXM * 2.55;
-  const spanZ = lk.radiusZM * 2.55;
-  const geo = new PlaneGeometry(spanX, spanZ, 56, 44);
-  geo.rotateX(-Math.PI / 2);
+export function buildLakeWater(
+  terrain: TerrainField,
+  skyUniforms: PhysicalSkyUniforms,
+  heightGrid?: Float32Array,
+): LakeWaterHandles {
+  const wl = terrain.config.river?.waterLevelM ?? terrain.config.lake.waterLevelM;
+  const n = terrain.config.gridResolution;
+  const half = terrain.halfSizeM;
+  const step = terrain.cellSizeM;
+  const grid = heightGrid ?? terrain.bakeHeightGrid();
 
-  const pos = geo.getAttribute('position');
-  const depths = new Float32Array(pos.count);
-  for (let i = 0; i < pos.count; i++) {
-    const wx = pos.getX(i) + lk.centerX;
-    const wz = pos.getZ(i) + lk.centerZ;
-    pos.setXYZ(i, wx, lk.waterLevelM, wz);
-    // Signed depth: > 0 in water, < 0 on dry bank (drives smooth shoreline fade)
-    depths[i] = lk.waterLevelM - terrain.heightAt(wx, wz);
+  // Map grid vertex indices -> compact emitted water vertex indices (only wet cells + 1-cell shore collar)
+  const vertMap = new Int32Array(n * n).fill(-1);
+  const positions: number[] = [];
+  const depths: number[] = [];
+  const indices: number[] = [];
+
+  const getVert = (ix: number, iz: number): number => {
+    const gIdx = iz * n + ix;
+    const existing = vertMap[gIdx]!;
+    if (existing >= 0) return existing;
+    const wx = -half + ix * step;
+    const wz = -half + iz * step;
+    const d = wl - grid[gIdx]!;
+    const outIdx = positions.length / 3;
+    positions.push(wx, wl, wz);
+    depths.push(d);
+    vertMap[gIdx] = outIdx;
+    return outIdx;
+  };
+
+  for (let iz = 0; iz < n - 1; iz++) {
+    for (let ix = 0; ix < n - 1; ix++) {
+      const d00 = wl - grid[iz * n + ix]!;
+      const d10 = wl - grid[iz * n + (ix + 1)]!;
+      const d01 = wl - grid[(iz + 1) * n + ix]!;
+      const d11 = wl - grid[(iz + 1) * n + (ix + 1)]!;
+      // Emit cell if any corner is wet (or within 0.08 m of waterline for smooth thin-film fade)
+      if (Math.max(d00, d10, d01, d11) > -0.06) {
+        const v00 = getVert(ix, iz);
+        const v10 = getVert(ix + 1, iz);
+        const v01 = getVert(ix, iz + 1);
+        const v11 = getVert(ix + 1, iz + 1);
+        // Match PlaneGeometry rotated -PI/2 winding (+Y up)
+        indices.push(v00, v01, v10, v10, v01, v11);
+      }
+    }
   }
-  pos.needsUpdate = true;
+
+  // Fallback degenerate triangle if a map ever had zero water (keeps pipeline warm with 0 visible pixels)
+  if (indices.length === 0) {
+    positions.push(0, wl - 10, 0, 0.01, wl - 10, 0, 0, wl - 10, 0.01);
+    depths.push(-10, -10, -10);
+    indices.push(0, 1, 2);
+  }
+
+  const geo = new BufferGeometry();
+  geo.setAttribute('position', new Float32BufferAttribute(positions, 3));
   geo.setAttribute('aDepth', new Float32BufferAttribute(depths, 1));
+  geo.setIndex(indices);
   geo.computeBoundingSphere();
 
   const mat = new MeshBasicNodeMaterial({
@@ -73,12 +118,18 @@ export function buildLakeWater(terrain: TerrainField, skyUniforms: PhysicalSkyUn
   const wp = positionWorld;
   const t = skyUniforms.uWaterTimeS;
 
-  // Organic fetch- and depth-damped wind ripples (domain-warped non-orthogonal waves -> zero checkerboard grid!)
-  const waveAmp = smoothstep(float(0.0), float(0.45), safeDepth);
-  const warpX = sin(wp.z.mul(0.55).add(t.mul(0.42))).mul(0.9);
-  const warpZ = cos(wp.x.mul(0.48).sub(t.mul(0.37))).mul(0.9);
-  const wx = wp.x.add(warpX);
-  const wz = wp.z.add(warpZ);
+  // Subtle river flow drift along river axis (zero drift on enclosed lakes)
+  const flowX = terrain.config.river?.axis === 'ew' ? t.mul(0.55) : float(0.0);
+  const flowZ = terrain.config.river?.axis === 'ns' ? t.mul(0.55) : float(0.0);
+
+  // Domain-warped 5-octave non-orthogonal wind ripples (zero checkerboard grid at low angles!)
+  const waveAmp = smoothstep(float(0.0), float(0.42), safeDepth);
+  const wx0 = wp.x.sub(flowX);
+  const wz0 = wp.z.sub(flowZ);
+  const warpX = sin(wz0.mul(0.55).add(t.mul(0.42))).mul(0.9);
+  const warpZ = cos(wx0.mul(0.48).sub(t.mul(0.37))).mul(0.9);
+  const wx = wx0.add(warpX);
+  const wz = wz0.add(warpZ);
   const w1 = sin(wx.mul(1.7).add(wz.mul(0.62)).add(t.mul(1.25)));
   const w2 = cos(wx.mul(0.95).sub(wz.mul(2.45)).sub(t.mul(1.55)));
   const w3 = sin(wx.mul(3.8).add(wz.mul(2.1)).add(t.mul(1.9)));
@@ -93,7 +144,7 @@ export function buildLakeWater(terrain: TerrainField, skyUniforms: PhysicalSkyUn
   // Physical air->water Schlick Fresnel (F0 = 0.02)
   const fresnel = float(0.02).add(float(0.98).mul(pow(float(1.0).sub(NdotV), float(4.6))));
 
-  // Exact same analytic sky + clouds + golden-hour scatter as the sky dome & height fog
+  // Unified analytic sky + clouds + golden-hour scatter reflection
   const R = normalize(reflect(V.negate(), N));
   const reflDir = normalize(vec3(R.x, max(R.y, float(0.02)), R.z));
   const skyRefl = buildFullSkyNodeForWater(reflDir, skyUniforms);
@@ -104,7 +155,7 @@ export function buildLakeWater(terrain: TerrainField, skyUniforms: PhysicalSkyUn
   const specBroad = pow(clamp(dot(N, H), 0.0, 1.0), float(30.0)).mul(skyUniforms.uMieStrength).mul(0.28);
   const reflection = skyRefl.add(skyUniforms.uSunGlowColor.mul(specTight.add(specBroad)));
 
-  // Beer-Lambert depth absorption over sandy-silt lakebed (shallows warm tan-olive -> deep pond teal-olive)
+  // Beer-Lambert depth absorption over sandy-silt bed (shallow warm gravel fords -> deep olive-teal water)
   const bounceRgb = skyUniforms.uGroundBounceColor.rgb;
   const shallowBed = bounceRgb.mul(vec3(0.68, 0.62, 0.44));
   const deepScatter = bounceRgb.mul(vec3(0.11, 0.22, 0.19));
@@ -123,7 +174,7 @@ export function buildLakeWater(terrain: TerrainField, skyUniforms: PhysicalSkyUn
   mat.opacityNode = clamp(shoreAlpha.mul(mix(float(0.76), float(0.96), smoothstep(float(0.08), float(0.65), safeDepth))), 0.0, 0.96);
 
   const mesh = new Mesh(geo, mat);
-  mesh.name = 'VillageEnclosedLake';
+  mesh.name = 'MarchlandWaterSurface';
   mesh.castShadow = false;
   mesh.receiveShadow = false;
   mesh.renderOrder = 3;

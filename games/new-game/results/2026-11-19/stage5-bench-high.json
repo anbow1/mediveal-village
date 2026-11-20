@@ -1,0 +1,174 @@
+{
+  "bench": {
+    "title": "Marchland Stage 5 (crossing) · WebGPU · HIGH · lateAutumn",
+    "rows": [
+      {
+        "spot": "showcase",
+        "fps": 10,
+        "p95Ms": 100,
+        "cpuMs": 16.74,
+        "drawCalls": 197,
+        "triangles": 1050870,
+        "gpuMs": null,
+        "gpu": {}
+      },
+      {
+        "spot": "building",
+        "fps": 10,
+        "p95Ms": 100,
+        "cpuMs": 14.82,
+        "drawCalls": 187,
+        "triangles": 1035310,
+        "gpuMs": 5690.27,
+        "gpu": {
+          "scene": 4776.98,
+          "shadows": 171.52,
+          "post": 720.71,
+          "other": 21.06
+        }
+      },
+      {
+        "spot": "unit",
+        "fps": 10,
+        "p95Ms": 100,
+        "cpuMs": 18.02,
+        "drawCalls": 200,
+        "triangles": 1362632,
+        "gpuMs": 3640.36,
+        "gpu": {
+          "scene": 3218.38,
+          "shadows": 91.67,
+          "post": 330.31
+        }
+      },
+      {
+        "spot": "calibration",
+        "fps": 10,
+        "p95Ms": 100,
+        "cpuMs": 17.7,
+        "drawCalls": 198,
+        "triangles": 948492,
+        "gpuMs": 3640.36,
+        "gpu": {
+          "scene": 3218.38,
+          "shadows": 91.67,
+          "post": 330.31
+        }
+      },
+      {
+        "spot": "town",
+        "fps": 10,
+        "p95Ms": 100,
+        "cpuMs": 12.58,
+        "drawCalls": 194,
+        "triangles": 943094,
+        "gpuMs": 3616.87,
+        "gpu": {
+          "scene": 3194.84,
+          "shadows": 97.98,
+          "post": 324.05
+        }
+      },
+      {
+        "spot": "rally",
+        "fps": 10,
+        "p95Ms": 100,
+        "cpuMs": 12.16,
+        "drawCalls": 186,
+        "triangles": 1046571,
+        "gpuMs": 2528.98,
+        "gpu": {
+          "scene": 2113.1,
+          "shadows": 89.79,
+          "post": 326.1
+        }
+      },
+      {
+        "spot": "field",
+        "fps": 10,
+        "p95Ms": 100,
+        "cpuMs": 9.96,
+        "drawCalls": 166,
+        "triangles": 902030,
+        "gpuMs": 2528.98,
+        "gpu": {
+          "scene": 2113.1,
+          "shadows": 89.79,
+          "post": 326.1
+        }
+      },
+      {
+        "spot": "close",
+        "fps": 10,
+        "p95Ms": 100,
+        "cpuMs": 7.88,
+        "drawCalls": 191,
+        "triangles": 1058091,
+        "gpuMs": 2437.08,
+        "gpu": {
+          "scene": 2028.76,
+          "shadows": 83.72,
+          "post": 324.6
+        }
+      },
+      {
+        "spot": "enemy",
+        "fps": 10,
+        "p95Ms": 100,
+        "cpuMs": 9.86,
+        "drawCalls": 148,
+        "triangles": 932966,
+        "gpuMs": 3122.73,
+        "gpu": {
+          "scene": 2706.55,
+          "shadows": 90.56,
+          "post": 325.63
+        }
+      },
+      {
+        "spot": "overview",
+        "fps": 10,
+        "p95Ms": 100,
+        "cpuMs": 12.18,
+        "drawCalls": 191,
+        "triangles": 820743,
+        "gpuMs": 3122.73,
+        "gpu": {
+          "scene": 2706.55,
+          "shadows": 90.56,
+          "post": 325.63
+        }
+      },
+      {
+        "spot": "ground_045m",
+        "fps": 10,
+        "p95Ms": 100,
+        "cpuMs": 11.26,
+        "drawCalls": 186,
+        "triangles": 1093078,
+        "gpuMs": 2298.24,
+        "gpu": {
+          "scene": 1921.06,
+          "shadows": 53.16,
+          "post": 324.02
+        }
+      },
+      {
+        "spot": "eye_170m",
+        "fps": 10,
+        "p95Ms": 100,
+        "cpuMs": 12.8,
+        "drawCalls": 187,
+        "triangles": 1133759,
+        "gpuMs": 3222.63,
+        "gpu": {
+          "scene": 2809.03,
+          "shadows": 83.88,
+          "post": 329.72
+        }
+      }
+    ],
+    "text": "Marchland Stage 5 (crossing) · WebGPU · HIGH · lateAutumn\nspot            fps  p95ms  cpu  calls  Mtris  gpu ms (per pass)\nshowcase         10  100.0 16.7    197   1.05  n/a\nbuilding         10  100.0 14.8    187   1.04  5690.3 (scene 4777.0, shadows 171.5, post 720.7, other 21.1)\nunit             10  100.0 18.0    200   1.36  3640.4 (scene 3218.4, shadows 91.7, post 330.3)\ncalibration      10  100.0 17.7    198   0.95  3640.4 (scene 3218.4, shadows 91.7, post 330.3)\ntown             10  100.0 12.6    194   0.94  3616.9 (scene 3194.8, shadows 98.0, post 324.1)\nrally            10  100.0 12.2    186   1.05  2529.0 (scene 2113.1, shadows 89.8, post 326.1)\nfield            10  100.0 10.0    166   0.90  2529.0 (scene 2113.1, shadows 89.8, post 326.1)\nclose            10  100.0  7.9    191   1.06  2437.1 (scene 2028.8, shadows 83.7, post 324.6)\nenemy            10  100.0  9.9    148   0.93  3122.7 (scene 2706.6, shadows 90.6, post 325.6)\noverview         10  100.0 12.2    191   0.82  3122.7 (scene 2706.6, shadows 90.6, post 325.6)\nground_045m      10  100.0 11.3    186   1.09  2298.2 (scene 1921.1, shadows 53.2, post 324.0)\neye_170m         10  100.0 12.8    187   1.13  3222.6 (scene 2809.0, shadows 83.9, post 329.7)"
+  },
+  "errors": []
+}

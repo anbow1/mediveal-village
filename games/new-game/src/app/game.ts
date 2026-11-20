@@ -17,9 +17,16 @@ import { AssetLoader } from '../render/assetLoader.ts';
 import { LightingRig, type ShadowConfigSummary } from '../render/lighting.ts';
 import { CpuTimer, FrameGovernor } from '../render/perf.ts';
 import { RenderStage } from '../render/stage.ts';
-import { buildStage4Slice, type Stage4SliceHandles } from '../render/stage4Slice.ts';
+import { buildStage5World, type WorldHandles } from '../render/worldBuilder.ts';
+import type { MapLayoutId } from '../sim/terrain.ts';
 import { OverlayUi } from '../ui/overlay.ts';
-import { BENCH_SPOTS, type BenchResult, BenchSession, findBenchSpot } from './bench.ts';
+import {
+  type BenchResult,
+  BenchSession,
+  type BenchSpot,
+  createBenchSpotsForWorld,
+  findBenchSpot,
+} from './bench.ts';
 import { InputBindings } from './bindings.ts';
 import { type DebugPlaceArgs, RtsCameraController } from './rtsCamera.ts';
 
@@ -33,6 +40,7 @@ export interface BootOptions {
   readonly lighting: LightingPresetId;
   readonly toneMapping: ToneMappingChoice;
   readonly lang: LangCode;
+  readonly mapId: MapLayoutId;
   readonly initialSpot?: string | null;
 }
 
@@ -49,6 +57,7 @@ interface DebugApi {
     quality: QualityPreset;
     toneMapping: ToneMappingChoice;
     lighting: LightingPresetId;
+    mapId: MapLayoutId;
     anchorEv100: number;
     preExposure: number;
     drawCalls: number;
@@ -60,7 +69,7 @@ interface DebugApi {
     loadTotalS: number;
     lods: Record<string, number>;
     shadows: ShadowConfigSummary;
-    sliceMetrics: ReturnType<Stage4SliceHandles['getSliceMetrics']>;
+    worldMetrics: ReturnType<WorldHandles['getWorldMetrics']>;
     benchResult: BenchResult | null;
   };
   readonly renderer: WebGPURenderer;
@@ -82,7 +91,8 @@ export class Game {
   private readonly stage: RenderStage;
   private readonly lighting: LightingRig;
   private readonly assetLoader: AssetLoader;
-  private readonly world: Stage4SliceHandles;
+  private readonly world: WorldHandles;
+  private readonly benchSpots: readonly BenchSpot[];
   private readonly bindings: InputBindings;
   private readonly camCtrl: RtsCameraController;
   private readonly loop: FixedStepLoop;
@@ -107,7 +117,8 @@ export class Game {
     stage: RenderStage,
     lighting: LightingRig,
     assetLoader: AssetLoader,
-    world: Stage4SliceHandles,
+    world: WorldHandles,
+    benchSpots: readonly BenchSpot[],
     ui: OverlayUi,
     bindings: InputBindings,
     camCtrl: RtsCameraController,
@@ -117,6 +128,7 @@ export class Game {
     this.lighting = lighting;
     this.assetLoader = assetLoader;
     this.world = world;
+    this.benchSpots = benchSpots;
     this.ui = ui;
     this.bindings = bindings;
     this.camCtrl = camCtrl;
@@ -153,7 +165,7 @@ export class Game {
     const bindings = new InputBindings();
     let gameRef: Game | null = null;
 
-    const ui = new OverlayUi(opts.container, opts.lang, opts.quality, opts.lighting, {
+    const ui = new OverlayUi(opts.container, opts.lang, opts.quality, opts.lighting, opts.mapId, {
       onStartPlay: () => gameRef?.enterPlay(),
       onResume: () => gameRef?.resumeFromPauseMenu(),
       onTogglePause: () => gameRef?.toggleActivePause(),
@@ -165,6 +177,11 @@ export class Game {
       onChangeQuality: (q) => {
         const url = new URL(window.location.href);
         url.searchParams.set('q', q);
+        window.location.href = url.toString();
+      },
+      onChangeMap: (nextMap) => {
+        const url = new URL(window.location.href);
+        url.searchParams.set('map', nextMap);
         window.location.href = url.toString();
       },
       onChangeLang: (lang) => {
@@ -193,27 +210,28 @@ export class Game {
         : 8;
     const anisotropy = Math.min(opts.quality === 'high' ? 8 : 4, maxAniso);
 
-    const world = await buildStage4Slice(
+    const world = await buildStage5World(
       stage.scene,
       assetLoader,
-      lighting.skyUniforms,
-      anisotropy,
       opts.quality,
+      anisotropy,
+      lighting.skyUniforms,
+      opts.mapId,
       (loadedBytes, totalBytes) => {
         ui.setLoadingProgress(loadedBytes, totalBytes);
       },
     );
     markStage('assets');
 
+    const benchSpots = createBenchSpotsForWorld(world.layout, world.terrain);
     const camCtrl = new RtsCameraController(
       stage.camera,
       stage.renderer.domElement,
       bindings,
       (x, z) => world.terrain.heightAt(x, z),
     );
-    // Start framed on optional ?spot=<name> or default Stage 4 village showcase.
-    const startSpot = opts.initialSpot && BENCH_SPOTS.some((s) => s.name === opts.initialSpot) ? opts.initialSpot : 'showcase';
-    camCtrl.applySpotCamera(findBenchSpot(startSpot).camera);
+    const startSpot = opts.initialSpot && benchSpots.some((s) => s.name === opts.initialSpot) ? opts.initialSpot : 'showcase';
+    camCtrl.applySpotCamera(findBenchSpot(startSpot, benchSpots).camera);
     const initDir = new Vector3();
     stage.camera.getWorldDirection(initDir);
     lighting.followCamera(stage.camera.position);
@@ -236,7 +254,7 @@ export class Game {
     const totalS = (performance.now() - tBoot) / 1000;
     console.log(`[load] total: ${totalS.toFixed(3)} s`);
 
-    const game = new Game(stage, lighting, assetLoader, world, ui, bindings, camCtrl, opts);
+    const game = new Game(stage, lighting, assetLoader, world, benchSpots, ui, bindings, camCtrl, opts);
     gameRef = game;
     game.loadTotalS = totalS;
     ui.hideLoading(totalS);
@@ -273,7 +291,7 @@ export class Game {
         );
       },
       spot: (name) => {
-        this.camCtrl.applySpotCamera(findBenchSpot(name).camera);
+        this.camCtrl.applySpotCamera(findBenchSpot(name, this.benchSpots).camera);
         this.stage.camera.getWorldDirection(this.camDir);
         this.lighting.followCamera(this.stage.camera.position);
         this.world.update(0, this.stage.camera.position, this.camDir, true);
@@ -293,6 +311,7 @@ export class Game {
         quality: this.stage.quality,
         toneMapping: this.stage.toneMapping,
         lighting: this.lighting.state.presetId,
+        mapId: this.world.mapId,
         anchorEv100: this.lighting.state.anchorEv100,
         preExposure: this.lighting.state.preExposure,
         drawCalls: this.stage.renderer.info.render.drawCalls,
@@ -304,7 +323,7 @@ export class Game {
         loadTotalS: this.loadTotalS,
         lods: this.world.getLodSummary(),
         shadows: this.lighting.getShadowInfo(),
-        sliceMetrics: this.world.getSliceMetrics(),
+        worldMetrics: this.world.getWorldMetrics(),
         benchResult: this.lastBenchResult,
       }),
       renderer: this.stage.renderer,
@@ -409,9 +428,9 @@ export class Game {
     this.loop.paused = true;
     this.governor.enabled = false;
     this.governor.reset();
-    const title = `Marchland Stage 4 · ${this.stage.backendName} · ${this.stage.quality.toUpperCase()} · ${this.lighting.state.presetId}`;
+    const title = `Marchland Stage 5 (${this.world.mapId}) · ${this.stage.backendName} · ${this.stage.quality.toUpperCase()} · ${this.lighting.state.presetId}`;
     this.benchSession = new BenchSession(
-      BENCH_SPOTS,
+      this.benchSpots,
       title,
       (spot) => {
         this.camCtrl.applySpotCamera(spot.camera);

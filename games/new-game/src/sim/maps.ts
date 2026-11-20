@@ -1,0 +1,1138 @@
+// Pure-TS deterministic 560 x 560 m Campaign & Skirmish map layout generator (zero three.js, unit-tested).
+// Generates all 5 Marchland layouts (`crossing`, `openField`, `forest`, `valley`, `fortress`) strictly
+// following `docs/CAMPAIGN.md` (19.11), `NUMBERS.md`, and `BRIEF.md`:
+//   - `crossing`  (Missions 1-2 default): north-south river, stone causeway + 2 gravel fords,
+//                                         complete west-bank town, east-bank Crimson war camp in sight.
+//   - `openField` (Skirmish): rolling plains, twin flanking lakes, central tactical ridge, 2 towns.
+//   - `forest`    (Skirmish): dense woodland glades, winding cobbled timber roads, logging town & camp.
+//   - `valley`    (Missions 3-4): twin mountain ridges 175 m off axis (peak every 52 m), west Keep,
+//                                 central village 274 m away with 6 rebuildable ruins, east pass.
+//   - `fortress`  (Mission 5): 7 m high plateau flat to 100 m radius (no lake/ore/forest on plateau),
+//                              outer 124 x 112 m wall (8 towers + main gate), inner 84 x 70 m wall
+//                              (4 towers + offset left gate), central `fortress_donzon`, enemy garrison
+//                              town inside walls, southern river ford & player siege camp with cannons!
+
+import { WORLD } from '../config.ts';
+import {
+  TerrainField,
+  type FlatTerraceSpec,
+  type MapLayoutId,
+  type MountainPeakSpec,
+  type TerrainConfig,
+} from './terrain.ts';
+
+export type BuildingKind =
+  | 'keep_l1'
+  | 'house_l1'
+  | 'woodcutter_l1'
+  | 'farm_l1'
+  | 'windmill_l1'
+  | 'bakery_l1'
+  | 'watchtower_l1'
+  | 'gate_l1'
+  | 'chapel_l1'
+  | 'smithy_l1'
+  | 'barracks_l1'
+  | 'market_l1'
+  | 'well_l1'
+  | 'storehouse_l1'
+  | 'fisher_l1'
+  | 'camp_tent_l1'
+  | 'ruin_house'
+  | 'fortress_donzon';
+
+export interface BuildingPlacementSpec {
+  readonly kind: BuildingKind;
+  readonly x: number;
+  readonly z: number;
+  readonly yawRad: number;
+  readonly yardRx: number;
+  readonly yardRz: number;
+  readonly team: 0 | 1;
+}
+
+export interface WallSegmentSpec {
+  readonly x: number;
+  readonly z: number;
+  readonly yawRad: number;
+}
+
+export interface FarmStripSpec {
+  readonly cx: number;
+  readonly cz: number;
+  readonly lenM: number;
+  readonly widM: number;
+  readonly yawRad: number;
+}
+
+export interface TreeSpec {
+  readonly species: 'oak' | 'pine' | 'birch';
+  readonly x: number;
+  readonly z: number;
+  readonly yawRad: number;
+  readonly scale: number;
+}
+
+export interface RockSpec {
+  readonly kind: 'rock_moss_a' | 'rock_moss_b' | 'boulder';
+  readonly x: number;
+  readonly z: number;
+  readonly yawRad: number;
+  readonly scale: number;
+}
+
+export interface FernSpec {
+  readonly x: number;
+  readonly z: number;
+  readonly yawRad: number;
+  readonly scale: number;
+}
+
+export interface PropSpec {
+  readonly kind: 'barrel' | 'crate' | 'bucket' | 'pier' | 'stump' | 'sapling' | 'cannon';
+  readonly x: number;
+  readonly z: number;
+  readonly yawRad: number;
+  readonly scale: number;
+}
+
+export interface CapturePointSpec {
+  readonly id: string;
+  readonly label: string;
+  readonly x: number;
+  readonly z: number;
+}
+
+export interface UnitPlacementSpec {
+  readonly archetype: 'swordsman' | 'archer' | 'citizen';
+  readonly team: 0 | 1;
+  readonly x: number;
+  readonly z: number;
+  readonly yawRad: number;
+  readonly scale: number;
+  readonly clip: 'idle' | 'walk' | 'attack';
+  readonly phase01: number;
+  readonly speedMul: number;
+  readonly tintVar: number;
+  readonly patrol?: readonly (readonly [number, number])[];
+}
+
+export interface MapLayoutSpec {
+  readonly id: MapLayoutId;
+  readonly title: string;
+  readonly subtitle: string;
+  readonly terrainConfig: TerrainConfig;
+  readonly playerKeepXZ: readonly [number, number];
+  readonly enemyCenterXZ: readonly [number, number];
+  readonly calibrationXZ: readonly [number, number];
+  readonly buildings: readonly BuildingPlacementSpec[];
+  readonly walls: readonly WallSegmentSpec[];
+  readonly farmStrips: readonly FarmStripSpec[];
+  readonly roads: readonly (readonly (readonly [number, number])[])[];
+  readonly capturePoints: readonly CapturePointSpec[];
+  readonly trees: readonly TreeSpec[];
+  readonly rocks: readonly RockSpec[];
+  readonly ferns: readonly FernSpec[];
+  readonly props: readonly PropSpec[];
+  readonly units: readonly UnitPlacementSpec[];
+}
+
+export const ALL_MAP_IDS: readonly MapLayoutId[] = [
+  'crossing',
+  'openField',
+  'forest',
+  'valley',
+  'fortress',
+];
+
+function createRng(seed: number): () => number {
+  let s = seed >>> 0;
+  return () => {
+    s = (s * 1664525 + 1013904223) >>> 0;
+    return s / 4294967296;
+  };
+}
+
+/** Emits 2.0 m curtain wall segments between (x0, z0) and (x1, z1), leaving optional gaps for gates/towers. */
+function appendWallRun(
+  out: WallSegmentSpec[],
+  x0: number,
+  z0: number,
+  x1: number,
+  z1: number,
+  gapRanges: readonly (readonly [number, number])[] = [],
+  faceOutwardFlip = false,
+): void {
+  const dx = x1 - x0;
+  const dz = z1 - z0;
+  const len = Math.hypot(dx, dz);
+  if (len < 1.5) return;
+  const count = Math.max(1, Math.round(len / 2.0));
+  const yaw = Math.atan2(-dz, dx) + (faceOutwardFlip ? Math.PI : 0);
+  for (let i = 0; i < count; i++) {
+    const t = (i + 0.5) / count;
+    const distAlong = t * len;
+    const inGap = gapRanges.some(([g0, g1]) => distAlong >= g0 && distAlong <= g1);
+    if (inGap) continue;
+    out.push({
+      x: x0 + dx * t,
+      z: z0 + dz * t,
+      yawRad: yaw,
+    });
+  }
+}
+
+/** Emits a neat military regiment block (swordsmen or archers) facing a direction. */
+function appendRegiment(
+  out: UnitPlacementSpec[],
+  archetype: 'swordsman' | 'archer',
+  team: 0 | 1,
+  cx: number,
+  cz: number,
+  cols: number,
+  rows: number,
+  yawRad: number,
+  spacingM: number,
+  rng: () => number,
+  clip: 'idle' | 'walk' | 'attack' = 'idle',
+): void {
+  const forwardX = Math.sin(yawRad);
+  const forwardZ = Math.cos(yawRad);
+  const rightX = Math.cos(yawRad);
+  const rightZ = -Math.sin(yawRad);
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const lx = (c - (cols - 1) * 0.5) * spacingM + (rng() - 0.5) * 0.24;
+      const lz = -(r - (rows - 1) * 0.5) * spacingM + (rng() - 0.5) * 0.24;
+      out.push({
+        archetype,
+        team,
+        x: cx + rightX * lx + forwardX * lz,
+        z: cz + rightZ * lx + forwardZ * lz,
+        yawRad: yawRad + (rng() - 0.5) * 0.14,
+        scale: 0.96 + rng() * 0.08,
+        clip,
+        phase01: rng(),
+        speedMul: 0.42 + rng() * 0.14,
+        tintVar: 0.92 + rng() * 0.16,
+      });
+    }
+  }
+}
+
+/** Emits a full medieval player settlement anchored around (ox, oz) with roads, farms, props & patrolling villagers. */
+function appendPlayerTown(
+  ox: number,
+  oz: number,
+  facingEast: boolean,
+  buildings: BuildingPlacementSpec[],
+  farmStrips: FarmStripSpec[],
+  props: PropSpec[],
+  units: UnitPlacementSpec[],
+  rng: () => number,
+): void {
+  const dir = facingEast ? 1 : -1;
+  const fYaw = facingEast ? Math.PI * 0.5 : -Math.PI * 0.5;
+
+  // Core medieval town layout (spaced cleanly so yards never collide and lanes stay clear!)
+  buildings.push(
+    { kind: 'keep_l1', x: ox - dir * 16, z: oz - 4, yawRad: facingEast ? 0.15 : -0.15, yardRx: 11.5, yardRz: 9.5, team: 0 },
+    { kind: 'market_l1', x: ox + dir * 4, z: oz + 2, yawRad: 0.06, yardRx: 8.5, yardRz: 7.5, team: 0 },
+    { kind: 'well_l1', x: ox + dir * 13, z: oz + 1, yawRad: 0.0, yardRx: 3.4, yardRz: 3.4, team: 0 },
+    { kind: 'chapel_l1', x: ox - dir * 4, z: oz - 24, yawRad: 0.04, yardRx: 7.5, yardRz: 9.5, team: 0 },
+    { kind: 'house_l1', x: ox + dir * 14, z: oz - 16, yawRad: -0.22, yardRx: 6.2, yardRz: 5.8, team: 0 },
+    { kind: 'house_l1', x: ox + dir * 24, z: oz - 12, yawRad: -0.14, yardRx: 6.0, yardRz: 5.6, team: 0 },
+    { kind: 'house_l1', x: ox - dir * 12, z: oz + 16, yawRad: 2.95, yardRx: 6.0, yardRz: 5.6, team: 0 },
+    { kind: 'house_l1', x: ox + dir * 2, z: oz + 20, yawRad: 3.08, yardRx: 6.0, yardRz: 5.6, team: 0 },
+    { kind: 'bakery_l1', x: ox + dir * 15, z: oz + 15, yawRad: 2.86, yardRx: 6.8, yardRz: 5.5, team: 0 },
+    { kind: 'smithy_l1', x: ox + dir * 26, z: oz + 12, yawRad: fYaw - 0.3, yardRx: 6.8, yardRz: 5.8, team: 0 },
+    { kind: 'barracks_l1', x: ox + dir * 26, z: oz - 26, yawRad: 0.18, yardRx: 9.5, yardRz: 7.2, team: 0 },
+    { kind: 'storehouse_l1', x: ox - dir * 22, z: oz + 12, yawRad: 0.25, yardRx: 7.5, yardRz: 6.2, team: 0 },
+    { kind: 'windmill_l1', x: ox - dir * 32, z: oz - 18, yawRad: 0.55, yardRx: 6.2, yardRz: 6.2, team: 0 },
+    { kind: 'farm_l1', x: ox - dir * 34, z: oz + 6, yawRad: 0.18, yardRx: 7.4, yardRz: 5.8, team: 0 },
+    { kind: 'woodcutter_l1', x: ox - dir * 20, z: oz - 34, yawRad: 0.35, yardRx: 6.8, yardRz: 5.8, team: 0 },
+  );
+
+  // Golden ripening wheat strips behind the Farm & Windmill
+  for (let i = 0; i < 4; i++) {
+    farmStrips.push({
+      cx: ox - dir * (44 + i * 0.5),
+      cz: oz - 6 + i * 5.8,
+      lenM: 16.5,
+      widM: 4.4,
+      yawRad: 0.10,
+    });
+  }
+
+  // Village props: Poly Haven crates, buckets, barrels, forestry stumps & saplings
+  props.push(
+    { kind: 'crate', x: ox + dir * 9.5, z: oz + 8.5, yawRad: 0.42, scale: 1.05 },
+    { kind: 'barrel', x: ox + dir * 8.6, z: oz + 9.2, yawRad: 0.18, scale: 1.0 },
+    { kind: 'crate', x: ox + dir * 10.5, z: oz - 3.0, yawRad: 0.22, scale: 1.0 },
+    { kind: 'crate', x: ox + dir * 11.4, z: oz - 2.3, yawRad: 0.85, scale: 0.92 },
+    { kind: 'bucket', x: ox + dir * 14.4, z: oz + 2.2, yawRad: 0.3, scale: 1.0 },
+    { kind: 'bucket', x: ox + dir * 14.2, z: oz + 12.2, yawRad: 1.4, scale: 1.0 },
+    { kind: 'barrel', x: ox - dir * 17.5, z: oz + 14.5, yawRad: 0.15, scale: 1.0 },
+    { kind: 'barrel', x: ox - dir * 16.6, z: oz + 15.1, yawRad: 0.92, scale: 0.95 },
+    { kind: 'crate', x: ox - dir * 18.2, z: oz + 15.4, yawRad: 0.5, scale: 1.05 },
+    { kind: 'barrel', x: ox - dir * 29.0, z: oz + 13.0, yawRad: -0.45, scale: 1.0 },
+  );
+  for (let k = 0; k < 7; k++) {
+    const a = k * 0.95;
+    props.push({
+      kind: k % 2 === 0 ? 'stump' : 'sapling',
+      x: ox - dir * (25 + Math.cos(a) * 6.5),
+      z: oz - 39 + Math.sin(a) * 5.2,
+      yawRad: rng() * Math.PI * 2,
+      scale: 0.88 + rng() * 0.35,
+    });
+  }
+
+  // 16 living MakeHuman villagers walking lanes around Market, Well, Bakery, Chapel, Farm, Keep
+  const loops: readonly (readonly (readonly [number, number])[])[] = [
+    [[ox + dir * 8, oz + 7], [ox + dir * 18, oz + 7], [ox + dir * 18, oz - 6], [ox + dir * 6, oz - 6]],
+    [[ox - dir * 6, oz + 8], [ox + dir * 10, oz + 11], [ox + dir * 11, oz + 2], [ox - dir * 8, oz + 2]],
+    [[ox - dir * 26, oz + 4], [ox - dir * 14, oz + 6], [ox - dir * 12, oz - 10], [ox - dir * 26, oz - 10]],
+    [[ox + dir * 16, oz - 8], [ox + dir * 28, oz - 8], [ox + dir * 28, oz + 6], [ox + dir * 16, oz + 6]],
+  ];
+  for (let i = 0; i < 16; i++) {
+    const loop = loops[i % loops.length]!;
+    const p0 = loop[i % loop.length]!;
+    const moving = i < 12;
+    units.push({
+      archetype: 'citizen',
+      team: 0,
+      x: p0[0] + (rng() - 0.5) * 3.0,
+      z: p0[1] + (rng() - 0.5) * 3.0,
+      yawRad: rng() * Math.PI * 2,
+      scale: 0.95 + rng() * 0.10,
+      clip: moving ? 'walk' : i % 2 === 0 ? 'attack' : 'idle',
+      phase01: rng(),
+      speedMul: moving ? 0.82 + rng() * 0.18 : 0.48 + rng() * 0.16,
+      tintVar: 0.88 + rng() * 0.22,
+      patrol: moving ? loop : undefined,
+    });
+  }
+}
+
+/**
+ * Generates deterministic trees, photogrammetry mossy rocks/boulders, and forest ferns across the
+ * whole 560 x 560 m map while strictly respecting settlements, water, roads, farms, and M5 plateau!
+ */
+function scatterNatureAcrossWorld(
+  terrain: TerrainField,
+  layout: {
+    readonly id: MapLayoutId;
+    readonly buildings: readonly BuildingPlacementSpec[];
+    readonly farmStrips: readonly FarmStripSpec[];
+    readonly roads: readonly (readonly (readonly [number, number])[])[];
+    readonly calibrationXZ: readonly [number, number];
+  },
+  targetTrees: number,
+  targetRocks: number,
+  targetFerns: number,
+  rng: () => number,
+): { trees: TreeSpec[]; rocks: RockSpec[]; ferns: FernSpec[] } {
+  const trees: TreeSpec[] = [];
+  const rocks: RockSpec[] = [];
+  const ferns: FernSpec[] = [];
+  const fp = terrain.config.fortressPlateau;
+
+  const isNearRoad = (x: number, z: number, padM: number): boolean => {
+    for (const poly of layout.roads) {
+      for (let i = 0; i < poly.length - 1; i++) {
+        const [x0, z0] = poly[i]!;
+        const [x1, z1] = poly[i + 1]!;
+        const dx = x1 - x0;
+        const dz = z1 - z0;
+        const lenSq = Math.max(1e-4, dx * dx + dz * dz);
+        const t = Math.max(0, Math.min(1, ((x - x0) * dx + (z - z0) * dz) / lenSq));
+        if (Math.hypot(x - (x0 + dx * t), z - (z0 + dz * t)) < padM) return true;
+      }
+    }
+    return false;
+  };
+
+  const isBlockedForTree = (x: number, z: number): boolean => {
+    // Keep strictly inside map margin
+    if (Math.abs(x) > 258 || Math.abs(z) > 258) return true;
+    // Keep calibration plinth clear
+    if (Math.hypot(x - layout.calibrationXZ[0], z - layout.calibrationXZ[1]) < 14) return true;
+    // Mission 5 rule: ZERO forest on the 100 m fortress plateau!
+    if (fp && Math.hypot(x - fp.cx, z - fp.cz) < fp.flatRadiusM + 18) return true;
+    // Stay strictly on dry bank (>= 0.42 m above water) and avoid near-vertical cliff faces
+    const h = terrain.heightAt(x, z);
+    if (h < 0.45) return true;
+    if (terrain.slopeAt(x, z) > 0.24) return true;
+    if (isNearRoad(x, z, 7.2)) return true;
+    for (const b of layout.buildings) {
+      if (Math.hypot(x - b.x, z - b.z) < Math.max(b.yardRx, b.yardRz) + 6.5) return true;
+    }
+    for (const fs of layout.farmStrips) {
+      if (Math.hypot(x - fs.cx, z - fs.cz) < Math.max(fs.lenM, fs.widM) * 0.65 + 5.0) return true;
+    }
+    // Keep central battlefield corridor relatively open on Crossing & OpenField for clean tactical sightlines
+    if (layout.id === 'crossing' && x > -22 && x < 72 && Math.abs(z) < 42) return true;
+    if (layout.id === 'openField' && Math.abs(x) < 75 && Math.abs(z) < 55) return true;
+    if (layout.id === 'valley' && Math.abs(z) < 48 && x > -105 && x < 165) return true;
+    if (layout.id === 'fortress' && Math.abs(x) < 52 && z > 20 && z < 195) return true;
+    return false;
+  };
+
+  // Place organic clustered groves across the 560 x 560 m countryside
+  const groveCenters: [number, number, 'oak' | 'pine' | 'birch'][] = [];
+  const speciesCycle: readonly ('oak' | 'pine' | 'birch')[] = ['oak', 'pine', 'birch'];
+  const groveCount = layout.id === 'forest' ? 46 : 34;
+  for (let g = 0; g < groveCount; g++) {
+    const gx = (rng() - 0.5) * 480;
+    const gz = (rng() - 0.5) * 480;
+    groveCenters.push([gx, gz, speciesCycle[g % 3]!]);
+  }
+
+  let attempts = 0;
+  while (trees.length < targetTrees && attempts < targetTrees * 14) {
+    attempts++;
+    const useGrove = rng() < 0.76;
+    let x: number;
+    let z: number;
+    let preferred: 'oak' | 'pine' | 'birch';
+    if (useGrove) {
+      const gr = groveCenters[Math.floor(rng() * groveCenters.length)]!;
+      const rad = Math.sqrt(rng()) * (layout.id === 'forest' ? 38 : 32);
+      const ang = rng() * Math.PI * 2;
+      x = gr[0] + Math.cos(ang) * rad;
+      z = gr[1] + Math.sin(ang) * rad;
+      preferred = rng() < 0.72 ? gr[2] : speciesCycle[Math.floor(rng() * 3)]!;
+    } else {
+      x = (rng() - 0.5) * 500;
+      z = (rng() - 0.5) * 500;
+      preferred = speciesCycle[Math.floor(rng() * 3)]!;
+    }
+
+    if (isBlockedForTree(x, z)) continue;
+    // Maintain organic canopy spacing (>= 5.4 m)
+    let tooClose = false;
+    for (let i = Math.max(0, trees.length - 85); i < trees.length; i++) {
+      const t = trees[i]!;
+      if ((t.x - x) * (t.x - x) + (t.z - z) * (t.z - z) < 28.0) {
+        tooClose = true;
+        break;
+      }
+    }
+    if (tooClose) continue;
+
+    // Highland slopes favor Scots Pine; riverside favors Silver Birch & Oak
+    const h = terrain.heightAt(x, z);
+    const sp: 'oak' | 'pine' | 'birch' =
+      h > 6.5 ? 'pine' : h < 1.35 && rng() < 0.55 ? 'birch' : preferred;
+
+    trees.push({
+      species: sp,
+      x,
+      z,
+      yawRad: rng() * Math.PI * 2,
+      scale: 0.84 + rng() * 0.42,
+    });
+  }
+
+  // Scatter Poly Haven CC0 photogrammetry mossy boulders & rock outcrops along slopes, riverbanks & groves
+  const rockKinds: readonly ('rock_moss_a' | 'rock_moss_b' | 'boulder')[] = [
+    'rock_moss_a',
+    'rock_moss_b',
+    'boulder',
+  ];
+  let rAtt = 0;
+  while (rocks.length < targetRocks && rAtt < targetRocks * 16) {
+    rAtt++;
+    const x = (rng() - 0.5) * 490;
+    const z = (rng() - 0.5) * 490;
+    if (Math.hypot(x - layout.calibrationXZ[0], z - layout.calibrationXZ[1]) < 12) continue;
+    if (fp && Math.hypot(x - fp.cx, z - fp.cz) < fp.flatRadiusM + 4) continue;
+    if (isNearRoad(x, z, 6.0)) continue;
+    const h = terrain.heightAt(x, z);
+    const sl = terrain.slopeAt(x, z);
+    // Favor steeper hillsides, rocky banks near water, or scattered woodland boulders
+    const scenicSite = sl > 0.055 || (h > 0.12 && h < 1.05) || rng() < 0.22;
+    if (!scenicSite || h < -0.10) continue;
+    let clear = true;
+    for (const b of layout.buildings) {
+      if (Math.hypot(x - b.x, z - b.z) < Math.max(b.yardRx, b.yardRz) + 3.5) {
+        clear = false;
+        break;
+      }
+    }
+    if (!clear) continue;
+    rocks.push({
+      kind: rockKinds[Math.floor(rng() * 3)]!,
+      x,
+      z,
+      yawRad: rng() * Math.PI * 2,
+      scale: 0.72 + rng() * 1.15 + (sl > 0.14 ? 0.55 : 0),
+    });
+  }
+
+  // Scatter Poly Haven CC0 forest ferns tucked naturally near tree trunks & shaded banks
+  for (let i = 0; i < targetFerns && trees.length > 0; i++) {
+    const host = trees[Math.floor(rng() * trees.length)]!;
+    const a = rng() * Math.PI * 2;
+    const r = 1.6 + rng() * 4.4;
+    const fx = host.x + Math.cos(a) * r;
+    const fz = host.z + Math.sin(a) * r;
+    if (terrain.heightAt(fx, fz) < 0.25) continue;
+    if (isNearRoad(fx, fz, 4.5)) continue;
+    ferns.push({
+      x: fx,
+      z: fz,
+      yawRad: rng() * Math.PI * 2,
+      scale: 0.78 + rng() * 0.52,
+    });
+  }
+
+  return { trees, rocks, ferns };
+}
+
+// ==============================================================================
+// 5 CAMPAIGN & SKIRMISH MAP GENERATORS (560 x 560 m)
+// ==============================================================================
+
+function buildCrossingMap(): MapLayoutSpec {
+  const rng = createRng(101);
+  const terraces: FlatTerraceSpec[] = [
+    { cx: -72, cz: 0, radiusXM: 54, radiusZM: 46, heightM: 1.65, blendM: 22 },
+    { cx: 108, cz: 6, radiusXM: 42, radiusZM: 38, heightM: 1.75, blendM: 20 },
+    { cx: -52, cz: 68, radiusXM: 16, radiusZM: 16, heightM: 1.65, blendM: 12 }, // calibration plinth terrace
+  ];
+  const terrainConfig: TerrainConfig = {
+    profile: 'crossing',
+    seed: 11,
+    sizeM: WORLD.sizeM,
+    gridResolution: 281,
+    lake: { centerX: -12, centerZ: 56, radiusXM: 20, radiusZM: 14, maxDepthM: 1.35, waterLevelM: 0.0 },
+    river: {
+      axis: 'ns',
+      baseCoordM: 24,
+      meanderAmpM: 13,
+      meanderFreq: 0.013,
+      halfWidthM: 10.5,
+      maxDepthM: 1.45,
+      waterLevelM: 0.0,
+      crossings: [
+        { coordM: 6, halfSpanM: 6.2, kind: 'causeway' },
+        { coordM: -90, halfSpanM: 10.0, kind: 'ford' },
+        { coordM: 96, halfSpanM: 10.0, kind: 'ford' },
+      ],
+    },
+    terraces,
+  };
+
+  const terrain = new TerrainField(terrainConfig);
+  const buildings: BuildingPlacementSpec[] = [];
+  const walls: WallSegmentSpec[] = [];
+  const farmStrips: FarmStripSpec[] = [];
+  const props: PropSpec[] = [];
+  const units: UnitPlacementSpec[] = [];
+
+  // 1. West Bank Complete Medieval Town anchored around (-66, 0)
+  appendPlayerTown(-66, 0, true, buildings, farmStrips, props, units, rng);
+
+  // Fisher's Hut + Poly Haven CC0 Wooden Pier on the village lake shore (-12, 56)
+  buildings.push({ kind: 'fisher_l1', x: -29, z: 48, yawRad: 1.15, yardRx: 5.5, yardRz: 5.0, team: 0 });
+  props.push({ kind: 'pier', x: -22.5, z: 52.5, yawRad: 1.15, scale: 0.95 });
+
+  // Western Defensive Curtain Wall + Gatehouse + 3 Watchtowers guarding the river causeway approach!
+  buildings.push(
+    { kind: 'gate_l1', x: -16, z: 6, yawRad: Math.PI * 0.5, yardRx: 5.5, yardRz: 5.5, team: 0 },
+    { kind: 'watchtower_l1', x: -16, z: -18, yawRad: Math.PI * 0.5, yardRx: 4.5, yardRz: 4.5, team: 0 },
+    { kind: 'watchtower_l1', x: -16, z: 30, yawRad: Math.PI * 0.5, yardRx: 4.5, yardRz: 4.5, team: 0 },
+    { kind: 'watchtower_l1', x: -42, z: -36, yawRad: 0.0, yardRx: 4.5, yardRz: 4.5, team: 0 },
+  );
+  appendWallRun(walls, -16, -15, -16, 2.2, [], false);
+  appendWallRun(walls, -16, 9.8, -16, 27, [], false);
+
+  // 2. East Bank Enemy Crimson War Camp (clearly visible across the river causeway!)
+  buildings.push(
+    { kind: 'gate_l1', x: 78, z: 6, yawRad: -Math.PI * 0.5, yardRx: 5.5, yardRz: 5.5, team: 1 },
+    { kind: 'watchtower_l1', x: 78, z: -14, yawRad: -Math.PI * 0.5, yardRx: 4.5, yardRz: 4.5, team: 1 },
+    { kind: 'watchtower_l1', x: 78, z: 26, yawRad: -Math.PI * 0.5, yardRx: 4.5, yardRz: 4.5, team: 1 },
+    { kind: 'camp_tent_l1', x: 102, z: -6, yawRad: -1.45, yardRx: 5.5, yardRz: 5.5, team: 1 },
+    { kind: 'camp_tent_l1', x: 104, z: 12, yawRad: -1.62, yardRx: 5.5, yardRz: 5.5, team: 1 },
+    { kind: 'camp_tent_l1', x: 118, z: 4, yawRad: -1.55, yardRx: 6.2, yardRz: 6.2, team: 1 },
+    { kind: 'camp_tent_l1', x: 114, z: -18, yawRad: -1.25, yardRx: 5.5, yardRz: 5.5, team: 1 },
+    { kind: 'camp_tent_l1', x: 115, z: 24, yawRad: -1.85, yardRx: 5.5, yardRz: 5.5, team: 1 },
+  );
+  appendWallRun(walls, 78, -11, 78, 2.2, [], true);
+  appendWallRun(walls, 78, 9.8, 78, 23, [], true);
+  // Enemy siege cannons & supply crates overlooking the river crossing
+  props.push(
+    { kind: 'cannon', x: 64, z: -3, yawRad: -Math.PI * 0.5, scale: 1.0 },
+    { kind: 'cannon', x: 64, z: 15, yawRad: -Math.PI * 0.5, scale: 1.0 },
+    { kind: 'crate', x: 96, z: 3, yawRad: 0.4, scale: 1.0 },
+    { kind: 'barrel', x: 97.5, z: 4.2, yawRad: 0.1, scale: 1.0 },
+    { kind: 'crate', x: 95, z: 16, yawRad: 2.1, scale: 1.05 },
+  );
+
+  // 3. Opposing Armies (160+ total GPU-instanced MakeHuman soldiers & villagers!)
+  // Marchland Cobalt defenders mustered at eastern gate & river causeway bridgehead
+  appendRegiment(units, 'swordsman', 0, -4, 1, 6, 4, Math.PI * 0.5, 1.55, rng, 'idle');
+  appendRegiment(units, 'swordsman', 0, -4, 14, 5, 4, Math.PI * 0.5, 1.55, rng, 'idle');
+  appendRegiment(units, 'archer', 0, -24, -6, 6, 3, Math.PI * 0.5, 1.6, rng, 'idle');
+  appendRegiment(units, 'archer', 0, -24, 18, 6, 3, Math.PI * 0.5, 1.6, rng, 'idle');
+  // Forward clash picket on central causeway
+  appendRegiment(units, 'swordsman', 0, 14, 6, 4, 2, Math.PI * 0.5, 1.45, rng, 'attack');
+  // Enemy Crimson invader divisions on the east bank facing west across the river
+  appendRegiment(units, 'swordsman', 1, 56, 2, 6, 4, -Math.PI * 0.5, 1.55, rng, 'idle');
+  appendRegiment(units, 'swordsman', 1, 56, 15, 6, 4, -Math.PI * 0.5, 1.55, rng, 'idle');
+  appendRegiment(units, 'archer', 1, 68, -8, 6, 3, -Math.PI * 0.5, 1.6, rng, 'attack');
+  appendRegiment(units, 'archer', 1, 68, 22, 6, 3, -Math.PI * 0.5, 1.6, rng, 'idle');
+  appendRegiment(units, 'swordsman', 1, 90, 6, 4, 3, -Math.PI * 0.5, 1.6, rng, 'walk');
+
+  const roads: readonly (readonly (readonly [number, number])[])[] = [
+    [[-108, 4], [-74, 2], [-48, 5], [-16, 6], [24, 6], [78, 6], [116, 6]],
+    [[-56, -24], [-56, 4], [-52, 24], [-30, 44]],
+    [[-16, -18], [-12, -55], [24, -90], [64, -84], [78, -14]],
+    [[-16, 30], [-6, 68], [24, 96], [66, 86], [78, 26]],
+  ];
+
+  const capturePoints: readonly CapturePointSpec[] = [
+    { id: 'cp_north_ford', label: 'North Ford', x: terrain.riverCenterAt(-90), z: -90 },
+    { id: 'cp_causeway', label: 'Stone Causeway', x: terrain.riverCenterAt(6), z: 6 },
+    { id: 'cp_south_ford', label: 'South Ford', x: terrain.riverCenterAt(96), z: 96 },
+  ];
+
+  const calibrationXZ: readonly [number, number] = [-52, 68];
+  const nature = scatterNatureAcrossWorld(
+    terrain,
+    { id: 'crossing', buildings, farmStrips, roads, calibrationXZ },
+    480,
+    135,
+    210,
+    rng,
+  );
+
+  return {
+    id: 'crossing',
+    title: 'River Crossing',
+    subtitle: 'Missions 1–2 · River, stone causeway, twin fords & east-bank invader camp',
+    terrainConfig,
+    playerKeepXZ: [-82, -4],
+    enemyCenterXZ: [104, 6],
+    calibrationXZ,
+    buildings,
+    walls,
+    farmStrips,
+    roads,
+    capturePoints,
+    ...nature,
+    props,
+    units,
+  };
+}
+
+function buildOpenFieldMap(): MapLayoutSpec {
+  const rng = createRng(202);
+  const terrainConfig: TerrainConfig = {
+    profile: 'openField',
+    seed: 23,
+    sizeM: WORLD.sizeM,
+    gridResolution: 281,
+    lake: { centerX: -95, centerZ: 92, radiusXM: 24, radiusZM: 16, maxDepthM: 1.4, waterLevelM: 0.0 },
+    extraLakes: [
+      { centerX: 105, centerZ: -88, radiusXM: 22, radiusZM: 15, maxDepthM: 1.35, waterLevelM: 0.0 },
+    ],
+    terraces: [
+      { cx: -125, cz: 0, radiusXM: 54, radiusZM: 46, heightM: 1.8, blendM: 22 },
+      { cx: 125, cz: 0, radiusXM: 46, radiusZM: 42, heightM: 1.8, blendM: 22 },
+      { cx: -70, cz: 58, radiusXM: 16, radiusZM: 16, heightM: 1.8, blendM: 12 },
+    ],
+  };
+  const terrain = new TerrainField(terrainConfig);
+  const buildings: BuildingPlacementSpec[] = [];
+  const walls: WallSegmentSpec[] = [];
+  const farmStrips: FarmStripSpec[] = [];
+  const props: PropSpec[] = [];
+  const units: UnitPlacementSpec[] = [];
+
+  appendPlayerTown(-118, 0, true, buildings, farmStrips, props, units, rng);
+  buildings.push(
+    { kind: 'fisher_l1', x: -115, z: 78, yawRad: 0.75, yardRx: 5.5, yardRz: 5.0, team: 0 },
+    // East rival lord's fortified manor & garrison
+    { kind: 'keep_l1', x: 136, z: -2, yawRad: Math.PI, yardRx: 11.5, yardRz: 9.5, team: 1 },
+    { kind: 'barracks_l1', x: 112, z: -22, yawRad: Math.PI, yardRx: 9.5, yardRz: 7.0, team: 1 },
+    { kind: 'house_l1', x: 116, z: 16, yawRad: Math.PI, yardRx: 6.0, yardRz: 5.5, team: 1 },
+    { kind: 'camp_tent_l1', x: 96, z: -12, yawRad: -1.55, yardRx: 5.5, yardRz: 5.5, team: 1 },
+    { kind: 'camp_tent_l1', x: 96, z: 12, yawRad: -1.55, yardRx: 5.5, yardRz: 5.5, team: 1 },
+    { kind: 'watchtower_l1', x: 86, z: -24, yawRad: -Math.PI * 0.5, yardRx: 4.5, yardRz: 4.5, team: 1 },
+    { kind: 'watchtower_l1', x: 86, z: 24, yawRad: -Math.PI * 0.5, yardRx: 4.5, yardRz: 4.5, team: 1 },
+  );
+  props.push(
+    { kind: 'pier', x: -108, z: 83, yawRad: 0.75, scale: 0.95 },
+    { kind: 'cannon', x: -32, z: -12, yawRad: Math.PI * 0.5, scale: 1.0 },
+    { kind: 'cannon', x: 32, z: 12, yawRad: -Math.PI * 0.5, scale: 1.0 },
+  );
+
+  // Grand pitched field battle across central sunlit ridge!
+  appendRegiment(units, 'swordsman', 0, -24, -4, 6, 4, Math.PI * 0.5, 1.55, rng, 'walk');
+  appendRegiment(units, 'swordsman', 0, -24, 14, 6, 4, Math.PI * 0.5, 1.55, rng, 'idle');
+  appendRegiment(units, 'archer', 0, -44, 4, 8, 3, Math.PI * 0.5, 1.6, rng, 'attack');
+  appendRegiment(units, 'swordsman', 1, 24, -4, 6, 4, -Math.PI * 0.5, 1.55, rng, 'walk');
+  appendRegiment(units, 'swordsman', 1, 24, 14, 6, 4, -Math.PI * 0.5, 1.55, rng, 'idle');
+  appendRegiment(units, 'archer', 1, 44, 4, 8, 3, -Math.PI * 0.5, 1.6, rng, 'attack');
+
+  const roads: readonly (readonly (readonly [number, number])[])[] = [
+    [[-150, 2], [-90, 2], [0, 0], [90, 2], [136, 2]],
+    [[-115, 2], [-112, 72]],
+  ];
+  const capturePoints: readonly CapturePointSpec[] = [
+    { id: 'cp_north', label: 'Northern Meadow', x: 0, z: -72 },
+    { id: 'cp_ridge', label: 'Central Ridge', x: 0, z: 0 },
+    { id: 'cp_south', label: 'Southern Orchard', x: 0, z: 72 },
+  ];
+  const calibrationXZ: readonly [number, number] = [-70, 58];
+  const nature = scatterNatureAcrossWorld(
+    terrain,
+    { id: 'openField', buildings, farmStrips, roads, calibrationXZ },
+    420,
+    115,
+    180,
+    rng,
+  );
+
+  return {
+    id: 'openField',
+    title: 'Open Field',
+    subtitle: 'Skirmish · Rolling central-European plains, twin lakes & pitched battle ridge',
+    terrainConfig,
+    playerKeepXZ: [-134, -4],
+    enemyCenterXZ: [136, -2],
+    calibrationXZ,
+    buildings,
+    walls,
+    farmStrips,
+    roads,
+    capturePoints,
+    ...nature,
+    props,
+    units,
+  };
+}
+
+function buildForestMap(): MapLayoutSpec {
+  const rng = createRng(303);
+  const terrainConfig: TerrainConfig = {
+    profile: 'forest',
+    seed: 37,
+    sizeM: WORLD.sizeM,
+    gridResolution: 281,
+    lake: { centerX: 8, centerZ: -64, radiusXM: 21, radiusZM: 15, maxDepthM: 1.45, waterLevelM: 0.0 },
+    terraces: [
+      { cx: -115, cz: -12, radiusXM: 50, radiusZM: 44, heightM: 2.0, blendM: 20 },
+      { cx: 112, cz: 18, radiusXM: 42, radiusZM: 38, heightM: 2.2, blendM: 20 },
+      { cx: -58, cz: 54, radiusXM: 16, radiusZM: 16, heightM: 2.0, blendM: 12 },
+    ],
+  };
+  const terrain = new TerrainField(terrainConfig);
+  const buildings: BuildingPlacementSpec[] = [];
+  const walls: WallSegmentSpec[] = [];
+  const farmStrips: FarmStripSpec[] = [];
+  const props: PropSpec[] = [];
+  const units: UnitPlacementSpec[] = [];
+
+  appendPlayerTown(-110, -12, true, buildings, farmStrips, props, units, rng);
+  buildings.push(
+    { kind: 'woodcutter_l1', x: -55, z: -26, yawRad: 0.6, yardRx: 6.5, yardRz: 6.0, team: 0 },
+    { kind: 'fisher_l1', x: -12, z: -56, yawRad: 1.0, yardRx: 5.5, yardRz: 5.0, team: 0 },
+    { kind: 'watchtower_l1', x: 0, z: 4, yawRad: 0.0, yardRx: 4.5, yardRz: 4.5, team: 1 },
+    { kind: 'camp_tent_l1', x: 105, z: 12, yawRad: -1.6, yardRx: 5.5, yardRz: 5.5, team: 1 },
+    { kind: 'camp_tent_l1', x: 118, z: 24, yawRad: -1.8, yardRx: 5.5, yardRz: 5.5, team: 1 },
+    { kind: 'camp_tent_l1', x: 112, z: -2, yawRad: -1.4, yardRx: 5.5, yardRz: 5.5, team: 1 },
+    { kind: 'barracks_l1', x: 128, z: 14, yawRad: Math.PI, yardRx: 9.0, yardRz: 7.0, team: 1 },
+  );
+  props.push({ kind: 'pier', x: -5, z: -59, yawRad: 1.0, scale: 0.92 });
+
+  appendRegiment(units, 'swordsman', 0, -42, -6, 6, 4, 1.4, 1.55, rng, 'walk');
+  appendRegiment(units, 'swordsman', 0, -48, 12, 5, 4, 1.4, 1.55, rng, 'idle');
+  appendRegiment(units, 'archer', 0, -58, 4, 6, 3, 1.4, 1.6, rng, 'idle');
+  appendRegiment(units, 'swordsman', 1, 52, 10, 6, 4, -1.5, 1.55, rng, 'idle');
+  appendRegiment(units, 'swordsman', 1, 56, -8, 5, 4, -1.5, 1.55, rng, 'walk');
+  appendRegiment(units, 'archer', 1, 68, 18, 6, 3, -1.5, 1.6, rng, 'attack');
+
+  const roads: readonly (readonly (readonly [number, number])[])[] = [
+    [[-140, -10], [-76, -8], [-22, -4], [24, 6], [76, 14], [116, 16]],
+    [[-16, -4], [-8, -50]],
+    [[4, 4], [10, 74]],
+  ];
+  const capturePoints: readonly CapturePointSpec[] = [
+    { id: 'cp_tarn', label: 'Forest Tarn', x: 8, z: -42 },
+    { id: 'cp_glade', label: 'Logging Crossroads', x: 0, z: 4 },
+    { id: 'cp_south_glade', label: 'South Glade', x: 10, z: 74 },
+  ];
+  const calibrationXZ: readonly [number, number] = [-58, 54];
+  const nature = scatterNatureAcrossWorld(
+    terrain,
+    { id: 'forest', buildings, farmStrips, roads, calibrationXZ },
+    540,
+    145,
+    240,
+    rng,
+  );
+
+  return {
+    id: 'forest',
+    title: 'Ancient Forest',
+    subtitle: 'Skirmish · Dense highland woodland, mossy boulders, timber roads & glades',
+    terrainConfig,
+    playerKeepXZ: [-126, -16],
+    enemyCenterXZ: [112, 16],
+    calibrationXZ,
+    buildings,
+    walls,
+    farmStrips,
+    roads,
+    capturePoints,
+    ...nature,
+    props,
+    units,
+  };
+}
+
+function buildValleyMap(): MapLayoutSpec {
+  const rng = createRng(404);
+  // Exact docs/CAMPAIGN.md (19.11): twin mountain ridges flanking central axis (175 m off axis, peak every 52 m!)
+  const peaks: MountainPeakSpec[] = [];
+  for (let x = -234; x <= 234; x += 52) {
+    peaks.push(
+      { cx: x + (rng() - 0.5) * 10, cz: -175 + (rng() - 0.5) * 14, radiusM: 58, heightM: 22 + rng() * 12 },
+      { cx: x + (rng() - 0.5) * 10, cz: 175 + (rng() - 0.5) * 14, radiusM: 58, heightM: 22 + rng() * 12 },
+    );
+  }
+  // Mountain pass shoulders narrowing the far eastern entrance (x = +225)
+  peaks.push(
+    { cx: 235, cz: -85, radiusM: 64, heightM: 24 },
+    { cx: 235, cz: 85, radiusM: 64, heightM: 24 },
+  );
+
+  const terrainConfig: TerrainConfig = {
+    profile: 'valley',
+    seed: 47,
+    sizeM: WORLD.sizeM,
+    gridResolution: 281,
+    lake: { centerX: -24, centerZ: -86, radiusXM: 26, radiusZM: 16, maxDepthM: 1.4, waterLevelM: 0.0 },
+    terraces: [
+      { cx: -156, cz: 0, radiusXM: 54, radiusZM: 44, heightM: 1.8, blendM: 20 },
+      { cx: 118, cz: 0, radiusXM: 46, radiusZM: 40, heightM: 1.9, blendM: 20 }, // 274 m from player Keep!
+      { cx: -92, cz: 66, radiusXM: 16, radiusZM: 16, heightM: 1.8, blendM: 12 },
+    ],
+    peaks,
+  };
+  const terrain = new TerrainField(terrainConfig);
+  const buildings: BuildingPlacementSpec[] = [];
+  const walls: WallSegmentSpec[] = [];
+  const farmStrips: FarmStripSpec[] = [];
+  const props: PropSpec[] = [];
+  const units: UnitPlacementSpec[] = [];
+
+  // Player Keep at West end (-156, -4)
+  appendPlayerTown(-140, 0, true, buildings, farmStrips, props, units, rng);
+
+  // Central Valley Village centered at (+118, 0) — EXACTLY 274 m from Player Keep (-156, 0)!
+  // Contains intact core buildings + Watchtower + 6 charred rebuildable `ruin_house`s (Mission 3-4!)
+  buildings.push(
+    { kind: 'market_l1', x: 118, z: 0, yawRad: 0.0, yardRx: 8.5, yardRz: 7.5, team: 1 },
+    { kind: 'well_l1', x: 110, z: -2, yawRad: 0.0, yardRx: 3.4, yardRz: 3.4, team: 1 },
+    { kind: 'watchtower_l1', x: 98, z: -12, yawRad: -Math.PI * 0.5, yardRx: 4.8, yardRz: 4.8, team: 1 },
+    { kind: 'house_l1', x: 124, z: -18, yawRad: 0.12, yardRx: 6.2, yardRz: 5.8, team: 1 },
+    { kind: 'house_l1', x: 134, z: 12, yawRad: 3.02, yardRx: 6.2, yardRz: 5.8, team: 1 },
+    { kind: 'house_l1', x: 116, z: 22, yawRad: 3.12, yardRx: 6.2, yardRz: 5.8, team: 1 },
+    // 6 Rebuildable Burned Cottage Ruins encircling the central valley village square (docs/CAMPAIGN.md M4!)
+    { kind: 'ruin_house', x: 102, z: 18, yawRad: 0.35, yardRx: 5.5, yardRz: 5.0, team: 1 },
+    { kind: 'ruin_house', x: 108, z: -22, yawRad: -0.25, yardRx: 5.5, yardRz: 5.0, team: 1 },
+    { kind: 'ruin_house', x: 138, z: -14, yawRad: 1.45, yardRx: 5.5, yardRz: 5.0, team: 1 },
+    { kind: 'ruin_house', x: 144, z: 2, yawRad: -1.65, yardRx: 5.5, yardRz: 5.0, team: 1 },
+    { kind: 'ruin_house', x: 128, z: 28, yawRad: 2.85, yardRx: 5.5, yardRz: 5.0, team: 1 },
+    { kind: 'ruin_house', x: 92, z: 6, yawRad: 0.65, yardRx: 5.5, yardRz: 5.0, team: 1 },
+    // East pass enemy relief camp
+    { kind: 'camp_tent_l1', x: 212, z: -12, yawRad: -1.55, yardRx: 5.5, yardRz: 5.5, team: 1 },
+    { kind: 'camp_tent_l1', x: 212, z: 12, yawRad: -1.55, yardRx: 5.5, yardRz: 5.5, team: 1 },
+  );
+
+  // Player liberation column advancing down the valley road + Enemy village garrison
+  appendRegiment(units, 'swordsman', 0, -55, -5, 6, 4, Math.PI * 0.5, 1.55, rng, 'walk');
+  appendRegiment(units, 'swordsman', 0, -55, 11, 6, 4, Math.PI * 0.5, 1.55, rng, 'walk');
+  appendRegiment(units, 'archer', 0, -76, 3, 7, 3, Math.PI * 0.5, 1.6, rng, 'walk');
+  appendRegiment(units, 'swordsman', 1, 78, -6, 6, 4, -Math.PI * 0.5, 1.55, rng, 'idle');
+  appendRegiment(units, 'swordsman', 1, 78, 12, 6, 4, -Math.PI * 0.5, 1.55, rng, 'idle');
+  appendRegiment(units, 'archer', 1, 96, 4, 7, 3, -Math.PI * 0.5, 1.6, rng, 'attack');
+  appendRegiment(units, 'swordsman', 1, 198, 0, 5, 4, -Math.PI * 0.5, 1.6, rng, 'walk');
+
+  const roads: readonly (readonly (readonly [number, number])[])[] = [
+    [[-175, 2], [-120, 2], [0, 0], [118, 0], [235, 0]],
+    [[-140, 2], [-140, -32], [-45, -72]],
+  ];
+  const capturePoints: readonly CapturePointSpec[] = [
+    { id: 'cp_west_gate', label: 'Valley Road', x: -16, z: 0 },
+    { id: 'cp_village', label: 'Valley Village Square', x: 118, z: 0 },
+    { id: 'cp_pass', label: 'Mountain Pass', x: 210, z: 0 },
+  ];
+  const calibrationXZ: readonly [number, number] = [-92, 66];
+  const nature = scatterNatureAcrossWorld(
+    terrain,
+    { id: 'valley', buildings, farmStrips, roads, calibrationXZ },
+    460,
+    160,
+    190,
+    rng,
+  );
+
+  return {
+    id: 'valley',
+    title: 'Mountain Valley',
+    subtitle: 'Missions 3–4 · Twin mountain ridges, occupied central village w/ 6 ruins & mountain pass',
+    terrainConfig,
+    playerKeepXZ: [-156, -4],
+    enemyCenterXZ: [118, 0],
+    calibrationXZ,
+    buildings,
+    walls,
+    farmStrips,
+    roads,
+    capturePoints,
+    ...nature,
+    props,
+    units,
+  };
+}
+
+function buildFortressMap(): MapLayoutSpec {
+  const rng = createRng(505);
+  const fcx = 0;
+  const fcz = -48;
+
+  // Exact docs/CAMPAIGN.md Mission 5 Fortress layout:
+  //   - 7 m high citadel plateau flat to 100 m radius (ZERO lake/ore/forest on plateau!)
+  //   - Outer wall 124 x 112 m (8 watchtowers + main South Gatehouse)
+  //   - Inner wall 84 x 70 m (4 watchtowers + offset West/Left Gate so no direct line of fire!)
+  //   - Monumental central `fortress_donzon` + working enemy garrison town inside walls
+  //   - Southern river + shallow ford + Player Siege Camp with cannons!
+  const terrainConfig: TerrainConfig = {
+    profile: 'fortress',
+    seed: 59,
+    sizeM: WORLD.sizeM,
+    gridResolution: 281,
+    lake: { centerX: 0, centerZ: 0, radiusXM: 0, radiusZM: 0, maxDepthM: 0, waterLevelM: 0.0 },
+    river: {
+      axis: 'ew',
+      baseCoordM: 116,
+      meanderAmpM: 9,
+      meanderFreq: 0.015,
+      halfWidthM: 9.5,
+      maxDepthM: 1.35,
+      waterLevelM: 0.0,
+      crossings: [
+        { coordM: 0, halfSpanM: 12.0, kind: 'ford' },
+        { coordM: -95, halfSpanM: 9.0, kind: 'ford' },
+      ],
+    },
+    terraces: [
+      { cx: 0, cz: 174, radiusXM: 56, radiusZM: 34, heightM: 1.85, blendM: 18 }, // player siege camp
+      { cx: -78, cz: 162, radiusXM: 16, radiusZM: 16, heightM: 1.85, blendM: 12 }, // calibration plinth
+    ],
+    fortressPlateau: {
+      cx: fcx,
+      cz: fcz,
+      flatRadiusM: 100,
+      slopeOuterRadiusM: 132,
+      heightM: 7.0,
+      rampZDir: 1,
+      rampHalfWidthM: 24,
+    },
+  };
+  const terrain = new TerrainField(terrainConfig);
+  const buildings: BuildingPlacementSpec[] = [];
+  const walls: WallSegmentSpec[] = [];
+  const farmStrips: FarmStripSpec[] = [];
+  const props: PropSpec[] = [];
+  const units: UnitPlacementSpec[] = [];
+
+  // 1. Monumental Central Fortress Donżon at (fcx, fcz) on 7.0 m plateau!
+  buildings.push({
+    kind: 'fortress_donzon',
+    x: fcx,
+    z: fcz,
+    yawRad: 0.0,
+    yardRx: 18,
+    yardRz: 16,
+    team: 1,
+  });
+
+  // 2. OUTER WALL RING: 124 x 112 m (halfX = 62, halfZ = 56) — 8 watchtowers + Main South Gatehouse!
+  const ox = 62;
+  const oz = 56;
+  const outerTowers: readonly [number, number, number][] = [
+    [fcx - ox, fcz - oz, Math.PI],
+    [fcx, fcz - oz, Math.PI],
+    [fcx + ox, fcz - oz, Math.PI],
+    [fcx - ox, fcz, -Math.PI * 0.5],
+    [fcx + ox, fcz, Math.PI * 0.5],
+    [fcx - ox, fcz + oz, 0],
+    [fcx - 16, fcz + oz, 0],
+    [fcx + 16, fcz + oz, 0],
+  ];
+  for (const [tx, tz, ty] of outerTowers) {
+    buildings.push({ kind: 'watchtower_l1', x: tx, z: tz, yawRad: ty, yardRx: 4.5, yardRz: 4.5, team: 1 });
+  }
+  // Main South Gatehouse centered at (fcx, fcz + oz) facing South (+Z toward player siege camp!)
+  buildings.push({ kind: 'gate_l1', x: fcx, z: fcz + oz, yawRad: 0.0, yardRx: 6.0, yardRz: 6.0, team: 1 });
+  // Outer curtain walls (all real 2.0 m destructible gameplay wall segments!)
+  appendWallRun(walls, fcx - ox + 2.6, fcz - oz, fcx + ox - 2.6, fcz - oz, [[ox - 4.8, ox + 0.5]], true);
+  appendWallRun(walls, fcx - ox + 2.6, fcz + oz, fcx + ox - 2.6, fcz + oz, [
+    [ox - 20.5, ox - 15.5],
+    [ox - 5.8, ox + 0.8],
+    [ox + 10.5, ox + 15.8],
+  ], false);
+  appendWallRun(walls, fcx - ox, fcz - oz + 2.6, fcx - ox, fcz + oz - 2.6, [[oz - 5.2, oz + 0.4]], false);
+  appendWallRun(walls, fcx + ox, fcz - oz + 2.6, fcx + ox, fcz + oz - 2.6, [[oz - 5.2, oz + 0.4]], true);
+
+  // 3. INNER WALL RING: 84 x 70 m (halfX = 42, halfZ = 35) — 4 corner watchtowers + Offset West Gate!
+  const ix = 42;
+  const iz = 35;
+  for (const [tx, tz, ty] of [
+    [fcx - ix, fcz - iz, Math.PI],
+    [fcx + ix, fcz - iz, Math.PI],
+    [fcx - ix, fcz + iz, 0],
+    [fcx + ix, fcz + iz, 0],
+  ] as const) {
+    buildings.push({ kind: 'watchtower_l1', x: tx, z: tz, yawRad: ty, yardRx: 4.4, yardRz: 4.4, team: 1 });
+  }
+  // Offset inner gate in the LEFT/WEST wall (no straight shot from outer south gate!)
+  buildings.push({ kind: 'gate_l1', x: fcx - ix, z: fcz + 8, yawRad: -Math.PI * 0.5, yardRx: 5.5, yardRz: 5.5, team: 1 });
+  appendWallRun(walls, fcx - ix + 2.5, fcz - iz, fcx + ix - 2.5, fcz - iz, [], true);
+  appendWallRun(walls, fcx - ix + 2.5, fcz + iz, fcx + ix - 2.5, fcz + iz, [], false);
+  appendWallRun(walls, fcx - ix, fcz - iz + 2.5, fcx - ix, fcz + iz - 2.5, [[iz + 2.2, iz + 8.8]], false);
+  appendWallRun(walls, fcx + ix, fcz - iz + 2.5, fcx + ix, fcz + iz - 2.5, [], true);
+
+  // 4. Working Enemy Garrison Town tucked inside the Fortress walls (docs/CAMPAIGN.md M5!)
+  buildings.push(
+    { kind: 'barracks_l1', x: fcx + 22, z: fcz + 18, yawRad: 0.0, yardRx: 8.5, yardRz: 6.5, team: 1 },
+    { kind: 'smithy_l1', x: fcx - 22, z: fcz - 18, yawRad: 0.2, yardRx: 6.5, yardRz: 5.5, team: 1 },
+    { kind: 'bakery_l1', x: fcx + 24, z: fcz - 18, yawRad: -0.2, yardRx: 6.5, yardRz: 5.5, team: 1 },
+    { kind: 'storehouse_l1', x: fcx - 24, z: fcz + 20, yawRad: 0.0, yardRx: 7.5, yardRz: 6.0, team: 1 },
+    { kind: 'house_l1', x: fcx - 50, z: fcz - 24, yawRad: 1.55, yardRx: 5.5, yardRz: 5.2, team: 1 },
+    { kind: 'house_l1', x: fcx - 50, z: fcz - 8, yawRad: 1.55, yardRx: 5.5, yardRz: 5.2, team: 1 },
+    { kind: 'house_l1', x: fcx + 50, z: fcz - 16, yawRad: -1.55, yardRx: 5.5, yardRz: 5.2, team: 1 },
+    { kind: 'house_l1', x: fcx + 50, z: fcz + 14, yawRad: -1.55, yardRx: 5.5, yardRz: 5.2, team: 1 },
+    { kind: 'well_l1', x: fcx - 18, z: fcz + 4, yawRad: 0.0, yardRx: 3.2, yardRz: 3.2, team: 1 },
+  );
+
+  // 5. Player Siege Camp South of the River (z = +168..184) with Siege Cannons & Assault Divisions!
+  buildings.push(
+    { kind: 'barracks_l1', x: -18, z: 176, yawRad: Math.PI, yardRx: 9.5, yardRz: 7.0, team: 0 },
+    { kind: 'smithy_l1', x: 18, z: 176, yawRad: Math.PI, yardRx: 7.0, yardRz: 6.0, team: 0 },
+    { kind: 'storehouse_l1', x: 0, z: 188, yawRad: Math.PI, yardRx: 8.0, yardRz: 6.5, team: 0 },
+    { kind: 'camp_tent_l1', x: -34, z: 168, yawRad: 3.0, yardRx: 5.5, yardRz: 5.5, team: 0 },
+    { kind: 'camp_tent_l1', x: 34, z: 168, yawRad: -3.0, yardRx: 5.5, yardRz: 5.5, team: 0 },
+    { kind: 'watchtower_l1', x: -42, z: 156, yawRad: Math.PI, yardRx: 4.5, yardRz: 4.5, team: 0 },
+    { kind: 'watchtower_l1', x: 42, z: 156, yawRad: Math.PI, yardRx: 4.5, yardRz: 4.5, team: 0 },
+  );
+  // 4 Poly Haven CC0 Siege Field Cannons deployed facing North (-Z) up the fortress approach ramp!
+  props.push(
+    { kind: 'cannon', x: -14, z: 86, yawRad: Math.PI, scale: 1.08 },
+    { kind: 'cannon', x: -5, z: 84, yawRad: Math.PI, scale: 1.08 },
+    { kind: 'cannon', x: 5, z: 84, yawRad: Math.PI, scale: 1.08 },
+    { kind: 'cannon', x: 14, z: 86, yawRad: Math.PI, scale: 1.08 },
+    { kind: 'crate', x: -18, z: 90, yawRad: 0.3, scale: 1.0 },
+    { kind: 'crate', x: 18, z: 90, yawRad: -0.4, scale: 1.0 },
+    { kind: 'barrel', x: -16.5, z: 91.2, yawRad: 0.2, scale: 1.0 },
+    { kind: 'crate', x: -24, z: 162, yawRad: 0.35, scale: 1.05 },
+    { kind: 'barrel', x: 24, z: 162, yawRad: -0.35, scale: 1.0 },
+  );
+
+  // 6. Opposing Siege & Fortress Armies (180+ MakeHuman soldiers!)
+  // Player Cobalt Assault Army across the southern ford & siege battery
+  appendRegiment(units, 'swordsman', 0, -24, 62, 6, 4, Math.PI, 1.55, rng, 'walk');
+  appendRegiment(units, 'swordsman', 0, 24, 62, 6, 4, Math.PI, 1.55, rng, 'walk');
+  appendRegiment(units, 'archer', 0, 0, 74, 8, 3, Math.PI, 1.6, rng, 'attack');
+  appendRegiment(units, 'swordsman', 0, 0, 148, 6, 3, Math.PI, 1.6, rng, 'idle');
+  // Enemy Crimson Courtyard Guard, Outer Bailey Garrison & Sally Force
+  appendRegiment(units, 'swordsman', 1, 0, fcz + 22, 6, 3, 0.0, 1.55, rng, 'idle'); // Courtyard elite guard
+  appendRegiment(units, 'swordsman', 1, -24, fcz + 45, 5, 3, 0.0, 1.55, rng, 'idle');
+  appendRegiment(units, 'swordsman', 1, 24, fcz + 45, 5, 3, 0.0, 1.55, rng, 'idle');
+  appendRegiment(units, 'archer', 1, 0, fcz + 48, 8, 2, 0.0, 1.6, rng, 'attack');
+  appendRegiment(units, 'swordsman', 1, 0, fcz + 68, 5, 3, 0.0, 1.55, rng, 'attack'); // Sally out of main gate!
+  // Enemy town villagers inside fortress walls
+  for (let i = 0; i < 8; i++) {
+    units.push({
+      archetype: 'citizen',
+      team: 1,
+      x: fcx + (rng() - 0.5) * 65,
+      z: fcz + (rng() - 0.5) * 45,
+      yawRad: rng() * Math.PI * 2,
+      scale: 0.96 + rng() * 0.08,
+      clip: 'walk',
+      phase01: rng(),
+      speedMul: 0.78,
+      tintVar: 0.9 + rng() * 0.18,
+    });
+  }
+
+  const roads: readonly (readonly (readonly [number, number])[])[] = [
+    [[0, 186], [0, 116], [0, 62], [0, fcz + oz], [0, fcz + 44], [-52, fcz + 44], [-52, fcz + 8], [fcx - ix, fcz + 8], [fcx - 16, fcz + 10], [fcx, fcz + 14]],
+  ];
+  const capturePoints: readonly CapturePointSpec[] = [
+    { id: 'cp_ford', label: 'Southern River Ford', x: 0, z: 116 },
+    { id: 'cp_gate', label: 'Outer Gatehouse Approach', x: 0, z: fcz + oz + 16 },
+    { id: 'cp_courtyard', label: 'Citadel Inner Courtyard', x: fcx, z: fcz + 18 },
+  ];
+  const calibrationXZ: readonly [number, number] = [-78, 162];
+  const nature = scatterNatureAcrossWorld(
+    terrain,
+    { id: 'fortress', buildings, farmStrips, roads, calibrationXZ },
+    440,
+    155,
+    185,
+    rng,
+  );
+
+  return {
+    id: 'fortress',
+    title: 'Citadel Fortress',
+    subtitle: 'Mission 5 · 7 m citadel plateau, twin destructible walls, 12 towers, Donżon & siege cannons',
+    terrainConfig,
+    playerKeepXZ: [0, 174],
+    enemyCenterXZ: [fcx, fcz],
+    calibrationXZ,
+    buildings,
+    walls,
+    farmStrips,
+    roads,
+    capturePoints,
+    ...nature,
+    props,
+    units,
+  };
+}
+
+/** Generates the complete deterministic 560 x 560 m map layout for any of the 5 campaign/skirmish maps. */
+export function buildMapLayout(id: MapLayoutId): MapLayoutSpec {
+  switch (id) {
+    case 'crossing':
+      return buildCrossingMap();
+    case 'openField':
+      return buildOpenFieldMap();
+    case 'forest':
+      return buildForestMap();
+    case 'valley':
+      return buildValleyMap();
+    case 'fortress':
+      return buildFortressMap();
+  }
+}
+
+export function parseMapId(raw: string | null | undefined): MapLayoutId {
+  if (!raw) return 'crossing';
+  const norm = raw.trim().toLowerCase();
+  if (norm === 'openfield' || norm === 'open') return 'openField';
+  if (norm === 'forest' || norm === 'bor') return 'forest';
+  if (norm === 'valley' || norm === 'dolina') return 'valley';
+  if (norm === 'fortress' || norm === 'twierdza') return 'fortress';
+  return 'crossing';
+}

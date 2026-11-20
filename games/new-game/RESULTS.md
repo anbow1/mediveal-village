@@ -2,6 +2,53 @@
 
 > Newest entries first (`GUIDE.md` §1, §6). Every measurement includes date, commit, exact method (script, preset, view, alternating before/after runs), Before | After table (pipelines, draw calls / triangles, texture memory, ready / GPU idle, build size), screenshot comparison crops in `games/new-game/results/<date>/`, and the decision + number behind it. Reverted attempts are logged too.
 
+## 2026-11-19 · Stage 5 — Whole 560 × 560 m World, 5 Campaign/Skirmish Maps, MakeHuman CC0 GPU-Instanced Characters & Poly Haven Photogrammetry Overhaul (base `ba9a7be`, pushed to `main`)
+
+- **Measured how:** Production build (`vite build --base ./`, `31 MB` total, `167` manifest assets / `28.51 MB`) served via `tools/measure/serve.mjs games/new-game/dist 8765`. Headless Chrome (`/usr/bin/google-chrome`, SwiftShader Vulkan WebGPU + ANGLE SwiftShader WebGL2), strictly one browser process at a time:
+  1. **`tools/measure/load.mjs --game generic --extra '&q=high|low&map=crossing' --hide-features texture-compression-astc,texture-compression-etc2 --json stage5-load-{high,low}.json`** — verifying BC7 GPU textures, `0` uncompressed image uploads, exact pipeline/module/RT counts, and GPU-idle load time.
+  2. **Stage 5 multi-map, per-pass, pan-curve, lighting & parity suite (`verify-stage5.mjs`, `960×540`):**
+     - `crossing-views` (WebGPU High): all 10 views (`showcase`, `unit`, `building`, `town`, `field`, `enemy`, `close`, `ground_045m`, `eye_170m`, `overview`), `town` per-pass triangle audit (`target` vs `shadow` vs `screen`), 6-point 560 m pan curve (`x = −210, −120, −40, 24, 110, 200 m`), and runtime pipeline tracer (`newPipelines: []`).
+     - `crossing-presets` (WebGPU High): all 4 lighting presets (`clearNoon`, `lateAutumn`, `goldenHour`, `overcast`) on `showcase` + 18% grey `calibration` cube + `step(2.0)` animation + pipeline tracer (`newPipelines: []`).
+     - `fortress-high` (Mission 5, 7 m plateau, 19 m `fortress_donzon`, twin concentric `124×112` / `84×70 m` walls = `350` wall segments, 12 watchtowers, 4 Poly Haven siege cannons, 177 MakeHuman soldiers) + pipeline tracer (`newPipelines: []`).
+     - `valley-high` (Mission 3–4, twin mountain ridges `175 m` off axis, central village `274 m` from Keep w/ 6 burned `ruin_house`s, 174 soldiers).
+     - `crossing-low` (WebGPU Low) + full 12-spot Low benchmark (`?autostart&debug&q=low&map=crossing`, pipeline tracer `0` new) and `bench-high` (full 12-spot High benchmark).
+     - `crossing-webgl` (WebGL2 fallback on Low): `showcase`, `unit` (verifying `RGBA32F` GPU bone-matrix skinning on WebGL2), and `clearNoon` 18% grey calibration parity vs WebGPU.
+     - `phone` (`800×380 @ 2× DPR = 1600×760`, touch, Low, HUD visible).
+- **Stage 5 Before (Stage 4 100 m Slice) | After (Stage 5 Full 560 × 560 m World) table:**
+
+| Metric | Before — Stage 4 High (Low) | After — Stage 5 High (WebGPU, 560 m) | After — Stage 5 Low (WebGPU, 560 m) | Notes |
+|---|---|---|---|---|
+| World scale & content | 100 × 100 m slice: 12 buildings (9 types), 75 trees, 33 `SkinnedMesh` actors | **560 × 560 m (`5` maps): 28–31 buildings (19 types incl. 19 m `fortress_donzon`), 440–540 batched trees, 135–160 Poly Haven rocks, 183–209 ferns, 174–200 MakeHuman GPU-instanced units, up to 350 wall segments, 4 siege cannons** | Same world (`19.3k` R2 grass blades, `2`-cascade `1024²` CSM) | Single-height `TerrainField` + `512²` `GroundWorksMap` + 1-draw-call rivers/fords/lakes |
+| Pipelines (total / after load) | `74 / 0` (`74 / 0`) | **`138 / 0`** (`171` shader modules) | **`124 / 0`** (`157` shader modules) | Below `≤ 150` target; **0 new pipelines** across 560 m pan, 4 presets, `step(2.0)` & Fortress |
+| Draw calls / frame (12 spots) | `179–276` (`115–218`) | **`148–200`** (`194` town · `191` overview · `148–162` Fortress · `130–159` Valley) | **`130–168`** (`164` town · `157` overview) | **−25% fewer draw calls** than Stage 4 slice despite 25× larger world & 6× more units! |
+| 560 m pan draw calls (`x = −210..+200 m`) | N/A | **`160 · 180 · 193 · 161 · 151 · 142`** (`0.81–0.95 M` tris) | Flat | Completely flat call count moving edge-to-edge across full 560 m map |
+| Triangles / frame (12 spots + per-pass) | `0.37–0.53 M` (`0.29–0.43 M`) | **`0.82–1.36 M`** (`town`: **`0.829 M` scene + `0.112 M` shadows = 11.8%**, `1` post tri) | **`0.72–1.24 M`** (`0.83 M` town · `0.72 M` overview) | Well below `≤ 12 M` High / `≤ 2 M` Low; decimated `boulder_shadow` (`26.6k → 70` tris) keeps shadows lean |
+| Uploaded texture VRAM (`load.mjs`) | `25.2 MB` (`24.7 MB` BC7) | **`40.5 MB`** (`63` textures: **`39.0 MB` BC7** + `1.0 MB` `512²` groundWorks + `0.3 MB` R32F height + `0.2 MB` 3× RGBA32F bone `DataTexture`s) | **`40.5 MB`** (`63` textures, **`39.0 MB` BC7**) | **`image uploads: 0, 0.00 s`**; all 19 buildings still share the exact `12.0 MB` BC7 surface arrays (`0 MB` extra!) |
+| Render-target VRAM (`load.mjs`) | `125.6 MB` (`45.6 MB`) | **`125.6 MB`** (`34` targets) | **`45.6 MB`** (`32` targets) | Zero increase over Stage 3/4 |
+| Load (ready / GPU idle, SwiftShader `load.mjs`) | `22.6 s / 28.0 s` (`7.1 s / 26.4 s`) | **`32.0 s / 38.6 s`** (`assets 3.02 s`, `scene 0.004 s`, `warmup 9.79 s`) | **`31.0 s / 36.6 s`** (`assets 2.82 s`, `scene 0.002 s`, `warmup 9.66 s`) | 167 assets (`28.51 MB`) stream in `2.8–3.0 s`; **0 console/page errors** |
+| Production build size (`dist/`) | `21 MB` (`18.15 MB` assets) | **`31 MB`** (`28.51 MB` assets + `1.23 MB` JS / `355 KB` gzip) | same | Less than 40% of `80 MB` ceiling |
+| GPU ms per pass (SwiftShader, `ground_045m`) | `4197.6 ms` (`3834.2 ms`) | **`2298.2 ms`** (scene `1921.1`, **shadows `53.2` = 2.3%**, post `324.0`) | **`2117.9 ms`** (scene `1755.4`, **shadows `26.0` = 1.2%**, post `336.5`) | **−45% faster GPU time** than Stage 4 slice; Low 2-cascade shadows **−51%** vs High |
+
+- **4-Preset EV100 Calibration, Tone Floor & Cross-Backend Parity (`960×540`):**
+  - **18% Grey Calibration Cube:** `clearNoon` **`−0.02 stops`** (`[108.0, 104.0, 107.0]`, **exact `0.0 / 255` WebGL2 diff**), `lateAutumn` **`+0.01 stops`** (`[115.9, 103.0, 104.0]`), `goldenHour` **`−0.03 stops`** (`[118.9, 99.8, 104.4]`), `overcast` **`−0.07 stops`** (`[104.8, 102.7, 104.2]`) — all 4 presets locked within **±0.07 stops** (vs ±0.15 budget).
+  - **Tone range & clipping (10 High Crossing views):** Zero clipped highlights (`p99` 139.9–188.4, never 255); warm readable undersides (`p05` 11.6–81.4).
+  - **High vs Low & WebGL2 Parity:** High vs Low showcase `mean_abs = 1.59 / 255`; WebGPU Low vs WebGL2 showcase `mean_abs = 1.40 / 255`; GPU bone-matrix `RGBA32F` skinning (`textureLoad`) renders MakeHuman swordsmen, estocs, kite shields & Crimson swap identically on WebGL2 with `0` errors.
+  - **Phone landscape (`800×380`, `2× DPR` = `1600×760`, touch, Low):** `165` draw calls, `0.93 M` tris, crisp Map + Lighting HUD badges and touch buttons, zero overlap, `0` errors.
+- **Comparison strips, hero JPEGs & raw JSON (`games/new-game/results/2026-11-19/`):**
+  - `stage5-three-maps-strip.jpg` (*Crossing* river & armies | *Valley* twin mountain ridges & 6 ruins | *Fortress* twin walls & 12 towers | *Fortress* siege cannons & longbowmen).
+  - `stage5-all-4-presets.jpg` (`Clear Noon` | `Late Autumn` | `Golden Hour` | `Overcast` on full 560 m *Crossing* town).
+  - `stage5-height-sweep.jpg` (`0.45 m Ground` | `1.70 m Eye` | `64 m RTS Town` | `440 m 560×560 m Overview`).
+  - `stage5-heroes-and-parity.jpg` (`WebGPU High MakeHuman Swordsman` | `WebGL2 Identical GPU Skinning` | `Mission 5 19 m Fortress Donżon` | `Phone 1600×760 2× DPR Low HUD`).
+  - Standalone hero renders: `stage5-hero-{swordsman,fortress-donzon,village-eye170m,golden-hour}.jpg`.
+  - Raw JSON: `stage5-{load-high,load-low,crossing-views,crossing-presets,crossing-low,bench-high,fortress-high,valley-high,crossing-webgl,phone}.json`.
+- **Bugs caught & fixed during Stage 5 live inspection (all verified via `view_file` after fix):**
+  1. **Stale `props/cart_lod0.glb` HTTP 404 & un-decimated `boulder_*.glb` (`26,611` tris on all 4 LODs including shadow):** Removed nonexistent `cart_lod0.glb` load (replaced placements with Poly Haven photogrammetry `crate`/`barrel` clusters) and simplified `boulder_lod0..shadow.glb` via `MeshoptSimplifier.simplifySloppy` (`26,611 → 1,713 / 393 / 109 / 70` tris, saving `3.18 MB` on disk and `3+ M` wasted shadow triangles).
+  2. **Upside-down KTX2 tree impostors on 560 m horizon (`worldBuilder.ts`):** `PlaneGeometry` impostor UVs lacked vertical `1 - v` flip for `flipY = false` KTX2 textures and used stretched widths instead of Blender's square orthographic dimensions. Flipped impostor UVs and matched Stage 4 ortho scales (`11.8 / 13.0 / 11.2 m`) → upright, lush oak/pine/birch horizon across all 5 maps.
+  3. **Premature building `LOD2` stripping timber framing & chapel belfry posts at 70 m RTS range (`worldBuilder.ts`):** Raised Stage 5 building thresholds to `75 m / 155 m` (`stage5BuildingLod`) → Keep, Chapel belfry, Barracks, Watchtowers, and Fortress Donżon stay razor-sharp throughout RTS play for only `+0.04 M` tris.
+  4. **18% grey CalibrationRig hex-color bug (`worldBuilder.ts`):** Passing scalar `0.18` to `new MeshStandardNodeMaterial({ color: 0.18 })` interpreted it as hex `0x000000` (pitch black). Fixed to `cardMat.color.setRGB(0.18, 0.18, 0.18)` + horizontal-top cube → exact `±0.07` stop calibration across all 4 presets & `0.0` WebGL2 diff.
+  5. **Sunlit `ground_045m` / `eye_170m` framing & capture-cairn `uv1` warning (`bench.ts`, `worldBuilder.ts`):** Moved Crossing ground/eye cameras onto the open sunlit cobbled road east of the Well and added masonry `uv1` + vertex AO to capture cairns.
+  6. **Unit tests & shared-file integrity:** Added `tests/maps.test.ts` validating all 5 maps (`crossing`, `openField`, `forest`, `valley`, `fortress`), Mission 4's 6 ruins `274 m` from Keep, Mission 5's `7 m` plateau, `124×112` / `84×70 m` concentric walls, 12 towers, `fortress_donzon`, and `≥ 4` cannons (**8 test files, 33/33 Vitest tests passed**; `tsc --noEmit` 0 errors; all 7 `shared-src/` files verified byte-identical).
+
 ## 2026-11-19 · Stage 4 — 100 × 100 m Vertical Slice at Final Quality & 560 × 560 m Budget Extrapolation (base `c1d160b`, pushed to `main`)
 
 - **Measured how:** Production build (`vite build --base ./`, `21 MB` total, `103` manifest assets / `18.15 MB`) served via `tools/measure/serve.mjs games/new-game/dist 8765`. Headless Chrome (`/usr/bin/google-chrome`, SwiftShader Vulkan WebGPU + ANGLE SwiftShader WebGL2), strictly one browser process at a time:

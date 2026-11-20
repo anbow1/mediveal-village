@@ -1,0 +1,620 @@
+{
+  "loadS": 16.449,
+  "bootStats": {
+    "backend": "WebGPU",
+    "quality": "high",
+    "toneMapping": "aces",
+    "lighting": "lateAutumn",
+    "mapId": "crossing",
+    "anchorEv100": 13.709945380232497,
+    "preExposure": 0.00006218905472636816,
+    "drawCalls": 197,
+    "triangles": 1050870,
+    "renderScale": 1,
+    "governorLevel": 0,
+    "simTimeS": 0.13333333333333333,
+    "paused": false,
+    "loadTotalS": 15.708,
+    "lods": {
+      "lod0": 36,
+      "lod1": 126,
+      "lod2": 264,
+      "impostor": 451
+    },
+    "shadows": {
+      "cascades": 3,
+      "maxFarM": 320,
+      "mapSizePx": 2048,
+      "fade": true,
+      "initialized": true
+    },
+    "worldMetrics": {
+      "mapId": "crossing",
+      "grassBlades": 40994,
+      "grassTriangles": 128994,
+      "treeCount": 480,
+      "rockCount": 135,
+      "fernCount": 209,
+      "buildingCount": 28,
+      "unitCount": 200,
+      "wallSegments": 32,
+      "reedClumps": 105,
+      "wheatClusters": 868
+    },
+    "benchResult": null
+  },
+  "shotStats": {
+    "showcase": {
+      "backend": "WebGPU",
+      "quality": "high",
+      "toneMapping": "aces",
+      "lighting": "lateAutumn",
+      "mapId": "crossing",
+      "anchorEv100": 13.709945380232497,
+      "preExposure": 0.00006218905472636816,
+      "drawCalls": 197,
+      "triangles": 1050870,
+      "renderScale": 1,
+      "governorLevel": 0,
+      "simTimeS": 0.26666666666666666,
+      "paused": false,
+      "loadTotalS": 15.708,
+      "lods": {
+        "lod0": 36,
+        "lod1": 126,
+        "lod2": 264,
+        "impostor": 451
+      },
+      "shadows": {
+        "cascades": 3,
+        "maxFarM": 320,
+        "mapSizePx": 2048,
+        "fade": true,
+        "initialized": true
+      },
+      "worldMetrics": {
+        "mapId": "crossing",
+        "grassBlades": 40994,
+        "grassTriangles": 128994,
+        "treeCount": 480,
+        "rockCount": 135,
+        "fernCount": 209,
+        "buildingCount": 28,
+        "unitCount": 200,
+        "wallSegments": 32,
+        "reedClumps": 105,
+        "wheatClusters": 868
+      },
+      "benchResult": null
+    },
+    "unit": {
+      "backend": "WebGPU",
+      "quality": "high",
+      "toneMapping": "aces",
+      "lighting": "lateAutumn",
+      "mapId": "crossing",
+      "anchorEv100": 13.709945380232497,
+      "preExposure": 0.00006218905472636816,
+      "drawCalls": 200,
+      "triangles": 1363622,
+      "renderScale": 1,
+      "governorLevel": 0,
+      "simTimeS": 0.8000000000000008,
+      "paused": false,
+      "loadTotalS": 15.708,
+      "lods": {
+        "lod0": 83,
+        "lod1": 111,
+        "lod2": 227,
+        "impostor": 456
+      },
+      "shadows": {
+        "cascades": 3,
+        "maxFarM": 320,
+        "mapSizePx": 2048,
+        "fade": true,
+        "initialized": true
+      },
+      "worldMetrics": {
+        "mapId": "crossing",
+        "grassBlades": 40994,
+        "grassTriangles": 128994,
+        "treeCount": 480,
+        "rockCount": 135,
+        "fernCount": 209,
+        "buildingCount": 28,
+        "unitCount": 200,
+        "wallSegments": 32,
+        "reedClumps": 105,
+        "wheatClusters": 868
+      },
+      "benchResult": null
+    },
+    "building": {
+      "backend": "WebGPU",
+      "quality": "high",
+      "toneMapping": "aces",
+      "lighting": "lateAutumn",
+      "mapId": "crossing",
+      "anchorEv100": 13.709945380232497,
+      "preExposure": 0.00006218905472636816,
+      "drawCalls": 187,
+      "triangles": 1035310,
+      "renderScale": 1,
+      "governorLevel": 0,
+      "simTimeS": 1.3333333333333335,
+      "paused": false,
+      "loadTotalS": 15.708,
+      "lods": {
+        "lod0": 47,
+        "lod1": 90,
+        "lod2": 302,
+        "impostor": 438
+      },
+      "shadows": {
+        "cascades": 3,
+        "maxFarM": 320,
+        "mapSizePx": 2048,
+        "fade": true,
+        "initialized": true
+      },
+      "worldMetrics": {
+        "mapId": "crossing",
+        "grassBlades": 40994,
+        "grassTriangles": 128994,
+        "treeCount": 480,
+        "rockCount": 135,
+        "fernCount": 209,
+        "buildingCount": 28,
+        "unitCount": 200,
+        "wallSegments": 32,
+        "reedClumps": 105,
+        "wheatClusters": 868
+      },
+      "benchResult": null
+    },
+    "town": {
+      "backend": "WebGPU",
+      "quality": "high",
+      "toneMapping": "aces",
+      "lighting": "lateAutumn",
+      "mapId": "crossing",
+      "anchorEv100": 13.709945380232497,
+      "preExposure": 0.00006218905472636816,
+      "drawCalls": 194,
+      "triangles": 961854,
+      "renderScale": 1,
+      "governorLevel": 1,
+      "simTimeS": 1.866666666666665,
+      "paused": false,
+      "loadTotalS": 15.708,
+      "lods": {
+        "lod0": 28,
+        "lod1": 63,
+        "lod2": 334,
+        "impostor": 452
+      },
+      "shadows": {
+        "cascades": 3,
+        "maxFarM": 320,
+        "mapSizePx": 2048,
+        "fade": true,
+        "initialized": true
+      },
+      "worldMetrics": {
+        "mapId": "crossing",
+        "grassBlades": 40994,
+        "grassTriangles": 128994,
+        "treeCount": 480,
+        "rockCount": 135,
+        "fernCount": 209,
+        "buildingCount": 28,
+        "unitCount": 200,
+        "wallSegments": 32,
+        "reedClumps": 105,
+        "wheatClusters": 868
+      },
+      "benchResult": null
+    },
+    "field": {
+      "backend": "WebGPU",
+      "quality": "high",
+      "toneMapping": "aces",
+      "lighting": "lateAutumn",
+      "mapId": "crossing",
+      "anchorEv100": 13.709945380232497,
+      "preExposure": 0.00006218905472636816,
+      "drawCalls": 166,
+      "triangles": 902015,
+      "renderScale": 1,
+      "governorLevel": 1,
+      "simTimeS": 2.3999999999999964,
+      "paused": false,
+      "loadTotalS": 15.708,
+      "lods": {
+        "lod0": 10,
+        "lod1": 55,
+        "lod2": 373,
+        "impostor": 439
+      },
+      "shadows": {
+        "cascades": 3,
+        "maxFarM": 320,
+        "mapSizePx": 2048,
+        "fade": true,
+        "initialized": true
+      },
+      "worldMetrics": {
+        "mapId": "crossing",
+        "grassBlades": 40994,
+        "grassTriangles": 128994,
+        "treeCount": 480,
+        "rockCount": 135,
+        "fernCount": 209,
+        "buildingCount": 28,
+        "unitCount": 200,
+        "wallSegments": 32,
+        "reedClumps": 105,
+        "wheatClusters": 868
+      },
+      "benchResult": null
+    },
+    "enemy": {
+      "backend": "WebGPU",
+      "quality": "high",
+      "toneMapping": "aces",
+      "lighting": "lateAutumn",
+      "mapId": "crossing",
+      "anchorEv100": 13.709945380232497,
+      "preExposure": 0.00006218905472636816,
+      "drawCalls": 148,
+      "triangles": 934015,
+      "renderScale": 1,
+      "governorLevel": 1,
+      "simTimeS": 2.933333333333328,
+      "paused": false,
+      "loadTotalS": 15.708,
+      "lods": {
+        "lod0": 17,
+        "lod1": 84,
+        "lod2": 314,
+        "impostor": 462
+      },
+      "shadows": {
+        "cascades": 3,
+        "maxFarM": 320,
+        "mapSizePx": 2048,
+        "fade": true,
+        "initialized": true
+      },
+      "worldMetrics": {
+        "mapId": "crossing",
+        "grassBlades": 40994,
+        "grassTriangles": 128994,
+        "treeCount": 480,
+        "rockCount": 135,
+        "fernCount": 209,
+        "buildingCount": 28,
+        "unitCount": 200,
+        "wallSegments": 32,
+        "reedClumps": 105,
+        "wheatClusters": 868
+      },
+      "benchResult": null
+    },
+    "close": {
+      "backend": "WebGPU",
+      "quality": "high",
+      "toneMapping": "aces",
+      "lighting": "lateAutumn",
+      "mapId": "crossing",
+      "anchorEv100": 13.709945380232497,
+      "preExposure": 0.00006218905472636816,
+      "drawCalls": 191,
+      "triangles": 1055821,
+      "renderScale": 1,
+      "governorLevel": 1,
+      "simTimeS": 3.4666666666666592,
+      "paused": false,
+      "loadTotalS": 15.708,
+      "lods": {
+        "lod0": 42,
+        "lod1": 129,
+        "lod2": 263,
+        "impostor": 443
+      },
+      "shadows": {
+        "cascades": 3,
+        "maxFarM": 320,
+        "mapSizePx": 2048,
+        "fade": true,
+        "initialized": true
+      },
+      "worldMetrics": {
+        "mapId": "crossing",
+        "grassBlades": 40994,
+        "grassTriangles": 128994,
+        "treeCount": 480,
+        "rockCount": 135,
+        "fernCount": 209,
+        "buildingCount": 28,
+        "unitCount": 200,
+        "wallSegments": 32,
+        "reedClumps": 105,
+        "wheatClusters": 868
+      },
+      "benchResult": null
+    },
+    "ground_045m": {
+      "backend": "WebGPU",
+      "quality": "high",
+      "toneMapping": "aces",
+      "lighting": "lateAutumn",
+      "mapId": "crossing",
+      "anchorEv100": 13.709945380232497,
+      "preExposure": 0.00006218905472636816,
+      "drawCalls": 186,
+      "triangles": 1094443,
+      "renderScale": 0.87,
+      "governorLevel": 2,
+      "simTimeS": 3.9999999999999907,
+      "paused": false,
+      "loadTotalS": 15.708,
+      "lods": {
+        "lod0": 55,
+        "lod1": 113,
+        "lod2": 268,
+        "impostor": 441
+      },
+      "shadows": {
+        "cascades": 3,
+        "maxFarM": 320,
+        "mapSizePx": 2048,
+        "fade": true,
+        "initialized": true
+      },
+      "worldMetrics": {
+        "mapId": "crossing",
+        "grassBlades": 40994,
+        "grassTriangles": 128994,
+        "treeCount": 480,
+        "rockCount": 135,
+        "fernCount": 209,
+        "buildingCount": 28,
+        "unitCount": 200,
+        "wallSegments": 32,
+        "reedClumps": 105,
+        "wheatClusters": 868
+      },
+      "benchResult": null
+    },
+    "eye_170m": {
+      "backend": "WebGPU",
+      "quality": "high",
+      "toneMapping": "aces",
+      "lighting": "lateAutumn",
+      "mapId": "crossing",
+      "anchorEv100": 13.709945380232497,
+      "preExposure": 0.00006218905472636816,
+      "drawCalls": 187,
+      "triangles": 1135124,
+      "renderScale": 0.87,
+      "governorLevel": 2,
+      "simTimeS": 4.533333333333323,
+      "paused": false,
+      "loadTotalS": 15.708,
+      "lods": {
+        "lod0": 64,
+        "lod1": 104,
+        "lod2": 268,
+        "impostor": 441
+      },
+      "shadows": {
+        "cascades": 3,
+        "maxFarM": 320,
+        "mapSizePx": 2048,
+        "fade": true,
+        "initialized": true
+      },
+      "worldMetrics": {
+        "mapId": "crossing",
+        "grassBlades": 40994,
+        "grassTriangles": 128994,
+        "treeCount": 480,
+        "rockCount": 135,
+        "fernCount": 209,
+        "buildingCount": 28,
+        "unitCount": 200,
+        "wallSegments": 32,
+        "reedClumps": 105,
+        "wheatClusters": 868
+      },
+      "benchResult": null
+    },
+    "overview": {
+      "backend": "WebGPU",
+      "quality": "high",
+      "toneMapping": "aces",
+      "lighting": "lateAutumn",
+      "mapId": "crossing",
+      "anchorEv100": 13.709945380232497,
+      "preExposure": 0.00006218905472636816,
+      "drawCalls": 191,
+      "triangles": 820533,
+      "renderScale": 0.87,
+      "governorLevel": 2,
+      "simTimeS": 5.066666666666654,
+      "paused": false,
+      "loadTotalS": 15.708,
+      "lods": {
+        "lod0": 0,
+        "lod1": 0,
+        "lod2": 397,
+        "impostor": 480
+      },
+      "shadows": {
+        "cascades": 3,
+        "maxFarM": 320,
+        "mapSizePx": 2048,
+        "fade": true,
+        "initialized": true
+      },
+      "worldMetrics": {
+        "mapId": "crossing",
+        "grassBlades": 40994,
+        "grassTriangles": 128994,
+        "treeCount": 480,
+        "rockCount": 135,
+        "fernCount": 209,
+        "buildingCount": 28,
+        "unitCount": 200,
+        "wallSegments": 32,
+        "reedClumps": 105,
+        "wheatClusters": 868
+      },
+      "benchResult": null
+    }
+  },
+  "passAudit": {
+    "passes": {
+      "target": {
+        "calls": 102,
+        "tris": 829142
+      },
+      "shadow": {
+        "calls": 91,
+        "tris": 111529
+      },
+      "screen": {
+        "calls": 1,
+        "tris": 1
+      }
+    },
+    "top": [
+      {
+        "key": "target | PolyHavenFerns_p0 | fern_02_SSS",
+        "calls": 1,
+        "tris": 183711
+      },
+      {
+        "key": "target | MarchlandTerrain | MarchlandTerrainMaterial",
+        "calls": 1,
+        "tris": 156800
+      },
+      {
+        "key": "target | UnitBatch_swordsman_lod2 | MarchlandGpuSkinned_swordsman",
+        "calls": 1,
+        "tris": 75712
+      },
+      {
+        "key": "target | GrassRing0_Near | MarchlandGrassMat_3seg",
+        "calls": 1,
+        "tris": 69750
+      },
+      {
+        "key": "target | GrassRing1_Mid | MarchlandGrassMat_2seg",
+        "calls": 1,
+        "tris": 48300
+      },
+      {
+        "key": "target | UnitBatch_archer_lod2 | MarchlandGpuSkinned_archer",
+        "calls": 1,
+        "tris": 37848
+      },
+      {
+        "key": "shadow | UnitShadow_swordsman | UnitShadowProxyMat_swordsman",
+        "calls": 3,
+        "tris": 33633
+      },
+      {
+        "key": "target | UnitBatch_archer_lod1 | MarchlandGpuSkinned_archer",
+        "calls": 1,
+        "tris": 27630
+      },
+      {
+        "key": "shadow | UnitShadow_archer | UnitShadowProxyMat_archer",
+        "calls": 3,
+        "tris": 21168
+      },
+      {
+        "key": "target | MarchlandWheatClusters | MarchlandWheatFieldMat",
+        "calls": 1,
+        "tris": 20832
+      },
+      {
+        "key": "target | Prop_barrel_p0 | wine_barrel_01",
+        "calls": 1,
+        "tris": 18935
+      },
+      {
+        "key": "shadow | Trees_oak_shadow | Stage5ShadowProxyMat",
+        "calls": 3,
+        "tris": 16428
+      },
+      {
+        "key": "target | BldBatch_house_l1_lod0_p0 | MarchlandBuildingSurfaceMat",
+        "calls": 1,
+        "tris": 15856
+      },
+      {
+        "key": "target | GrassRing2_Far | MarchlandGrassMat_1seg",
+        "calls": 1,
+        "tris": 10944
+      },
+      {
+        "key": "target | UnitBatch_citizen_lod2 | MarchlandGpuSkinned_citizen",
+        "calls": 1,
+        "tris": 10200
+      },
+      {
+        "key": "target | BldBatch_watchtower_l1_lod1_p0 | MarchlandBuildingSurfaceMat",
+        "calls": 1,
+        "tris": 9936
+      },
+      {
+        "key": "target | UnitBatch_swordsman_lod0 | MarchlandGpuSkinned_swordsman",
+        "calls": 1,
+        "tris": 7460
+      },
+      {
+        "key": "target | Nature_rock_moss_b_lod2_p0 | rock_moss_set_01",
+        "calls": 1,
+        "tris": 6811
+      }
+    ]
+  },
+  "panCurve": [
+    {
+      "x": -210,
+      "calls": 160,
+      "trisM": 0.812
+    },
+    {
+      "x": -120,
+      "calls": 180,
+      "trisM": 0.881
+    },
+    {
+      "x": -40,
+      "calls": 193,
+      "trisM": 0.952
+    },
+    {
+      "x": 24,
+      "calls": 161,
+      "trisM": 0.9
+    },
+    {
+      "x": 110,
+      "calls": 151,
+      "trisM": 0.876
+    },
+    {
+      "x": 200,
+      "calls": 142,
+      "trisM": 0.848
+    }
+  ],
+  "newPipelines": [],
+  "errors": []
+}

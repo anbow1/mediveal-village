@@ -238,20 +238,18 @@ function createTerrainMaterial(
   const canopyShade = mix(float(1.0), float(0.68), clamp(canopyGw, 0.0, 1.0));
   const dryShaded = dryCol.mul(canopyShade);
 
-  // Enclosed lake shoreline wet silt band & lighter sandy-silt shallows (playbook §6aa & §7.2b)
-  const lk = terrain.config.lake;
-  const lkDx = xz.x.sub(lk.centerX).div(lk.radiusXM * 1.45);
-  const lkDz = xz.y.sub(lk.centerZ).div(lk.radiusZM * 1.45);
-  const inLakeZone = float(1.0).sub(smoothstep(float(0.75), float(1.18), lkDx.mul(lkDx).add(lkDz.mul(lkDz))));
-  const hAboveWater = wp.y.sub(lk.waterLevelM);
-  // Wet silt band hugging shore from -0.15 m to +0.42 m
+  // Universal wet-silt shoreline band & sandy-gravel shallows for all lakes, rivers & shallow fords (playbook §6aa & §7.2b)
+  const waterLevel = terrain.config.river?.waterLevelM ?? terrain.config.lake.waterLevelM;
+  const hAboveWater = wp.y.sub(waterLevel);
+  const dryRoadKeep = float(1.0).sub(cobbleSharp.mul(0.85));
+  // Wet silt band hugging shorelines from -0.15 m to +0.44 m above waterline
   const wetSiltMask = float(1.0)
-    .sub(smoothstep(float(0.02), float(0.46), abs(hAboveWater.sub(0.12))))
-    .mul(inLakeZone);
-  // Lighter warm sandy-silt lake bed under water (hAboveWater < 0.02 m)
-  const lakeBedMask = smoothstep(float(0.08), float(-0.22), hAboveWater).mul(inLakeZone);
+    .sub(smoothstep(float(0.02), float(0.44), abs(hAboveWater.sub(0.10))))
+    .mul(dryRoadKeep);
+  // Warm sandy-gravel riverbed & lakebed below water (hAboveWater < 0.04 m)
+  const lakeBedMask = smoothstep(float(0.06), float(-0.20), hAboveWater);
 
-  const shoreEarth = mix(dryShaded, dirtCol.mul(vec3(0.48, 0.44, 0.37)), wetSiltMask.mul(0.88));
+  const shoreEarth = mix(dryShaded, dirtCol.mul(vec3(0.48, 0.44, 0.37)), wetSiltMask.mul(0.86));
   const lakeBedCol = dirtAlb.mul(vec3(0.88, 0.82, 0.66)).mul(mix(float(0.55), float(1.0), smoothstep(float(-1.2), float(-0.08), hAboveWater)));
   const finalCol = mix(shoreEarth, lakeBedCol, lakeBedMask);
 

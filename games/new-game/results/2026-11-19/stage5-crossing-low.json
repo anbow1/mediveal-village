@@ -1,0 +1,310 @@
+{
+  "loadS": 14.789,
+  "shotStats": {
+    "showcase": {
+      "backend": "WebGPU",
+      "quality": "low",
+      "toneMapping": "aces",
+      "lighting": "lateAutumn",
+      "mapId": "crossing",
+      "anchorEv100": 13.709945380232497,
+      "preExposure": 0.00006218905472636816,
+      "drawCalls": 165,
+      "triangles": 930373,
+      "renderScale": 1,
+      "governorLevel": 0,
+      "simTimeS": 0.26666666666666666,
+      "paused": false,
+      "loadTotalS": 14.034300000000046,
+      "lods": {
+        "lod0": 36,
+        "lod1": 126,
+        "lod2": 264,
+        "impostor": 451
+      },
+      "shadows": {
+        "cascades": 2,
+        "maxFarM": 200,
+        "mapSizePx": 1024,
+        "fade": true,
+        "initialized": true
+      },
+      "worldMetrics": {
+        "mapId": "crossing",
+        "grassBlades": 19269,
+        "grassTriangles": 60489,
+        "treeCount": 480,
+        "rockCount": 135,
+        "fernCount": 209,
+        "buildingCount": 28,
+        "unitCount": 200,
+        "wallSegments": 32,
+        "reedClumps": 61,
+        "wheatClusters": 420
+      },
+      "benchResult": null
+    },
+    "town": {
+      "backend": "WebGPU",
+      "quality": "low",
+      "toneMapping": "aces",
+      "lighting": "lateAutumn",
+      "mapId": "crossing",
+      "anchorEv100": 13.709945380232497,
+      "preExposure": 0.00006218905472636816,
+      "drawCalls": 164,
+      "triangles": 848646,
+      "renderScale": 1,
+      "governorLevel": 0,
+      "simTimeS": 0.8000000000000008,
+      "paused": false,
+      "loadTotalS": 14.034300000000046,
+      "lods": {
+        "lod0": 28,
+        "lod1": 66,
+        "lod2": 331,
+        "impostor": 452
+      },
+      "shadows": {
+        "cascades": 2,
+        "maxFarM": 200,
+        "mapSizePx": 1024,
+        "fade": true,
+        "initialized": true
+      },
+      "worldMetrics": {
+        "mapId": "crossing",
+        "grassBlades": 19269,
+        "grassTriangles": 60489,
+        "treeCount": 480,
+        "rockCount": 135,
+        "fernCount": 209,
+        "buildingCount": 28,
+        "unitCount": 200,
+        "wallSegments": 32,
+        "reedClumps": 61,
+        "wheatClusters": 420
+      },
+      "benchResult": null
+    },
+    "overview": {
+      "backend": "WebGPU",
+      "quality": "low",
+      "toneMapping": "aces",
+      "lighting": "lateAutumn",
+      "mapId": "crossing",
+      "anchorEv100": 13.709945380232497,
+      "preExposure": 0.00006218905472636816,
+      "drawCalls": 157,
+      "triangles": 720388,
+      "renderScale": 1,
+      "governorLevel": 0,
+      "simTimeS": 1.3333333333333335,
+      "paused": false,
+      "loadTotalS": 14.034300000000046,
+      "lods": {
+        "lod0": 0,
+        "lod1": 0,
+        "lod2": 397,
+        "impostor": 480
+      },
+      "shadows": {
+        "cascades": 2,
+        "maxFarM": 200,
+        "mapSizePx": 1024,
+        "fade": true,
+        "initialized": true
+      },
+      "worldMetrics": {
+        "mapId": "crossing",
+        "grassBlades": 19269,
+        "grassTriangles": 60489,
+        "treeCount": 480,
+        "rockCount": 135,
+        "fernCount": 209,
+        "buildingCount": 28,
+        "unitCount": 200,
+        "wallSegments": 32,
+        "reedClumps": 61,
+        "wheatClusters": 420
+      },
+      "benchResult": null
+    }
+  },
+  "bench": {
+    "title": "Marchland Stage 5 (crossing) · WebGPU · LOW · lateAutumn",
+    "rows": [
+      {
+        "spot": "showcase",
+        "fps": 10,
+        "p95Ms": 100,
+        "cpuMs": 12.4,
+        "drawCalls": 165,
+        "triangles": 921003,
+        "gpuMs": 2306.51,
+        "gpu": {
+          "scene": 1933.74,
+          "shadows": 42.37,
+          "post": 330.4
+        }
+      },
+      {
+        "spot": "building",
+        "fps": 10,
+        "p95Ms": 100,
+        "cpuMs": 10.46,
+        "drawCalls": 155,
+        "triangles": 918595,
+        "gpuMs": 3172,
+        "gpu": {
+          "scene": 2834.07,
+          "shadows": 40.04,
+          "post": 297.9
+        }
+      },
+      {
+        "spot": "unit",
+        "fps": 10,
+        "p95Ms": 100,
+        "cpuMs": 12.08,
+        "drawCalls": 168,
+        "triangles": 1242327,
+        "gpuMs": 3023.69,
+        "gpu": {
+          "scene": 2656.52,
+          "shadows": 43.37,
+          "post": 323.8
+        }
+      },
+      {
+        "spot": "calibration",
+        "fps": 10,
+        "p95Ms": 100,
+        "cpuMs": 12.78,
+        "drawCalls": 167,
+        "triangles": 829185,
+        "gpuMs": 3023.69,
+        "gpu": {
+          "scene": 2656.52,
+          "shadows": 43.37,
+          "post": 323.8
+        }
+      },
+      {
+        "spot": "town",
+        "fps": 10,
+        "p95Ms": 100,
+        "cpuMs": 12.44,
+        "drawCalls": 164,
+        "triangles": 826572,
+        "gpuMs": 3041.78,
+        "gpu": {
+          "scene": 2671.58,
+          "shadows": 45.76,
+          "post": 324.45
+        }
+      },
+      {
+        "spot": "rally",
+        "fps": 10,
+        "p95Ms": 100,
+        "cpuMs": 12.24,
+        "drawCalls": 156,
+        "triangles": 926712,
+        "gpuMs": 2297.13,
+        "gpu": {
+          "scene": 1929.79,
+          "shadows": 43.59,
+          "post": 323.76
+        }
+      },
+      {
+        "spot": "field",
+        "fps": 10,
+        "p95Ms": 100,
+        "cpuMs": 10.54,
+        "drawCalls": 146,
+        "triangles": 784675,
+        "gpuMs": 2297.13,
+        "gpu": {
+          "scene": 1929.79,
+          "shadows": 43.59,
+          "post": 323.76
+        }
+      },
+      {
+        "spot": "close",
+        "fps": 10,
+        "p95Ms": 100,
+        "cpuMs": 11.02,
+        "drawCalls": 160,
+        "triangles": 936756,
+        "gpuMs": 2227.72,
+        "gpu": {
+          "scene": 1857.82,
+          "shadows": 43.26,
+          "post": 326.64
+        }
+      },
+      {
+        "spot": "enemy",
+        "fps": 10,
+        "p95Ms": 100,
+        "cpuMs": 9.3,
+        "drawCalls": 130,
+        "triangles": 816324,
+        "gpuMs": 2714.77,
+        "gpu": {
+          "scene": 2350.98,
+          "shadows": 38.78,
+          "post": 325.02
+        }
+      },
+      {
+        "spot": "overview",
+        "fps": 10,
+        "p95Ms": 100,
+        "cpuMs": 17.82,
+        "drawCalls": 157,
+        "triangles": 720192,
+        "gpuMs": 2714.77,
+        "gpu": {
+          "scene": 2350.98,
+          "shadows": 38.78,
+          "post": 325.02
+        }
+      },
+      {
+        "spot": "ground_045m",
+        "fps": 10,
+        "p95Ms": 100,
+        "cpuMs": 11.64,
+        "drawCalls": 156,
+        "triangles": 976253,
+        "gpuMs": 2117.89,
+        "gpu": {
+          "scene": 1755.41,
+          "shadows": 25.99,
+          "post": 336.49
+        }
+      },
+      {
+        "spot": "eye_170m",
+        "fps": 10,
+        "p95Ms": 100,
+        "cpuMs": 10.66,
+        "drawCalls": 156,
+        "triangles": 1015718,
+        "gpuMs": 2697.79,
+        "gpu": {
+          "scene": 2324.19,
+          "shadows": 39.01,
+          "post": 334.59
+        }
+      }
+    ],
+    "text": "Marchland Stage 5 (crossing) · WebGPU · LOW · lateAutumn\nspot            fps  p95ms  cpu  calls  Mtris  gpu ms (per pass)\nshowcase         10  100.0 12.4    165   0.92  2306.5 (scene 1933.7, shadows 42.4, post 330.4)\nbuilding         10  100.0 10.5    155   0.92  3172.0 (scene 2834.1, shadows 40.0, post 297.9)\nunit             10  100.0 12.1    168   1.24  3023.7 (scene 2656.5, shadows 43.4, post 323.8)\ncalibration      10  100.0 12.8    167   0.83  3023.7 (scene 2656.5, shadows 43.4, post 323.8)\ntown             10  100.0 12.4    164   0.83  3041.8 (scene 2671.6, shadows 45.8, post 324.4)\nrally            10  100.0 12.2    156   0.93  2297.1 (scene 1929.8, shadows 43.6, post 323.8)\nfield            10  100.0 10.5    146   0.78  2297.1 (scene 1929.8, shadows 43.6, post 323.8)\nclose            10  100.0 11.0    160   0.94  2227.7 (scene 1857.8, shadows 43.3, post 326.6)\nenemy            10  100.0  9.3    130   0.82  2714.8 (scene 2351.0, shadows 38.8, post 325.0)\noverview         10  100.0 17.8    157   0.72  2714.8 (scene 2351.0, shadows 38.8, post 325.0)\nground_045m      10  100.0 11.6    156   0.98  2117.9 (scene 1755.4, shadows 26.0, post 336.5)\neye_170m         10  100.0 10.7    156   1.02  2697.8 (scene 2324.2, shadows 39.0, post 334.6)"
+  },
+  "newPipelines": [],
+  "errors": []
+}

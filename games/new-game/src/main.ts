@@ -1,5 +1,6 @@
 import './ui/style.css';
 import { EXPOSURE, LIGHTING_PRESETS, type LangCode, type LightingPresetId, type QualityPreset, type ToneMappingChoice } from './config.ts';
+import { parseMapId } from './sim/maps.ts';
 import { Game } from './app/game.ts';
 
 function parseQuality(raw: string | null): QualityPreset {
@@ -39,5 +40,6 @@ void Game.boot({
   lighting: parseLighting(params.get('light') ?? params.get('time')),
   toneMapping: parseToneMapping(params.get('tm')),
   lang: parseLang(params.get('lang')),
+  mapId: parseMapId(params.get('map')),
   initialSpot: params.get('spot'),
 });

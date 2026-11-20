@@ -143,3 +143,22 @@ Each stage ends with its Check, a `GUIDE.md` §6 report, an entry in `games/new-
    - Desktop: modern WebGPU browser (1440p 60 fps target) + headless Chromium SwiftShader CI.
    - Phone: mid-range Android / iPad (Low preset, 2× DPR, TRAA + governor, 60 fps target).
    - Priority order assumed: **1. Smoothness on phone · 2. Looks · 3. Short loading · 4. World size**.
+
+---
+
+## 8. Stage 5 Upgraded Visual & Realism Guidelines (User-Authorized)
+
+Per explicit user authorization at the Stage 4 → Stage 5 gate (*upgrade visual guidelines wherever higher realism can be achieved using Blender and free CC0/CC BY 4.0 3D models*), the following architectural and graphical upgrades supersede earlier low-poly approximations while keeping every performance, memory, and licence ceiling intact:
+
+1. **Anatomical MakeHuman CC0 Characters + Poly Haven Photogrammetry Gear (replaces procedural pill/capsule soldiers):**
+   - `swordsman`, `archer`, and `citizen` are built from the MakeHuman CC0 anatomical outer body mesh (`base.obj`, `default.mhskel`, `default_weights.mhw`, CC0 1.0) posed in Blender 5.0 with world-axis natural lowered-arm stances, bone-region garment extraction, rounded-toe convex-hull leather boots/turnshoes, Cycles vertex AO, 19-bone `idle`/`walk`/`attack` NLA rigs, and packed 1024² Albedo/Normal + 512² ORM KTX2 atlases (`1.27–2.11 MB` across all 4 LODs).
+   - Swordsmen wield genuine Poly Haven CC0 photogrammetry **`antique_estoc`** swords and **`kite_shield`**s (overpainted with invented Marchland Cobalt-Ochre chevron heraldry); Archers wear quilted gambesons, cobalt chaperon hoods, feathered back quivers, and curved English yew warbows.
+2. **GPU Bone-Matrix `DataTexture` Instanced Character Renderer (`src/render/unitInstancer.ts`):**
+   - Bakes `idle`/`walk`/`attack` skeletal matrices into an `RGBA32F` `DataTexture` (`NearestFilter` + integer `textureLoad` — 100% WebGPU + WebGL2 core-spec compatible) and renders **160–200+ animated soldiers & villagers across BOTH Marchland Cobalt and Enemy Crimson factions in ≤ 12 draw calls total**, performing zero-extra-texture TSL Cobalt→Crimson heraldry swapping in the same instanced draw call.
+3. **Poly Haven CC0 Photogrammetry Nature, Artillery & Village Props:**
+   - Replaced procedural rocks, stumps, artillery, and yard props with 11 real Poly Haven CC0 photogrammetry scans (`rock_moss_set_01` ×2, `boulder_01`, `tree_stump_01`, `fern_02`, `cannon_01`, `wooden_crate_01`, `wooden_bucket_01`, `modular_wooden_pier`, plus `wine_barrel_01` and `brown_leather`/`medieval_wood` scans — all credited in `CREDITS.md`, Meshopt + KTX2, coarse R7 shadow proxies).
+4. **360° Museum-Craft Buildings & Ground-Footing / Foliage Shader Realism:**
+   - Upgraded 5 core buildings (`keep_l1`, `windmill_l1`, `bakery_l1`, `farm_l1`, `watchtower_l1`) to full 360° timber framing and airtight gables, and added 10 new village & campaign buildings (`chapel_l1`, `smithy_l1`, `barracks_l1`, `market_l1`, `well_l1`, `storehouse_l1`, `fisher_l1`, `camp_tent_l1`, `ruin_house`, and Mission 5's monumental 19 m `fortress_donzon`) — **all 19 building types with 0 embedded textures** sharing the 12-layer KTX2 BC7 surface arrays (`12.0 MB` VRAM).
+   - Added organic TSL ground-footing damp/moss weathering (`positionLocal.y < 0.95 m` + macro noise) on `buildingMaterial` (`src/render/surfaces.ts`) and warm sun-backlit foliage subsurface translucency on Oak, Scots Pine, Silver Birch, and Poly Haven woodland ferns (`src/render/worldBuilder.ts`) — zero extra textures or passes.
+   - Building LOD distances raised to `75 m / 155 m` (`stage5BuildingLod`) so half-timbering, chapel belfry posts, and watchtower galleries stay razor-sharp across normal RTS camera altitudes while dropping cleanly to coarse `LOD2` in strategic `overview`.
+

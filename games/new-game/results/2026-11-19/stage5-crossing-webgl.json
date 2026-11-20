@@ -1,0 +1,178 @@
+{
+  "loadS": 35.74,
+  "bootStats": {
+    "backend": "WebGL2",
+    "quality": "low",
+    "toneMapping": "aces",
+    "lighting": "lateAutumn",
+    "mapId": "crossing",
+    "anchorEv100": 13.709945380232497,
+    "preExposure": 0.00006218905472636816,
+    "drawCalls": 165,
+    "triangles": 930373,
+    "renderScale": 1,
+    "governorLevel": 0,
+    "simTimeS": 0.16666666666666666,
+    "paused": false,
+    "loadTotalS": 34.96339999999991,
+    "lods": {
+      "lod0": 36,
+      "lod1": 126,
+      "lod2": 264,
+      "impostor": 451
+    },
+    "shadows": {
+      "cascades": 2,
+      "maxFarM": 200,
+      "mapSizePx": 1024,
+      "fade": true,
+      "initialized": true
+    },
+    "worldMetrics": {
+      "mapId": "crossing",
+      "grassBlades": 19269,
+      "grassTriangles": 60489,
+      "treeCount": 480,
+      "rockCount": 135,
+      "fernCount": 209,
+      "buildingCount": 28,
+      "unitCount": 200,
+      "wallSegments": 32,
+      "reedClumps": 61,
+      "wheatClusters": 420
+    },
+    "benchResult": null
+  },
+  "shotStats": {
+    "showcase": {
+      "backend": "WebGL2",
+      "quality": "low",
+      "toneMapping": "aces",
+      "lighting": "lateAutumn",
+      "mapId": "crossing",
+      "anchorEv100": 13.709945380232497,
+      "preExposure": 0.00006218905472636816,
+      "drawCalls": 165,
+      "triangles": 930373,
+      "renderScale": 1,
+      "governorLevel": 0,
+      "simTimeS": 0.3,
+      "paused": false,
+      "loadTotalS": 34.96339999999991,
+      "lods": {
+        "lod0": 36,
+        "lod1": 126,
+        "lod2": 264,
+        "impostor": 451
+      },
+      "shadows": {
+        "cascades": 2,
+        "maxFarM": 200,
+        "mapSizePx": 1024,
+        "fade": true,
+        "initialized": true
+      },
+      "worldMetrics": {
+        "mapId": "crossing",
+        "grassBlades": 19269,
+        "grassTriangles": 60489,
+        "treeCount": 480,
+        "rockCount": 135,
+        "fernCount": 209,
+        "buildingCount": 28,
+        "unitCount": 200,
+        "wallSegments": 32,
+        "reedClumps": 61,
+        "wheatClusters": 420
+      },
+      "benchResult": null
+    },
+    "unit": {
+      "backend": "WebGL2",
+      "quality": "low",
+      "toneMapping": "aces",
+      "lighting": "lateAutumn",
+      "mapId": "crossing",
+      "anchorEv100": 13.709945380232497,
+      "preExposure": 0.00006218905472636816,
+      "drawCalls": 168,
+      "triangles": 1244157,
+      "renderScale": 1,
+      "governorLevel": 0,
+      "simTimeS": 0.7000000000000005,
+      "paused": false,
+      "loadTotalS": 34.96339999999991,
+      "lods": {
+        "lod0": 83,
+        "lod1": 111,
+        "lod2": 227,
+        "impostor": 456
+      },
+      "shadows": {
+        "cascades": 2,
+        "maxFarM": 200,
+        "mapSizePx": 1024,
+        "fade": true,
+        "initialized": true
+      },
+      "worldMetrics": {
+        "mapId": "crossing",
+        "grassBlades": 19269,
+        "grassTriangles": 60489,
+        "treeCount": 480,
+        "rockCount": 135,
+        "fernCount": 209,
+        "buildingCount": 28,
+        "unitCount": 200,
+        "wallSegments": 32,
+        "reedClumps": 61,
+        "wheatClusters": 420
+      },
+      "benchResult": null
+    },
+    "calibration": {
+      "backend": "WebGL2",
+      "quality": "low",
+      "toneMapping": "aces",
+      "lighting": "lateAutumn",
+      "mapId": "crossing",
+      "anchorEv100": 13.709945380232497,
+      "preExposure": 0.00006218905472636816,
+      "drawCalls": 167,
+      "triangles": 829185,
+      "renderScale": 1,
+      "governorLevel": 0,
+      "simTimeS": 1.0500000000000012,
+      "paused": false,
+      "loadTotalS": 34.96339999999991,
+      "lods": {
+        "lod0": 20,
+        "lod1": 59,
+        "lod2": 373,
+        "impostor": 425
+      },
+      "shadows": {
+        "cascades": 2,
+        "maxFarM": 200,
+        "mapSizePx": 1024,
+        "fade": true,
+        "initialized": true
+      },
+      "worldMetrics": {
+        "mapId": "crossing",
+        "grassBlades": 19269,
+        "grassTriangles": 60489,
+        "treeCount": 480,
+        "rockCount": 135,
+        "fernCount": 209,
+        "buildingCount": 28,
+        "unitCount": 200,
+        "wallSegments": 32,
+        "reedClumps": 61,
+        "wheatClusters": 420
+      },
+      "benchResult": null
+    }
+  },
+  "errors": []
+}

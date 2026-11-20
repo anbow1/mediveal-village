@@ -14,6 +14,7 @@ import {
   int,
   mix,
   normalMap,
+  positionLocal,
   positionWorld,
   round,
   sin,
@@ -125,14 +126,26 @@ function createBuildingSurfaceMaterial(
   // Multiply by Cycles-baked vertex AO & weathering tint (COLOR_0) + micro-AO from ORM.r.
   const vcol = vertexColor().rgb;
   const microAo = mix(float(0.76), float(1.0), ormSample.r);
-  mat.colorNode = clamp(baseAlb.mul(vcol).mul(microAo), vec3(0.015), vec3(0.82));
+
+  // Stage 5 architectural realism: organic damp soil & moss weathering along lower stone/timber footings
+  // (`positionLocal.y < 0.95 m`) modulated by world-space macro breakup — zero extra texture fetches!
+  const footNoise = sin(positionWorld.x.mul(1.35).add(sin(positionWorld.z.mul(1.15)).mul(1.6)))
+    .mul(sin(positionWorld.z.mul(1.48).sub(positionWorld.x.mul(0.92))))
+    .mul(0.5)
+    .add(0.5);
+  const footHeight = float(1.0).sub(smoothstep(float(-0.15), float(0.95), positionLocal.y.add(footNoise.mul(0.32))));
+  const dampMask = footHeight.mul(float(0.52).add(footNoise.mul(0.32))).mul(float(1.0).sub(ironMask));
+  const mossTint = mix(vec3(0.42, 0.40, 0.34), vec3(0.30, 0.36, 0.22), footNoise);
+  const weatheredAlb = mix(baseAlb, baseAlb.mul(mossTint), dampMask.mul(0.58));
+
+  mat.colorNode = clamp(weatheredAlb.mul(vcol).mul(microAo), vec3(0.015), vec3(0.82));
 
   // Normal map detail (slightly damped on forged iron so straps stay cleanly read).
   const normalStrength = mix(float(1.0), float(0.45), ironMask);
   mat.normalNode = normalMap(norSample, vec2(normalStrength, normalStrength));
 
-  // Physical roughness & metalness from ORM + forged iron flag.
-  const dielectricRough = clamp(ormSample.g, 0.42, 0.96);
+  // Physical roughness & metalness from ORM + forged iron flag (damp footings subtly tighten roughness).
+  const dielectricRough = mix(clamp(ormSample.g, 0.42, 0.96), float(0.68), dampMask.mul(0.35));
   mat.roughnessNode = mix(dielectricRough, float(0.44), ironMask);
   mat.metalnessNode = mix(clamp(ormSample.b, 0.0, 0.15), float(0.88), ironMask);
 

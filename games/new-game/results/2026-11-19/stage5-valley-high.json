@@ -1,0 +1,178 @@
+{
+  "loadS": 31.75,
+  "bootStats": {
+    "backend": "WebGPU",
+    "quality": "high",
+    "toneMapping": "aces",
+    "lighting": "lateAutumn",
+    "mapId": "valley",
+    "anchorEv100": 13.709945380232497,
+    "preExposure": 0.00006218905472636816,
+    "drawCalls": 130,
+    "triangles": 826237,
+    "renderScale": 1,
+    "governorLevel": 0,
+    "simTimeS": 0.13333333333333333,
+    "paused": false,
+    "loadTotalS": 31.068,
+    "lods": {
+      "lod0": 3,
+      "lod1": 45,
+      "lod2": 356,
+      "impostor": 419
+    },
+    "shadows": {
+      "cascades": 3,
+      "maxFarM": 320,
+      "mapSizePx": 2048,
+      "fade": true,
+      "initialized": true
+    },
+    "worldMetrics": {
+      "mapId": "valley",
+      "grassBlades": 40994,
+      "grassTriangles": 128994,
+      "treeCount": 460,
+      "rockCount": 160,
+      "fernCount": 190,
+      "buildingCount": 29,
+      "unitCount": 174,
+      "wallSegments": 0,
+      "reedClumps": 25,
+      "wheatClusters": 868
+    },
+    "benchResult": null
+  },
+  "shotStats": {
+    "showcase": {
+      "backend": "WebGPU",
+      "quality": "high",
+      "toneMapping": "aces",
+      "lighting": "lateAutumn",
+      "mapId": "valley",
+      "anchorEv100": 13.709945380232497,
+      "preExposure": 0.00006218905472636816,
+      "drawCalls": 130,
+      "triangles": 826237,
+      "renderScale": 1,
+      "governorLevel": 0,
+      "simTimeS": 0.2833333333333333,
+      "paused": false,
+      "loadTotalS": 31.068,
+      "lods": {
+        "lod0": 3,
+        "lod1": 45,
+        "lod2": 356,
+        "impostor": 419
+      },
+      "shadows": {
+        "cascades": 3,
+        "maxFarM": 320,
+        "mapSizePx": 2048,
+        "fade": true,
+        "initialized": true
+      },
+      "worldMetrics": {
+        "mapId": "valley",
+        "grassBlades": 40994,
+        "grassTriangles": 128994,
+        "treeCount": 460,
+        "rockCount": 160,
+        "fernCount": 190,
+        "buildingCount": 29,
+        "unitCount": 174,
+        "wallSegments": 0,
+        "reedClumps": 25,
+        "wheatClusters": 868
+      },
+      "benchResult": null
+    },
+    "close": {
+      "backend": "WebGPU",
+      "quality": "high",
+      "toneMapping": "aces",
+      "lighting": "lateAutumn",
+      "mapId": "valley",
+      "anchorEv100": 13.709945380232497,
+      "preExposure": 0.00006218905472636816,
+      "drawCalls": 131,
+      "triangles": 842947,
+      "renderScale": 1,
+      "governorLevel": 0,
+      "simTimeS": 0.8166666666666675,
+      "paused": false,
+      "loadTotalS": 31.068,
+      "lods": {
+        "lod0": 12,
+        "lod1": 51,
+        "lod2": 336,
+        "impostor": 424
+      },
+      "shadows": {
+        "cascades": 3,
+        "maxFarM": 320,
+        "mapSizePx": 2048,
+        "fade": true,
+        "initialized": true
+      },
+      "worldMetrics": {
+        "mapId": "valley",
+        "grassBlades": 40994,
+        "grassTriangles": 128994,
+        "treeCount": 460,
+        "rockCount": 160,
+        "fernCount": 190,
+        "buildingCount": 29,
+        "unitCount": 174,
+        "wallSegments": 0,
+        "reedClumps": 25,
+        "wheatClusters": 868
+      },
+      "benchResult": null
+    },
+    "overview": {
+      "backend": "WebGPU",
+      "quality": "high",
+      "toneMapping": "aces",
+      "lighting": "lateAutumn",
+      "mapId": "valley",
+      "anchorEv100": 13.709945380232497,
+      "preExposure": 0.00006218905472636816,
+      "drawCalls": 159,
+      "triangles": 744798,
+      "renderScale": 1,
+      "governorLevel": 0,
+      "simTimeS": 1.35,
+      "paused": false,
+      "loadTotalS": 31.068,
+      "lods": {
+        "lod0": 0,
+        "lod1": 0,
+        "lod2": 363,
+        "impostor": 460
+      },
+      "shadows": {
+        "cascades": 3,
+        "maxFarM": 320,
+        "mapSizePx": 2048,
+        "fade": true,
+        "initialized": true
+      },
+      "worldMetrics": {
+        "mapId": "valley",
+        "grassBlades": 40994,
+        "grassTriangles": 128994,
+        "treeCount": 460,
+        "rockCount": 160,
+        "fernCount": 190,
+        "buildingCount": 29,
+        "unitCount": 174,
+        "wallSegments": 0,
+        "reedClumps": 25,
+        "wheatClusters": 868
+      },
+      "benchResult": null
+    }
+  },
+  "errors": []
+}

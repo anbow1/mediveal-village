@@ -1,0 +1,47 @@
+{
+  "loadS": 15.273,
+  "stats": {
+    "backend": "WebGPU",
+    "quality": "low",
+    "toneMapping": "aces",
+    "lighting": "lateAutumn",
+    "mapId": "crossing",
+    "anchorEv100": 13.709945380232497,
+    "preExposure": 0.00006218905472636816,
+    "drawCalls": 165,
+    "triangles": 930373,
+    "renderScale": 1,
+    "governorLevel": 0,
+    "simTimeS": 0.13333333333333333,
+    "paused": false,
+    "loadTotalS": 14.335700000000186,
+    "lods": {
+      "lod0": 36,
+      "lod1": 126,
+      "lod2": 264,
+      "impostor": 451
+    },
+    "shadows": {
+      "cascades": 2,
+      "maxFarM": 200,
+      "mapSizePx": 1024,
+      "fade": true,
+      "initialized": true
+    },
+    "worldMetrics": {
+      "mapId": "crossing",
+      "grassBlades": 19269,
+      "grassTriangles": 60489,
+      "treeCount": 480,
+      "rockCount": 135,
+      "fernCount": 209,
+      "buildingCount": 28,
+      "unitCount": 200,
+      "wallSegments": 32,
+      "reedClumps": 61,
+      "wheatClusters": 420
+    },
+    "benchResult": null
+  },
+  "errors": []
+}

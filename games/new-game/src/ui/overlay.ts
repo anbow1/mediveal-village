@@ -2,7 +2,26 @@
 // Uses #ui, #hud, #stats so `tools/measure/shots.mjs` hides overlays cleanly by default.
 
 import type { LangCode, LightingPresetId, QualityPreset } from '../config.ts';
+import { ALL_MAP_IDS } from '../sim/maps.ts';
+import type { MapLayoutId } from '../sim/terrain.ts';
 import { qualityLabel, STRINGS, type Strings } from './strings.ts';
+
+const MAP_LABELS: Record<LangCode, Record<MapLayoutId, string>> = {
+  en: {
+    crossing: 'River Crossing (M1–M2)',
+    openField: 'Open Field',
+    forest: 'Ancient Forest',
+    valley: 'Mountain Valley (M3–M4)',
+    fortress: 'Citadel Fortress (M5)',
+  },
+  pl: {
+    crossing: 'Przeprawa (M1–M2)',
+    openField: 'Otwarte pole',
+    forest: 'Bór',
+    valley: 'Dolina (M3–M4)',
+    fortress: 'Twierdza (M5)',
+  },
+};
 
 export interface OverlayCallbacks {
   onStartPlay: () => void;
@@ -14,6 +33,7 @@ export interface OverlayCallbacks {
   onChangeLighting: (preset: LightingPresetId) => void;
   onToggleGovernor: (enabled: boolean) => void;
   onChangeQuality: (quality: QualityPreset) => void;
+  onChangeMap: (mapId: MapLayoutId) => void;
   onChangeLang: (lang: LangCode) => void;
 }
 
@@ -53,6 +73,7 @@ export class OverlayUi {
   private readonly hudEl: HTMLDivElement;
   private readonly pauseBadgeEl: HTMLSpanElement;
   private readonly pauseBtnEl: HTMLButtonElement;
+  private readonly mapBadgeEl: HTMLSpanElement;
   private readonly lightingBadgeEl: HTMLSpanElement;
   private readonly statsEl: HTMLPreElement;
   private readonly govBtnEl: HTMLButtonElement;
@@ -60,6 +81,7 @@ export class OverlayUi {
   private lang: LangCode;
   private quality: QualityPreset;
   private lighting: LightingPresetId;
+  private mapId: MapLayoutId;
   private governorEnabled = true;
   private totalLoadS = 0;
   private lastBenchText = '';
@@ -69,11 +91,13 @@ export class OverlayUi {
     initialLang: LangCode,
     initialQuality: QualityPreset,
     initialLighting: LightingPresetId,
+    initialMap: MapLayoutId,
     private readonly cb: OverlayCallbacks,
   ) {
     this.lang = initialLang;
     this.quality = initialQuality;
     this.lighting = initialLighting;
+    this.mapId = initialMap;
 
     // Loading screen with real byte progress bar
     this.loadingEl = document.createElement('div');
@@ -148,6 +172,8 @@ export class OverlayUi {
     this.pauseBtnEl = document.createElement('button');
     this.pauseBtnEl.className = 'hud-btn';
     this.pauseBtnEl.addEventListener('click', () => this.cb.onTogglePause());
+    this.mapBadgeEl = document.createElement('span');
+    this.mapBadgeEl.className = 'hud-chip';
     this.lightingBadgeEl = document.createElement('span');
     this.lightingBadgeEl.className = 'hud-chip';
 
@@ -170,7 +196,7 @@ export class OverlayUi {
     topBar.className = 'hud-top';
     const leftGroup = document.createElement('div');
     leftGroup.className = 'hud-group';
-    leftGroup.append(this.lightingBadgeEl, this.pauseBadgeEl);
+    leftGroup.append(this.mapBadgeEl, this.lightingBadgeEl, this.pauseBadgeEl);
     const rightGroup = document.createElement('div');
     rightGroup.className = 'hud-group';
     rightGroup.append(rotLeft, rotRight, this.pauseBtnEl, menuBtn);
@@ -315,12 +341,20 @@ export class OverlayUi {
 
   private rebuildMenus(): void {
     const s = this.str;
+    const mapLabel = MAP_LABELS[this.lang][this.mapId];
+    const mapPrefix = this.lang === 'pl' ? 'Mapa' : 'Map';
+    this.mapBadgeEl.textContent = mapLabel;
     this.lightingBadgeEl.textContent = s.lightingNames[this.lighting];
     const menuBtn = this.hudEl.querySelector<HTMLButtonElement>('[data-role="menuBtn"]');
     if (menuBtn) menuBtn.textContent = s.menuBtn;
     const hintEl = this.hudEl.querySelector<HTMLDivElement>('[data-role="hint"]');
     if (hintEl) hintEl.textContent = s.controlsHint;
     this.benchCopyBtn.textContent = s.copy;
+
+    const cycleMap = (): void => {
+      const idx = (ALL_MAP_IDS.indexOf(this.mapId) + 1) % ALL_MAP_IDS.length;
+      this.cb.onChangeMap(ALL_MAP_IDS[idx] ?? 'crossing');
+    };
 
     // Start menu DOM
     this.startMenuEl.innerHTML = '';
@@ -337,6 +371,11 @@ export class OverlayUi {
     playBtn.textContent = s.play;
     playBtn.addEventListener('click', () => this.cb.onStartPlay());
 
+    const startMapBtn = document.createElement('button');
+    startMapBtn.className = 'btn';
+    startMapBtn.textContent = `${mapPrefix}: ${mapLabel}`;
+    startMapBtn.addEventListener('click', cycleMap);
+
     const qBtn = document.createElement('button');
     qBtn.className = 'btn';
     qBtn.textContent = `${s.qualityLabel}: ${qualityLabel(s, this.quality)}`;
@@ -352,7 +391,7 @@ export class OverlayUi {
       this.cb.onChangeLang(this.lang === 'en' ? 'pl' : 'en');
     });
 
-    startPanel.append(h1, sub, playBtn, qBtn, langBtn);
+    startPanel.append(h1, sub, playBtn, startMapBtn, qBtn, langBtn);
     this.startMenuEl.appendChild(startPanel);
 
     // Pause menu DOM
@@ -366,6 +405,11 @@ export class OverlayUi {
     resumeBtn.className = 'btn btn-primary';
     resumeBtn.textContent = s.resume;
     resumeBtn.addEventListener('click', () => this.cb.onResume());
+
+    const pauseMapBtn = document.createElement('button');
+    pauseMapBtn.className = 'btn';
+    pauseMapBtn.textContent = `${mapPrefix}: ${mapLabel}`;
+    pauseMapBtn.addEventListener('click', cycleMap);
 
     const benchBtn = document.createElement('button');
     benchBtn.className = 'btn';
@@ -391,7 +435,7 @@ export class OverlayUi {
     pLangBtn.addEventListener('click', () => this.cb.onChangeLang(this.lang === 'en' ? 'pl' : 'en'));
 
     this.loadedLineEl.textContent = s.loadedIn(this.totalLoadS);
-    pausePanel.append(ph, resumeBtn, benchBtn, lightBtn, this.govBtnEl, pLangBtn, this.loadedLineEl);
+    pausePanel.append(ph, resumeBtn, pauseMapBtn, benchBtn, lightBtn, this.govBtnEl, pLangBtn, this.loadedLineEl);
     this.pauseMenuEl.appendChild(pausePanel);
   }
 }
