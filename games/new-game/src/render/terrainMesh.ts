@@ -200,12 +200,12 @@ function createTerrainMaterial(
   const litterNor = texture(normalArray, litterUv).depth(int(10)).rgb;
   const litterOrm = texture(ormArray, litterUv).depth(int(10));
 
-  // Natural early-autumn European meadow tint variation (rich olive pasture + warm golden hillside patches)
-  const hillDry = smoothstep(float(2.4), float(6.5), wp.y);
+  // Lush Central European meadow tint variation (verdant green valley pastures + warm sunlit autumn-gold ridges)
+  const hillDry = smoothstep(float(2.6), float(7.2), wp.y);
   const meadowTint = mix(
-    mix(vec3(0.76, 0.90, 0.66), vec3(1.04, 1.04, 0.74), macroA),
-    vec3(0.98, 0.94, 0.70),
-    hillDry.mul(0.42).add(macroFar.mul(0.18)),
+    mix(vec3(0.58, 0.98, 0.42), vec3(0.84, 1.04, 0.48), macroA),
+    vec3(0.94, 0.92, 0.50),
+    hillDry.mul(0.34).add(macroFar.mul(0.14)),
   );
   const grassCol = grassAlb.mul(meadowTint);
   // Dry topsoil is muted warm grey-brown (playbook §5.6 #8: never rust!)

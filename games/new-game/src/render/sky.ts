@@ -93,43 +93,42 @@ export function updatePhysicalSkyUniforms(
   const isGolden = presetId === 'goldenHour';
   const isAutumn = presetId === 'lateAutumn';
 
-  // Rayleigh zenith stays distinctly cerulean-blue on clear days, neutral bright daylight in overcast
-  // (GUIDE.md §2b: never lilac or muddy grey zenith).
-  const zenithR = isOvercast ? 0.6 : isGolden ? 0.12 : isAutumn ? 0.13 : 0.12;
-  const zenithG = isOvercast ? 0.63 : isGolden ? 0.27 : isAutumn ? 0.34 : 0.36;
-  const zenithB = isOvercast ? 0.67 : isGolden ? 0.62 : isAutumn ? 0.78 : 0.88;
-  const zenithGain = isOvercast ? 1.55 : isGolden ? 1.75 : 2.15;
+  // Rayleigh zenith stays distinctly rich cerulean-blue on clear/autumn days, deep twilight indigo at sunset,
+  // and crisp cool slate-blue in overcast (never washed-out beige or lilac).
+  const zenithR = isOvercast ? 0.52 : isGolden ? 0.08 : isAutumn ? 0.08 : 0.07;
+  const zenithG = isOvercast ? 0.59 : isGolden ? 0.21 : isAutumn ? 0.30 : 0.34;
+  const zenithB = isOvercast ? 0.71 : isGolden ? 0.66 : isAutumn ? 0.86 : 0.96;
+  const zenithGain = isOvercast ? 1.48 : isGolden ? 1.85 : 2.25;
   u.uZenithColor.value.setRGB(
     zenithR * skyLum * zenithGain,
     zenithG * skyLum * zenithGain,
     zenithB * skyLum * zenithGain,
   );
 
-  // Horizon blends Rayleigh scatter with solar warm haze so dome, fog, and water share one exact hue.
-  const hazeMix = isGolden ? 0.68 : isAutumn ? 0.38 : isOvercast ? 0.14 : 0.2;
-  const horizonGain = isOvercast ? 1.62 : isGolden ? 2.15 : 2.3;
+  // Horizon blends Rayleigh scatter with solar warm haze so dome, fog, and water share one crisp hue without milky washout.
+  const hazeMix = isGolden ? 0.76 : isAutumn ? 0.40 : isOvercast ? 0.12 : 0.18;
+  const horizonGain = isOvercast ? 1.46 : isGolden ? 2.0 : 1.98;
   const hzR = (skyRgb.r * (1 - hazeMix) + sunRgb.r * hazeMix) * skyLum * horizonGain;
   const hzG = (skyRgb.g * (1 - hazeMix) + sunRgb.g * hazeMix) * skyLum * horizonGain;
   const hzB = (skyRgb.b * (1 - hazeMix) + sunRgb.b * hazeMix) * skyLum * horizonGain;
   u.uHorizonColor.value.setRGB(hzR, hzG, hzB);
 
-  // Anti-solar horizon stays slightly cooler & calmer opposite the sun (natural sunset sky gradient).
-  const antiMix = isGolden ? 0.22 : isOvercast ? 0.12 : 0.1;
-  const antiGain = isOvercast ? 1.58 : isGolden ? 1.55 : 2.05;
+  // Anti-solar horizon stays distinctly cooler azure opposite the sun (natural sunset/autumn sky contrast).
+  const antiMix = isGolden ? 0.18 : isOvercast ? 0.10 : 0.08;
+  const antiGain = isOvercast ? 1.42 : isGolden ? 1.45 : 1.85;
   u.uAntiSolarHorizon.value.setRGB(
     (skyRgb.r * (1 - antiMix) + sunRgb.r * antiMix) * skyLum * antiGain,
     (skyRgb.g * (1 - antiMix) + sunRgb.g * antiMix) * skyLum * antiGain,
     (skyRgb.b * (1 - antiMix) + sunRgb.b * antiMix) * skyLum * antiGain,
   );
 
-  // Physically lit warm soil / meadow ground bounce for the lower hemisphere of the PMREM probe.
-  // L_ground = (albedo / pi) * (sunLux * sinElev + skyLux) * preExposure.
+  // Physically lit living meadow / warm soil ground bounce for the lower hemisphere of the PMREM probe.
   const sinElev = Math.max(0.12, sunDirection.y);
   const bounceGain = ((config.groundBounceFactor / 0.24) * preExposure) / Math.PI;
   const directHoriz = config.sunIlluminanceLux * sinElev;
-  const gR = (directHoriz * sunRgb.r + config.skyIlluminanceLux * skyRgb.r) * bounceGain * 0.31;
-  const gG = (directHoriz * sunRgb.g + config.skyIlluminanceLux * skyRgb.g) * bounceGain * 0.26;
-  const gB = (directHoriz * sunRgb.b + config.skyIlluminanceLux * skyRgb.b) * bounceGain * 0.18;
+  const gR = (directHoriz * sunRgb.r + config.skyIlluminanceLux * skyRgb.r) * bounceGain * 0.29;
+  const gG = (directHoriz * sunRgb.g + config.skyIlluminanceLux * skyRgb.g) * bounceGain * 0.29;
+  const gB = (directHoriz * sunRgb.b + config.skyIlluminanceLux * skyRgb.b) * bounceGain * 0.17;
   u.uGroundBounceColor.value.setRGB(gR, gG, gB);
 
   // Solar forward-scatter glow & cloud lighting colours in pre-exposed linear HDR units.

@@ -20,6 +20,7 @@ import {
   Loop,
   clamp,
   convertToTexture,
+  dot,
   float,
   int,
   ivec2,
@@ -31,6 +32,7 @@ import {
   pass,
   renderOutput,
   screenUV,
+  smoothstep,
   uniform,
   vec2,
   vec3,
@@ -162,7 +164,18 @@ export class RenderStage {
       const amp = clamp(min(mn, vec3(1.0).sub(mx)).div(max(mx, vec3(0.001))), 0.0, 1.0);
       const localAvg = n.add(s).add(e).add(w).mul(0.25);
       const sharpened = clamp(c.add(c.sub(localAvg).mul(amp).mul(this.uSharpenStrength.mul(1.8))), 0.0, 1.0);
-      return vec4(mix(c, sharpened, clamp(this.uSharpenStrength.mul(4.0), 0.0, 1.0)), float(1.0));
+      const baseCol = mix(c, sharpened, clamp(this.uSharpenStrength.mul(4.0), 0.0, 1.0));
+
+      // Neutral-preserving photographic vibrance recovers ACES Filmic mid-tone chroma loss
+      // uniformly across all 4 lighting scenarios without clipping highlights or shifting 18% grey.
+      const lum = dot(baseCol, vec3(0.2126, 0.7152, 0.0722));
+      const maxCh = max(baseCol.r, max(baseCol.g, baseCol.b));
+      const minCh = min(baseCol.r, min(baseCol.g, baseCol.b));
+      const chroma = maxCh.sub(minCh);
+      const satGain = float(1.22).add(float(0.32).mul(float(1.0).sub(chroma)));
+      const vivid = clamp(vec3(lum).add(baseCol.sub(vec3(lum)).mul(satGain)), 0.0, 1.0);
+      const graded = mix(vivid, smoothstep(vec3(0.0), vec3(1.0), vivid), float(0.14));
+      return vec4(graded, float(1.0));
     });
 
     this.pipeline = new RenderPipeline(renderer, casSharpen());

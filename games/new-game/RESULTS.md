@@ -2,6 +2,26 @@
 
 > Newest entries first (`GUIDE.md` §1, §6). Every measurement includes date, commit, exact method (script, preset, view, alternating before/after runs), Before | After table (pipelines, draw calls / triangles, texture memory, ready / GPU idle, build size), screenshot comparison crops in `games/new-game/results/<date>/`, and the decision + number behind it. Reverted attempts are logged too.
 
+## 2026-11-20 · Stage 6.1 — Boosted Colour Vibrancy & Atmospheric Clarity Across All 4 Lighting Scenarios (base `fe7eb17`, pushed to `main`)
+
+- **Measured how:** Production build (`vite build --base ./`, `4.66 s`, `31 MB`) served via `tools/measure/serve.mjs dist 4173`. Verified via `npx tsc --noEmit`, `npx vitest run` (`13` files / `54/54` tests in `22.8 s`), and headless Chrome WebGPU High (`verify_vibrancy.mjs`, `960×540`) across all 4 lighting scenarios (`clearNoon`, `lateAutumn`, `goldenHour`, `overcast`), village HUD view, 18% grey calibration cube, and runtime pipeline tracer (`newPipelines: []`, `0` errors).
+- **What changed:**
+  - `src/render/stage.ts`: Added neutral-preserving photographic vibrance (`satGain = 1.22 + 0.32 * (1 - chroma)`) and subtle highlight-safe S-curve (`mix(vivid, smoothstep(0, 1, vivid), 0.14)`) inside the existing CAS pass (`0` extra passes/pipelines) to recover ACES Filmic mid-tone chroma loss without clipping highlights or tinting 18% grey.
+  - `src/config.ts` & `src/render/sky.ts`: Reduced haze washout (`fogDensityPerM` tightened across all 4 presets), deepened Rayleigh zenith cerulean/indigo/slate blues, enriched sun/sky Kelvin separation (`clearNoon` 5400/11200 K, `lateAutumn` 4200/9400 K, `goldenHour` 3000/9800 K, `overcast` 5800/7600 K), and shifted PMREM ground bounce toward living meadow green.
+  - `src/render/terrainMesh.ts`, `src/render/grassField.ts`, `src/render/lakeWater.ts`: Shifted meadow turf & 3D Bézier grass blades from pale dusty khaki to verdant Central European pasture green with sunlit golden upland patches, and enriched deep river/lake Beer-Lambert scatter toward fresh blue-teal.
+- **Before | After colour & runtime metrics (WebGPU High `960×540`):**
+
+| Metric | Before (`fe7eb17`) | After (Boosted Vibrancy) | Notes |
+|---|---|---|---|
+| Village HUD `meanChroma` (R/G/B spread) | `30.1` | **`43.5` (+44.5%)** | Richer meadows, warm thatch/timber & sky without oversaturation |
+| Tone floor & ceiling (`p05` / `p99`, village HUD) | `33.0 / 189.0` | **`30.8 / 186.9`** | Deeper shadow grounding, **0 clipped highlights** (never 255) |
+| All 4 scenarios (`p05` / `p99` / `meanChroma`) | Muted haze | **`clearNoon` `22.2 / 149.7 / 72.3` · `lateAutumn` `46.2 / 184.8 / 66.2` · `goldenHour` `61.7 / 211.0 / 60.2` · `overcast` `74.0 / 221.0 / 45.5`** | Every scenario distinct, vivid, and readable; 18% grey cube stays neutral |
+| Pipelines / Draw calls / Errors | `149 / 0 new` · `222` · `0` | **`149 / 0 new` · `227` · `0`** | Zero extra render passes, zero new pipelines, zero console errors |
+
+- **Comparison crops (`games/new-game/results/2026-11-20/`):**
+  - `stage6-vibrancy-before-after.jpg` (Before vs After village HUD side-by-side).
+  - `stage6-all-4-scenarios-vivid.jpg` (2×2 grid: `Clear Noon`, `Late Autumn`, `Golden Hour`, `Overcast`).
+
 ## 2026-11-20 · Stage 6 — Deterministic 60 Hz RTS Simulation, Live GPU Motion & VFX, Positional Web Audio & Full Bilingual HUD (base `8b77076`, pushed to `main`)
 
 - **Measured how:** Production build (`vite build --base ./`, `31 MB` total, `420 KB` JS gzip) served via `tools/measure/serve.mjs dist 4173`.

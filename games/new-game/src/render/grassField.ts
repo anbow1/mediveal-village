@@ -341,15 +341,15 @@ export function buildGrassField(
     // Shading normal blended mostly straight up so field shades coherently with terrain (playbook §5.6 #5)
     mat.normalNode = normalize(vec3(faceDirX.mul(0.26), float(0.95), faceDirZ.mul(0.26)));
 
-    // Ground-matched early-autumn meadow palette (matches Poly Haven turf albedo so zero dark speckles!)
+    // Ground-matched verdant European meadow palette (lush green base & sunlit emerald-gold tips)
     const macroCol = sin(rootXZ.x.mul(0.043).add(sin(rootXZ.y.mul(0.039)).mul(2.1)))
       .mul(sin(rootXZ.y.mul(0.051).sub(rootXZ.x.mul(0.034))))
       .mul(0.5)
       .add(0.5);
-    const rootTint = vec3(0.125, 0.145, 0.062);
-    const tipGreen = mix(vec3(0.23, 0.28, 0.105), vec3(0.32, 0.31, 0.115), macroCol);
-    const tipDry = vec3(0.37, 0.32, 0.145);
-    const bladeTip = mix(tipGreen, tipDry, clamp(aBlade.w.sub(0.82).mul(0.9), float(0.0), float(0.58)));
+    const rootTint = vec3(0.085, 0.165, 0.045);
+    const tipGreen = mix(vec3(0.16, 0.33, 0.075), vec3(0.26, 0.36, 0.085), macroCol);
+    const tipDry = vec3(0.35, 0.33, 0.105);
+    const bladeTip = mix(tipGreen, tipDry, clamp(aBlade.w.sub(0.84).mul(0.85), float(0.0), float(0.45)));
     const shadeCanopy = mix(float(1.0), float(0.68), canopyW);
     const bladeCol = mix(rootTint, bladeTip, sqrt(clamp(t, float(0.0), float(1.0)))).mul(shadeCanopy);
     mat.colorNode = bladeCol;

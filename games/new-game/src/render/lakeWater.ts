@@ -155,10 +155,10 @@ export function buildLakeWater(
   const specBroad = pow(clamp(dot(N, H), 0.0, 1.0), float(30.0)).mul(skyUniforms.uMieStrength).mul(0.28);
   const reflection = skyRefl.add(skyUniforms.uSunGlowColor.mul(specTight.add(specBroad)));
 
-  // Beer-Lambert depth absorption over sandy-silt bed (shallow warm gravel fords -> deep olive-teal water)
+  // Beer-Lambert depth absorption over sandy-silt bed (shallow warm gravel fords -> fresh deep blue-teal water)
   const bounceRgb = skyUniforms.uGroundBounceColor.rgb;
-  const shallowBed = bounceRgb.mul(vec3(0.68, 0.62, 0.44));
-  const deepScatter = bounceRgb.mul(vec3(0.11, 0.22, 0.19));
+  const shallowBed = bounceRgb.mul(vec3(0.66, 0.62, 0.44));
+  const deepScatter = bounceRgb.mul(vec3(0.07, 0.25, 0.34));
   const absorbR = exp(safeDepth.mul(-2.2));
   const absorbG = exp(safeDepth.mul(-1.15));
   const absorbB = exp(safeDepth.mul(-1.35));
