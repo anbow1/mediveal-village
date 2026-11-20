@@ -218,17 +218,12 @@ export class SimEngine {
     };
     state.nextEntityId = state.trees.length + 10;
 
-    // Seed stone & iron ore outcrops behind each Keep and on flanks (docs/ECONOMY.md §6)
     const [pkx, pkz] = this.layout.playerKeepXZ;
     const [ekx, ekz] = this.layout.enemyCenterXZ;
-    state.outcrops.push(
-      { kind: 'stone', x: pkx - 28, z: pkz + 32 },
-      { kind: 'ore', x: pkx - 32, z: pkz - 34 },
-      { kind: 'stone', x: ekx + 28, z: ekz - 32 },
-      { kind: 'ore', x: ekx + 32, z: ekz + 34 },
-      { kind: 'stone', x: 0, z: -110 },
-      { kind: 'ore', x: 0, z: 110 },
-    );
+    // Seed stone & iron ore outcrops directly from shared MapLayoutSpec so 3D rock clusters, minimap & Quarry/Mine placement match 100%
+    for (const o of this.layout.outcrops) {
+      state.outcrops.push({ kind: o.kind, x: o.x, z: o.z });
+    }
 
     const addCompletedBuilding = (
       side: SideId,

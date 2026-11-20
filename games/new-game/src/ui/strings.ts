@@ -89,6 +89,12 @@ export interface Strings {
   readonly hpLabel: string;
   readonly residentsLabel: string;
   readonly upgradeBtn: string;
+  readonly upgradeMaxLevel: (lvl: number) => string;
+  readonly upgradeNeedsKeep: (lvl: number) => string;
+  readonly upgradeMissing: (missingList: string) => string;
+  readonly upgradeWaitBuild: (pct: number) => string;
+  readonly upgradeInProgress: (targetLvl: number, pct: number) => string;
+  readonly sawmillHint: string;
   readonly demolishBtn: string;
   readonly rebuildRuinBtn: string;
   readonly pauseShopBtn: string;
@@ -235,8 +241,14 @@ const EN: Strings = {
   hpLabel: 'HP',
   residentsLabel: 'Residents',
   upgradeBtn: 'Upgrade',
+  upgradeMaxLevel: (lvl) => `Max level reached (L${lvl})`,
+  upgradeNeedsKeep: (lvl) => `Cannot upgrade: requires Keep L${lvl} first`,
+  upgradeMissing: (list) => `Missing resources: ${list}`,
+  upgradeWaitBuild: (pct) => `Finish construction (${pct}%) to upgrade`,
+  upgradeInProgress: (lvl, pct) => `Upgrading → L${lvl} (${pct}%)`,
+  sawmillHint: 'Sawmill',
   demolishBtn: 'Demolish (50%)',
-  rebuildRuinBtn: 'Rebuild (50% cost)',
+  rebuildRuinBtn: 'Rebuild (50%)',
   pauseShopBtn: 'Pause',
   resumeShopBtn: 'Resume',
   marketSell: 'Sell 10',
@@ -428,7 +440,7 @@ const EN: Strings = {
     buildWoodcutter: '1. Place a Woodcutter near forest trees',
     buildFarmAndHouse: '2. Build a Farm and a House for townsfolk',
     buildMillAndBakery: '3. Build a Windmill and Bakery for bread',
-    buildQuarry: '4. Build a Quarry next to a stone outcrop',
+    buildQuarry: '4. Build a Quarry beside a pale grey Stone Outcrop (◇ on minimap)',
     recruitMilitia: '5. Recruit a Militia regiment from the Keep',
     moveRegiment: '6. Select your regiment and right-click to march',
     buildBarracks: '7. Construct a Barracks to unlock trained troops',
@@ -530,8 +542,14 @@ const PL: Strings = {
   hpLabel: 'PZ',
   residentsLabel: 'Mieszkańcy',
   upgradeBtn: 'Ulepsz',
+  upgradeMaxLevel: (lvl) => `Maksymalny poziom (P${lvl})`,
+  upgradeNeedsKeep: (lvl) => `Nie można ulepszyć: wymaga Grodu Poz. ${lvl}`,
+  upgradeMissing: (list) => `Brakuje surowców: ${list}`,
+  upgradeWaitBuild: (pct) => `Dokończ budowę (${pct}%), aby ulepszyć`,
+  upgradeInProgress: (lvl, pct) => `Trwa ulepszanie → P${lvl} (${pct}%)`,
+  sawmillHint: 'Tartak',
   demolishBtn: 'Wyburz (50%)',
-  rebuildRuinBtn: 'Odbuduj (50% ceny)',
+  rebuildRuinBtn: 'Odbuduj (50%)',
   pauseShopBtn: 'Wstrzymaj',
   resumeShopBtn: 'Wznów',
   marketSell: 'Sprzedaj 10',
@@ -723,7 +741,7 @@ const PL: Strings = {
     buildWoodcutter: '1. Postaw Drwala obok lasu',
     buildFarmAndHouse: '2. Zbuduj Gospodarstwo i Dom dla osadników',
     buildMillAndBakery: '3. Postaw Młyn i Piekarnię do wypieku chleba',
-    buildQuarry: '4. Postaw Kamieniołom przy złożu skał',
+    buildQuarry: '4. Postaw Kamieniołom przy jasnoszarych skałach kamienia (◇ na minimapie)',
     recruitMilitia: '5. Zrekrutuj Pospolite ruszenie w Grodzie',
     moveRegiment: '6. Zaznacz oddział i wyślij go PPM w marsz',
     buildBarracks: '7. Zbuduj Koszary dla wyszkolonego wojska',

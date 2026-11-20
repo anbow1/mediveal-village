@@ -14,6 +14,8 @@
 import {
   BoxGeometry,
   BufferGeometry,
+  Color,
+  DodecahedronGeometry,
   DoubleSide,
   Float32BufferAttribute,
   Group,
@@ -31,6 +33,7 @@ import {
   type Scene,
   type Texture,
 } from 'three/webgpu';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import {
   cameraPosition,
   clamp,
@@ -800,15 +803,16 @@ export async function buildStage5World(
   for (const road of layout.roads) {
     groundWorks.stampRoadPolyline(road, 2.0, 1.8);
   }
-  for (const b of layout.buildings) {
-    groundWorks.stampYard(b.x, b.z, b.yardRx, b.yardRz, 0.90);
-  }
   for (const fs of layout.farmStrips) {
     groundWorks.stampFarmStrip(fs.cx, fs.cz, fs.lenM, fs.widM, fs.yawRad);
   }
   for (const tr of layout.trees) {
-    const crownR = tr.species === 'oak' ? 4.4 : tr.species === 'pine' ? 3.2 : 3.4;
-    groundWorks.stampTreeCanopy(tr.x, tr.z, crownR * tr.scale, 0.62);
+    const crownR = tr.species === 'oak' ? 5.0 : tr.species === 'pine' ? 3.8 : 4.0;
+    groundWorks.stampTreeCanopy(tr.x, tr.z, crownR * tr.scale, 0.78);
+  }
+  // Stamp clear rocky gravel pads under all Stone & Iron Ore outcrops so deposits pop visually on meadows!
+  for (const oc of layout.outcrops) {
+    groundWorks.stampYard(oc.x, oc.z, 7.5, 7.5, 0.76);
   }
   // Keep calibration plinth cleanly surrounded by short grass/clear pad
   groundWorks.stampYard(layout.calibrationXZ[0], layout.calibrationXZ[1], 3.8, 3.8, 0.35);
@@ -1196,6 +1200,93 @@ export async function buildStage5World(
     );
   }
 
+  const staticInstancedMeshes: InstancedMesh[] = [];
+
+  // 6b. Unmistakable 3D Stone & Iron Ore Outcrops (1 single InstancedMesh, sharp cleft quarry rock, 0 extra textures!)
+  if (layout.outcrops.length > 0) {
+    const parts: BufferGeometry[] = [];
+    const specs: readonly [number, number, number, number, number, number, number, number][] = [
+      [0.0, 1.35, 0.0, 2.5, 2.15, 2.0, 0.25, 0.14],
+      [-2.1, 0.95, 0.75, 1.9, 1.45, 1.6, 1.05, -0.18],
+      [2.15, 1.05, -0.65, 2.0, 1.6, 1.65, 2.15, 0.12],
+      [0.45, 0.72, 2.05, 1.8, 1.15, 1.45, 0.85, -0.1],
+      [-1.25, 0.68, -1.95, 1.65, 1.1, 1.5, 2.55, 0.15],
+      [2.85, 0.52, 1.45, 1.35, 0.85, 1.25, 1.55, -0.12],
+      [-2.95, 0.48, -0.85, 1.25, 0.82, 1.2, 0.55, 0.1],
+    ];
+    for (const [tx, ty, tz, sx, sy, sz, ry, rx] of specs) {
+      // Detail 0 -> crisp angular quarried rock facets (never smooth snowballs!)
+      const g = new DodecahedronGeometry(1.0, 0);
+      g.scale(sx, sy, sz);
+      g.rotateX(rx);
+      g.rotateY(ry);
+      g.translate(tx, ty, tz);
+      const nonIdx = g.index ? g.toNonIndexed() : g;
+      nonIdx.computeVertexNormals();
+      parts.push(nonIdx);
+      if (nonIdx !== g) g.dispose();
+    }
+    const outcropGeo = mergeGeometries(parts, false)!;
+    for (const p of parts) p.dispose();
+    disposableGeos.push(outcropGeo);
+
+    const outcropMat = new MeshStandardNodeMaterial({ color: 0xffffff, roughness: 0.90, metalness: 0.12 });
+    outcropMat.name = 'MarchlandOutcropMat';
+    disposableMats.push(outcropMat);
+
+    // 2 layered angular clusters per outcrop (weathered base + cleft granite/iron-vein crown)
+    const totalInstances = layout.outcrops.length * 2;
+    const outcropMesh = new InstancedMesh(outcropGeo, outcropMat, totalInstances);
+    outcropMesh.name = 'MarchlandOutcrops';
+    outcropMesh.castShadow = true;
+    outcropMesh.receiveShadow = true;
+    outcropMesh.frustumCulled = false;
+    markStaticInstances(outcropMesh);
+
+    const colStoneBase = new Color(0x7c838a);
+    const colStoneCrown = new Color(0xa5acb3);
+    const colOreBase = new Color(0x3c4148);
+    const colOreVein = new Color(0xb85e27);
+    let cursor = 0;
+    layout.outcrops.forEach((o, i) => {
+      const y = terrain.heightAt(o.x, o.z) - 0.18;
+      const yaw = (i * 1.9 + 0.3) % (Math.PI * 2);
+      if (o.kind === 'stone') {
+        TEMP_POS.set(o.x, y, o.z);
+        TEMP_QUAT.setFromAxisAngle(UP_AXIS, yaw);
+        TEMP_SCALE.set(1.12, 0.96, 1.12);
+        outcropMesh.setMatrixAt(cursor, TEMP_MAT.compose(TEMP_POS, TEMP_QUAT, TEMP_SCALE));
+        outcropMesh.setColorAt(cursor, colStoneBase);
+        cursor++;
+
+        TEMP_POS.set(o.x + 0.25, y + 0.55, o.z - 0.2);
+        TEMP_QUAT.setFromAxisAngle(UP_AXIS, yaw + 1.35);
+        TEMP_SCALE.set(0.76, 1.05, 0.72);
+        outcropMesh.setMatrixAt(cursor, TEMP_MAT.compose(TEMP_POS, TEMP_QUAT, TEMP_SCALE));
+        outcropMesh.setColorAt(cursor, colStoneCrown);
+        cursor++;
+      } else {
+        TEMP_POS.set(o.x, y, o.z);
+        TEMP_QUAT.setFromAxisAngle(UP_AXIS, yaw);
+        TEMP_SCALE.set(1.08, 1.12, 1.08);
+        outcropMesh.setMatrixAt(cursor, TEMP_MAT.compose(TEMP_POS, TEMP_QUAT, TEMP_SCALE));
+        outcropMesh.setColorAt(cursor, colOreBase);
+        cursor++;
+
+        TEMP_POS.set(o.x + 0.15, y + 1.38, o.z - 0.1);
+        TEMP_QUAT.setFromAxisAngle(UP_AXIS, yaw + 1.1);
+        TEMP_SCALE.set(0.48, 0.58, 0.48);
+        outcropMesh.setMatrixAt(cursor, TEMP_MAT.compose(TEMP_POS, TEMP_QUAT, TEMP_SCALE));
+        outcropMesh.setColorAt(cursor, colOreVein);
+        cursor++;
+      }
+    });
+    outcropMesh.instanceMatrix.needsUpdate = true;
+    if (outcropMesh.instanceColor) outcropMesh.instanceColor.needsUpdate = true;
+    scene.add(outcropMesh);
+    staticInstancedMeshes.push(outcropMesh);
+  }
+
   // 7. Poly Haven CC0 Siege Field Cannons (multi-LOD instanced!)
   if (cannonTpl) {
     const cannonList = layout.props.filter((p) => p.kind === 'cannon');
@@ -1223,7 +1314,6 @@ export async function buildStage5World(
   }
 
   // 8. Static 1-Draw-Call Batched Props & Forest Ferns (Poly Haven CC0 ferns, crates, buckets, pier, stumps, barrels, carts!)
-  const staticInstancedMeshes: InstancedMesh[] = [];
   const addStaticBatch = (
     name: string,
     sourceRoot: Object3D,

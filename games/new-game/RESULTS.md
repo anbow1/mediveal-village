@@ -2,6 +2,20 @@
 
 > Newest entries first (`GUIDE.md` §1, §6). Every measurement includes date, commit, exact method (script, preset, view, alternating before/after runs), Before | After table (pipelines, draw calls / triangles, texture memory, ready / GPU idle, build size), screenshot comparison crops in `games/new-game/results/<date>/`, and the decision + number behind it. Reverted attempts are logged too.
 
+## 2026-11-20 · Stage 6.2 — Visible 3D Stone & Iron Ore Outcrops, Dense Interlocking Forests (920–1,450 Trees) & Upgrade Cost / Blocking-Reason Inspector (base `1cc94d0`, pushed to `main`)
+
+- **Measured how:** Production build (`vite build --base ./`, `4.25 s`) served via `tools/measure/serve.mjs dist 4173`. Verified via `npx tsc --noEmit` (0 errors), `npx vitest run` (`13` files / `54/54` tests in `24.15 s`), and headless Chrome WebGPU High (`verify_playtest_fixes.mjs`, `960×540`, Tutorial mode PL) inspecting Stone Outcrop + Quarry 15 m highlight ring, Keep Upgrade Cost & Missing-Resources Inspector, Dense Interlocking Forests, Minimap `◇` outcrop icons, and runtime pipeline tracer (`newPipelines: []`, `0` errors).
+- **Before | After table (WebGPU High `960×540`, Crossing / Tutorial):**
+
+| Metric | Before (`1cc94d0`) | After (Playtest Fixes) | Notes |
+|---|---|---|---|
+| Stone & Iron Ore Outcrops | Invisible coordinates in `SimEngine` only | **6 shared dry outcrops per map (`MapLayoutSpec.outcrops`), sharp cleft 3D rock clusters (1 `InstancedMesh`), minimap `◇` icons, pulsing 15 m Quarry/Mine highlight rings** | `0` extra texture VRAM, `+1` draw call |
+| Forest density (`crossing` / `forest` / all 5 maps) | `420–540` scattered trees (`5.3 m` spacing) | **`920–1,450` trees (`1,050` Crossing, `1,450` Forest), `94%` dense interlocking groves (`3.45 m` trunk spacing, `O(1)` spatial hash)** | Real thick medieval woods + darker canopy litter & clear minimap groves |
+| Draw calls / Triangles / New Pipelines (Tutorial live) | `227` · `0.971 M` · `0` new | **`171` · `1.020 M` (`1,050` trees!) · `0` new · `0` errors** | Well under `≤ 500` calls & `≤ 12 M` tris |
+| Building Upgrade UX (`hud.ts`, `commands.ts`) | `"Upgrade → L2"` only (no cost, silent fail) | **Full localized cost on button + disabled state + exact blocking reason (`Requires Keep L2`, `Missing: 80 Stone`, `Planks (Sawmill)` hint, progress %)** | Single shared `inspectBuildingUpgrade()` validator |
+
+- **Verification strip (`games/new-game/results/2026-11-20/`):** `stage6-playtest-fixes.jpg`.
+
 ## 2026-11-20 · Stage 6.1 — Boosted Colour Vibrancy & Atmospheric Clarity Across All 4 Lighting Scenarios (base `fe7eb17`, pushed to `main`)
 
 - **Measured how:** Production build (`vite build --base ./`, `4.66 s`, `31 MB`) served via `tools/measure/serve.mjs dist 4173`. Verified via `npx tsc --noEmit`, `npx vitest run` (`13` files / `54/54` tests in `22.8 s`), and headless Chrome WebGPU High (`verify_vibrancy.mjs`, `960×540`) across all 4 lighting scenarios (`clearNoon`, `lateAutumn`, `goldenHour`, `overcast`), village HUD view, 18% grey calibration cube, and runtime pipeline tracer (`newPipelines: []`, `0` errors).

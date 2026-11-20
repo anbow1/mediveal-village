@@ -658,6 +658,29 @@ export function buildCombatFx(scene: Scene): CombatFxHandles {
         ringMesh.setMatrixAt(ringCount, TEMP_MAT);
         ringMesh.setColorAt(ringCount, col);
         ringCount++;
+
+        // When placing a Quarry or Iron Mine, pulse bright 15 m build-radius rings around EVERY matching deposit!
+        const wantKind =
+          placementGhost.buildingType === 'quarry'
+            ? 'stone'
+            : placementGhost.buildingType === 'ironMine'
+              ? 'ore'
+              : null;
+        if (wantKind) {
+          const pulse = 1.0 + Math.sin(animClockS * 4.2) * 0.035;
+          const reqDist = BUILDING_DEFS[placementGhost.buildingType!].terrainReqDistM ?? 15;
+          COL_TMP.setHex(wantKind === 'stone' ? 0xd8ecff : 0xf09543);
+          for (const oc of state.outcrops) {
+            if (oc.kind !== wantKind || ringCount >= 128) continue;
+            TEMP_POS.set(oc.x, heightAt(oc.x, oc.z) + 0.22, oc.z);
+            TEMP_QUAT.identity();
+            TEMP_SCALE.set(reqDist * pulse, 1, reqDist * pulse);
+            TEMP_MAT.compose(TEMP_POS, TEMP_QUAT, TEMP_SCALE);
+            ringMesh.setMatrixAt(ringCount, TEMP_MAT);
+            ringMesh.setColorAt(ringCount, COL_TMP);
+            ringCount++;
+          }
+        }
       }
     }
 

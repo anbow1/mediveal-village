@@ -103,6 +103,12 @@ export interface CapturePointSpec {
   readonly z: number;
 }
 
+export interface ResourceOutcropSpec {
+  readonly kind: 'stone' | 'ore';
+  readonly x: number;
+  readonly z: number;
+}
+
 export interface UnitPlacementSpec {
   readonly archetype: 'swordsman' | 'archer' | 'citizen';
   readonly team: 0 | 1;
@@ -130,6 +136,7 @@ export interface MapLayoutSpec {
   readonly farmStrips: readonly FarmStripSpec[];
   readonly roads: readonly (readonly (readonly [number, number])[])[];
   readonly capturePoints: readonly CapturePointSpec[];
+  readonly outcrops: readonly ResourceOutcropSpec[];
   readonly trees: readonly TreeSpec[];
   readonly rocks: readonly RockSpec[];
   readonly ferns: readonly FernSpec[];
@@ -316,13 +323,16 @@ function appendPlayerTown(
 }
 
 /**
- * Generates deterministic trees, photogrammetry mossy rocks/boulders, and forest ferns across the
- * whole 560 x 560 m map while strictly respecting settlements, water, roads, farms, and M5 plateau!
+ * Generates deterministic visible stone/ore outcrops, dense interlocking woodland groves,
+ * mossy boulders, and forest ferns across the whole 560 x 560 m map while strictly respecting
+ * settlements, water, roads, farms, outcrops, and Mission 5's bare fortress plateau.
  */
 function scatterNatureAcrossWorld(
   terrain: TerrainField,
   layout: {
     readonly id: MapLayoutId;
+    readonly playerKeepXZ: readonly [number, number];
+    readonly enemyCenterXZ: readonly [number, number];
     readonly buildings: readonly BuildingPlacementSpec[];
     readonly farmStrips: readonly FarmStripSpec[];
     readonly roads: readonly (readonly (readonly [number, number])[])[];
@@ -332,7 +342,8 @@ function scatterNatureAcrossWorld(
   targetRocks: number,
   targetFerns: number,
   rng: () => number,
-): { trees: TreeSpec[]; rocks: RockSpec[]; ferns: FernSpec[] } {
+): { outcrops: ResourceOutcropSpec[]; trees: TreeSpec[]; rocks: RockSpec[]; ferns: FernSpec[] } {
+  const outcrops: ResourceOutcropSpec[] = [];
   const trees: TreeSpec[] = [];
   const rocks: RockSpec[] = [];
   const ferns: FernSpec[] = [];
@@ -353,25 +364,72 @@ function scatterNatureAcrossWorld(
     return false;
   };
 
+  // 1. Place 6 guaranteed, clear, dry-land Stone & Iron Ore outcrops (shared by 3D renderer, minimap & SimEngine!)
+  const findDryOutcropSpot = (idealX: number, idealZ: number): [number, number] => {
+    const isGood = (x: number, z: number): boolean => {
+      if (Math.abs(x) > 235 || Math.abs(z) > 235) return false;
+      if (terrain.heightAt(x, z) < 0.45 || terrain.slopeAt(x, z) > 0.24) return false;
+      if (fp && Math.hypot(x - fp.cx, z - fp.cz) < fp.flatRadiusM + 10) return false;
+      if (Math.hypot(x - layout.calibrationXZ[0], z - layout.calibrationXZ[1]) < 14) return false;
+      if (isNearRoad(x, z, 7.5)) return false;
+      for (const b of layout.buildings) {
+        if (Math.hypot(x - b.x, z - b.z) < Math.max(b.yardRx, b.yardRz) + 9.0) return false;
+      }
+      for (const fs of layout.farmStrips) {
+        if (Math.hypot(x - fs.cx, z - fs.cz) < Math.max(fs.lenM, fs.widM) * 0.6 + 7.0) return false;
+      }
+      for (const o of outcrops) {
+        if (Math.hypot(x - o.x, z - o.z) < 26) return false;
+      }
+      return true;
+    };
+    if (isGood(idealX, idealZ)) return [idealX, idealZ];
+    for (let r = 6; r <= 72; r += 6) {
+      for (let a = 0; a < 16; a++) {
+        const ang = (a / 16) * Math.PI * 2;
+        const cx = idealX + Math.cos(ang) * r;
+        const cz = idealZ + Math.sin(ang) * r;
+        if (isGood(cx, cz)) return [Math.round(cx), Math.round(cz)];
+      }
+    }
+    return [idealX, idealZ];
+  };
+
+  const [pkx, pkz] = layout.playerKeepXZ;
+  const [ekx, ekz] = layout.enemyCenterXZ;
+  const desiredOutcrops: readonly { kind: 'stone' | 'ore'; x: number; z: number }[] = [
+    { kind: 'stone', x: pkx - 28, z: pkz + 32 },
+    { kind: 'ore', x: pkx - 32, z: pkz - 34 },
+    { kind: 'stone', x: ekx + 28, z: ekz - 32 },
+    { kind: 'ore', x: ekx + 32, z: ekz + 34 },
+    { kind: 'stone', x: 0, z: -110 },
+    { kind: 'ore', x: 0, z: 110 },
+  ];
+  for (const d of desiredOutcrops) {
+    const [ox, oz] = findDryOutcropSpot(d.x, d.z);
+    outcrops.push({ kind: d.kind, x: ox, z: oz });
+  }
+
   const isBlockedForTree = (x: number, z: number): boolean => {
-    // Keep strictly inside map margin
     if (Math.abs(x) > 258 || Math.abs(z) > 258) return true;
-    // Keep calibration plinth clear
     if (Math.hypot(x - layout.calibrationXZ[0], z - layout.calibrationXZ[1]) < 14) return true;
     // Mission 5 rule: ZERO forest on the 100 m fortress plateau!
     if (fp && Math.hypot(x - fp.cx, z - fp.cz) < fp.flatRadiusM + 18) return true;
-    // Stay strictly on dry bank (>= 0.42 m above water) and avoid near-vertical cliff faces
     const h = terrain.heightAt(x, z);
     if (h < 0.45) return true;
-    if (terrain.slopeAt(x, z) > 0.24) return true;
-    if (isNearRoad(x, z, 7.2)) return true;
+    if (terrain.slopeAt(x, z) > 0.25) return true;
+    if (isNearRoad(x, z, 6.8)) return true;
+    for (const o of outcrops) {
+      // Keep Stone & Iron Ore outcrops in crisp open clearings so players always spot them!
+      if (Math.hypot(x - o.x, z - o.z) < 12.0) return true;
+    }
     for (const b of layout.buildings) {
-      if (Math.hypot(x - b.x, z - b.z) < Math.max(b.yardRx, b.yardRz) + 6.5) return true;
+      if (Math.hypot(x - b.x, z - b.z) < Math.max(b.yardRx, b.yardRz) + 6.2) return true;
     }
     for (const fs of layout.farmStrips) {
-      if (Math.hypot(x - fs.cx, z - fs.cz) < Math.max(fs.lenM, fs.widM) * 0.65 + 5.0) return true;
+      if (Math.hypot(x - fs.cx, z - fs.cz) < Math.max(fs.lenM, fs.widM) * 0.65 + 4.8) return true;
     }
-    // Keep central battlefield corridor relatively open on Crossing & OpenField for clean tactical sightlines
+    // Keep central battlefield corridor open for clear tactical sightlines
     if (layout.id === 'crossing' && x > -22 && x < 72 && Math.abs(z) < 42) return true;
     if (layout.id === 'openField' && Math.abs(x) < 75 && Math.abs(z) < 55) return true;
     if (layout.id === 'valley' && Math.abs(z) < 48 && x > -105 && x < 165) return true;
@@ -379,63 +437,91 @@ function scatterNatureAcrossWorld(
     return false;
   };
 
-  // Place organic clustered groves across the 560 x 560 m countryside
-  const groveCenters: [number, number, 'oak' | 'pine' | 'birch'][] = [];
+  // 2. Dense, interlocking medieval woodland groves (O(1) spatial hash prevents overlapping trunks!)
   const speciesCycle: readonly ('oak' | 'pine' | 'birch')[] = ['oak', 'pine', 'birch'];
-  const groveCount = layout.id === 'forest' ? 46 : 34;
-  for (let g = 0; g < groveCount; g++) {
-    const gx = (rng() - 0.5) * 480;
-    const gz = (rng() - 0.5) * 480;
-    groveCenters.push([gx, gz, speciesCycle[g % 3]!]);
+  const groveCenters: [number, number, 'oak' | 'pine' | 'birch', number][] = [
+    // Guaranteed thick timber woods near Player & Enemy towns for minute-1 Woodcutter / Tutorial!
+    [pkx - 42, pkz - 12, 'oak', 26],
+    [pkx + 14, pkz - 52, 'birch', 24],
+    [ekx + 42, ekz + 12, 'oak', 26],
+    [ekx - 14, ekz + 52, 'pine', 24],
+  ];
+  const extraGroves = layout.id === 'forest' ? 24 : 16;
+  for (let g = 0; g < extraGroves; g++) {
+    const gx = (rng() - 0.5) * 465;
+    const gz = (rng() - 0.5) * 465;
+    const rad = (layout.id === 'forest' ? 30 : 25) + rng() * 14;
+    groveCenters.push([gx, gz, speciesCycle[g % 3]!, rad]);
   }
 
+  // 4 m spatial grid for O(1) trunk clearance checks (>= 3.45 m spacing -> lush interlocking canopies!)
+  const minTrunkDistSq = 3.45 * 3.45;
+  const gridMap = new Map<number, TreeSpec[]>();
+  const cellKey = (cx: number, cz: number): number => ((cx + 512) << 12) | (cz + 512);
+  const hasNearbyTrunk = (x: number, z: number): boolean => {
+    const cx = Math.floor(x / 4);
+    const cz = Math.floor(z / 4);
+    for (let dz = -1; dz <= 1; dz++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const bucket = gridMap.get(cellKey(cx + dx, cz + dz));
+        if (!bucket) continue;
+        for (const t of bucket) {
+          const ex = t.x - x;
+          const ez = t.z - z;
+          if (ex * ex + ez * ez < minTrunkDistSq) return true;
+        }
+      }
+    }
+    return false;
+  };
+  const registerTree = (t: TreeSpec): void => {
+    trees.push(t);
+    const k = cellKey(Math.floor(t.x / 4), Math.floor(t.z / 4));
+    const bucket = gridMap.get(k);
+    if (bucket) bucket.push(t);
+    else gridMap.set(k, [t]);
+  };
+
   let attempts = 0;
-  while (trees.length < targetTrees && attempts < targetTrees * 14) {
+  const maxAttempts = targetTrees * 18;
+  while (trees.length < targetTrees && attempts < maxAttempts) {
     attempts++;
-    const useGrove = rng() < 0.76;
+    const useGrove = rng() < 0.94;
     let x: number;
     let z: number;
     let preferred: 'oak' | 'pine' | 'birch';
     if (useGrove) {
       const gr = groveCenters[Math.floor(rng() * groveCenters.length)]!;
-      const rad = Math.sqrt(rng()) * (layout.id === 'forest' ? 38 : 32);
+      // Dense core clustering (pow 0.72) creates true thick woodland interiors with organic tapered edges
+      const rad = Math.pow(rng(), 0.72) * gr[3];
       const ang = rng() * Math.PI * 2;
       x = gr[0] + Math.cos(ang) * rad;
       z = gr[1] + Math.sin(ang) * rad;
-      preferred = rng() < 0.72 ? gr[2] : speciesCycle[Math.floor(rng() * 3)]!;
+      preferred = rng() < 0.76 ? gr[2] : speciesCycle[Math.floor(rng() * 3)]!;
     } else {
-      x = (rng() - 0.5) * 500;
-      z = (rng() - 0.5) * 500;
+      x = (rng() - 0.5) * 490;
+      z = (rng() - 0.5) * 490;
       preferred = speciesCycle[Math.floor(rng() * 3)]!;
     }
 
     if (isBlockedForTree(x, z)) continue;
-    // Maintain organic canopy spacing (>= 5.4 m)
-    let tooClose = false;
-    for (let i = Math.max(0, trees.length - 85); i < trees.length; i++) {
-      const t = trees[i]!;
-      if ((t.x - x) * (t.x - x) + (t.z - z) * (t.z - z) < 28.0) {
-        tooClose = true;
-        break;
-      }
-    }
-    if (tooClose) continue;
+    if (hasNearbyTrunk(x, z)) continue;
 
     // Highland slopes favor Scots Pine; riverside favors Silver Birch & Oak
     const h = terrain.heightAt(x, z);
     const sp: 'oak' | 'pine' | 'birch' =
-      h > 6.5 ? 'pine' : h < 1.35 && rng() < 0.55 ? 'birch' : preferred;
+      h > 6.5 ? 'pine' : h < 1.35 && rng() < 0.52 ? 'birch' : preferred;
 
-    trees.push({
+    registerTree({
       species: sp,
       x,
       z,
       yawRad: rng() * Math.PI * 2,
-      scale: 0.84 + rng() * 0.42,
+      scale: 0.90 + rng() * 0.48,
     });
   }
 
-  // Scatter Poly Haven CC0 photogrammetry mossy boulders & rock outcrops along slopes, riverbanks & groves
+  // 3. Scatter Poly Haven CC0 photogrammetry mossy boulders & rocks along slopes, riverbanks & groves
   const rockKinds: readonly ('rock_moss_a' | 'rock_moss_b' | 'boulder')[] = [
     'rock_moss_a',
     'rock_moss_b',
@@ -451,7 +537,6 @@ function scatterNatureAcrossWorld(
     if (isNearRoad(x, z, 6.0)) continue;
     const h = terrain.heightAt(x, z);
     const sl = terrain.slopeAt(x, z);
-    // Favor steeper hillsides, rocky banks near water, or scattered woodland boulders
     const scenicSite = sl > 0.055 || (h > 0.12 && h < 1.05) || rng() < 0.22;
     if (!scenicSite || h < -0.10) continue;
     let clear = true;
@@ -471,13 +556,14 @@ function scatterNatureAcrossWorld(
     });
   }
 
-  // Scatter Poly Haven CC0 forest ferns tucked naturally near tree trunks & shaded banks
+  // 4. Scatter Poly Haven CC0 forest ferns tucked naturally near tree trunks & shaded woodland undergrowth
   for (let i = 0; i < targetFerns && trees.length > 0; i++) {
     const host = trees[Math.floor(rng() * trees.length)]!;
     const a = rng() * Math.PI * 2;
-    const r = 1.6 + rng() * 4.4;
+    const r = 1.4 + rng() * 3.8;
     const fx = host.x + Math.cos(a) * r;
     const fz = host.z + Math.sin(a) * r;
+    if (Math.abs(fx) > 258 || Math.abs(fz) > 258) continue;
     if (terrain.heightAt(fx, fz) < 0.25) continue;
     if (isNearRoad(fx, fz, 4.5)) continue;
     ferns.push({
@@ -488,7 +574,7 @@ function scatterNatureAcrossWorld(
     });
   }
 
-  return { trees, rocks, ferns };
+  return { outcrops, trees, rocks, ferns };
 }
 
 // ==============================================================================
@@ -602,10 +688,10 @@ function buildCrossingMap(): MapLayoutSpec {
   const calibrationXZ: readonly [number, number] = [-52, 68];
   const nature = scatterNatureAcrossWorld(
     terrain,
-    { id: 'crossing', buildings, farmStrips, roads, calibrationXZ },
-    480,
+    { id: 'crossing', playerKeepXZ: [-82, -4], enemyCenterXZ: [104, 6], buildings, farmStrips, roads, calibrationXZ },
+    1050,
     135,
-    210,
+    380,
     rng,
   );
 
@@ -690,10 +776,10 @@ function buildOpenFieldMap(): MapLayoutSpec {
   const calibrationXZ: readonly [number, number] = [-70, 58];
   const nature = scatterNatureAcrossWorld(
     terrain,
-    { id: 'openField', buildings, farmStrips, roads, calibrationXZ },
-    420,
+    { id: 'openField', playerKeepXZ: [-134, -4], enemyCenterXZ: [136, -2], buildings, farmStrips, roads, calibrationXZ },
+    920,
     115,
-    180,
+    340,
     rng,
   );
 
@@ -769,10 +855,10 @@ function buildForestMap(): MapLayoutSpec {
   const calibrationXZ: readonly [number, number] = [-58, 54];
   const nature = scatterNatureAcrossWorld(
     terrain,
-    { id: 'forest', buildings, farmStrips, roads, calibrationXZ },
-    540,
+    { id: 'forest', playerKeepXZ: [-126, -16], enemyCenterXZ: [112, 16], buildings, farmStrips, roads, calibrationXZ },
+    1450,
     145,
-    240,
+    480,
     rng,
   );
 
@@ -876,10 +962,10 @@ function buildValleyMap(): MapLayoutSpec {
   const calibrationXZ: readonly [number, number] = [-92, 66];
   const nature = scatterNatureAcrossWorld(
     terrain,
-    { id: 'valley', buildings, farmStrips, roads, calibrationXZ },
-    460,
+    { id: 'valley', playerKeepXZ: [-156, -4], enemyCenterXZ: [118, 0], buildings, farmStrips, roads, calibrationXZ },
+    1150,
     160,
-    190,
+    400,
     rng,
   );
 
@@ -1085,10 +1171,10 @@ function buildFortressMap(): MapLayoutSpec {
   const calibrationXZ: readonly [number, number] = [-78, 162];
   const nature = scatterNatureAcrossWorld(
     terrain,
-    { id: 'fortress', buildings, farmStrips, roads, calibrationXZ },
-    440,
+    { id: 'fortress', playerKeepXZ: [0, 174], enemyCenterXZ: [fcx, fcz], buildings, farmStrips, roads, calibrationXZ },
+    1050,
     155,
-    185,
+    380,
     rng,
   );
 

@@ -20,6 +20,7 @@ import {
 } from '../config.ts';
 import type { PlacementTool } from '../app/input.ts';
 import { countAliveSoldiers, countSideArmyMen, getArmyCap } from '../sim/combat.ts';
+import { inspectBuildingUpgrade } from '../sim/commands.ts';
 import { computeProductionRates, countFoodRationsInStock, countPopulation, listBottlenecks } from '../sim/economy.ts';
 import { ALL_MAP_IDS } from '../sim/maps.ts';
 import type { TerrainField, MapLayoutId } from '../sim/terrain.ts';
@@ -422,16 +423,22 @@ export class GameHud {
       }
     }
 
-    // Stamp mature forests gently onto base bitmap
+    // Stamp dense mature forests clearly onto minimap base bitmap
     for (const tr of state.trees) {
       if (tr.state !== 'mature') continue;
       const px = Math.floor(((tr.x / WORLD.sizeM) + 0.5) * w);
       const py = Math.floor(((tr.z / WORLD.sizeM) + 0.5) * h);
-      if (px < 0 || px >= w || py < 0 || py >= h) continue;
-      const idx = (py * w + px) * 4;
-      d[idx + 0] = Math.round(d[idx + 0]! * 0.65);
-      d[idx + 1] = Math.round(d[idx + 1]! * 0.78);
-      d[idx + 2] = Math.round(d[idx + 2]! * 0.62);
+      for (let oy = 0; oy <= 1; oy++) {
+        for (let ox = 0; ox <= 1; ox++) {
+          const tx = px + ox;
+          const ty = py + oy;
+          if (tx < 0 || tx >= w || ty < 0 || ty >= h) continue;
+          const idx = (ty * w + tx) * 4;
+          d[idx + 0] = Math.round(d[idx + 0]! * 0.52);
+          d[idx + 1] = Math.round(d[idx + 1]! * 0.72);
+          d[idx + 2] = Math.round(d[idx + 2]! * 0.48);
+        }
+      }
     }
 
     this.minimapBase = img;
@@ -461,6 +468,24 @@ export class GameHud {
       ctx.lineTo(toPx(rd.x1), toPy(rd.z1));
     }
     ctx.stroke();
+
+    // Stone (pale silver-grey diamond) & Iron Ore (rust-copper diamond) resource outcrops
+    for (const oc of state.outcrops) {
+      const ox = toPx(oc.x);
+      const oy = toPy(oc.z);
+      const r = 4.2;
+      ctx.beginPath();
+      ctx.moveTo(ox, oy - r);
+      ctx.lineTo(ox + r, oy);
+      ctx.lineTo(ox, oy + r);
+      ctx.lineTo(ox - r, oy);
+      ctx.closePath();
+      ctx.fillStyle = oc.kind === 'stone' ? '#e4e8ec' : '#e0803a';
+      ctx.fill();
+      ctx.strokeStyle = '#181613';
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+    }
 
     // Walls
     ctx.fillStyle = '#c8c3b8';
@@ -1160,21 +1185,81 @@ export class GameHud {
       if (b.side === 0) {
         const actRow = document.createElement('div');
         actRow.className = 'insp-actions';
+        let upgradeNoteText = '';
+        let upgradeNoteWarn = false;
+
+        const formatGoodList = (map: ResourceMap, includeSawmillHint = false): string => {
+          const hasSawmill = state.buildings.some(
+            (x) => x.side === 0 && x.type === 'sawmill' && x.hp > 0 && x.buildProgress >= 1,
+          );
+          const parts: string[] = [];
+          for (const g of Object.keys(map) as GoodId[]) {
+            const amt = map[g] ?? 0;
+            if (amt <= 0) continue;
+            const hint = includeSawmillHint && g === 'planks' && !hasSawmill ? ` (${s.sawmillHint})` : '';
+            parts.push(`${amt} ${s.goods[g]}${hint}`);
+          }
+          return parts.join(', ');
+        };
 
         if (b.type === 'ruin') {
+          const base = BUILDING_DEFS.house.cost;
+          const rCost: ResourceMap = {};
+          const rMissing: ResourceMap = {};
+          const stock = state.sides[0].stock;
+          for (const g of Object.keys(base) as GoodId[]) {
+            const req = Math.ceil((base[g] ?? 0) * 0.5);
+            if (req > 0) {
+              rCost[g] = req;
+              const have = Math.floor(stock[g] ?? 0);
+              if (req > have) rMissing[g] = req - have;
+            }
+          }
+          const canRebuild = Object.keys(rMissing).length === 0;
           const rb = document.createElement('button');
-          rb.className = 'insp-btn btn-primary';
-          rb.textContent = s.rebuildRuinBtn;
+          rb.className = `insp-btn ${canRebuild ? 'btn-primary' : 'disabled'}`;
+          rb.disabled = !canRebuild;
+          rb.textContent = `${s.rebuildRuinBtn} · ${formatGoodList(rCost)}`;
           rb.addEventListener('click', () => this.cb.onExecute({ type: 'rebuildRuin', side: 0, buildingId: b.id }));
           actRow.appendChild(rb);
-        } else {
-          if (b.buildProgress >= 1 && b.level < def.maxLevel && b.upgradingToLevel === null) {
-            const up = document.createElement('button');
-            up.className = 'insp-btn btn-primary';
-            up.textContent = `${s.upgradeBtn} → L${b.level + 1}`;
-            up.addEventListener('click', () => this.cb.onExecute({ type: 'upgradeBuilding', side: 0, buildingId: b.id }));
-            actRow.appendChild(up);
+          if (!canRebuild) {
+            upgradeNoteText = `⚠ ${s.upgradeMissing(formatGoodList(rMissing))}`;
+            upgradeNoteWarn = true;
           }
+        } else {
+          const uCheck = inspectBuildingUpgrade(state, 0, b);
+          if (def.maxLevel > 1) {
+            if (uCheck.reason === 'maxLevel') {
+              upgradeNoteText = `✓ ${s.upgradeMaxLevel(b.level)}`;
+            } else if (uCheck.reason === 'alreadyUpgrading' && b.upgradingToLevel !== null) {
+              const targetDur =
+                b.type === 'keep'
+                  ? ECONOMY.keepLevels[b.upgradingToLevel - 1]!.upgradeS
+                  : ECONOMY.upgradeBuilderS;
+              const pct = Math.min(99, Math.round((b.upgradeTimerS / Math.max(1, targetDur)) * 100));
+              upgradeNoteText = `⏳ ${s.upgradeInProgress(b.upgradingToLevel, pct)}`;
+            } else if (uCheck.targetLevel !== null) {
+              const costStr = formatGoodList(uCheck.cost);
+              const up = document.createElement('button');
+              up.className = `insp-btn ${uCheck.canUpgrade ? 'btn-primary' : 'disabled'}`;
+              up.disabled = !uCheck.canUpgrade;
+              up.textContent = `${s.upgradeBtn} → ${s.levelLabel}${uCheck.targetLevel} (${costStr})`;
+              up.addEventListener('click', () => this.cb.onExecute({ type: 'upgradeBuilding', side: 0, buildingId: b.id }));
+              actRow.appendChild(up);
+
+              if (!uCheck.canUpgrade) {
+                upgradeNoteWarn = true;
+                if (uCheck.reason === 'constructing') {
+                  upgradeNoteText = `⚠ ${s.upgradeWaitBuild(Math.round(b.buildProgress * 100))}`;
+                } else if (uCheck.reason === 'needsKeepUpgrade') {
+                  upgradeNoteText = `⚠ ${s.upgradeNeedsKeep(uCheck.requiredKeepLevel ?? uCheck.targetLevel)}`;
+                } else if (uCheck.reason === 'insufficientResources') {
+                  upgradeNoteText = `⚠ ${s.upgradeMissing(formatGoodList(uCheck.missing, true))}`;
+                }
+              }
+            }
+          }
+
           if (b.type !== 'keep' && b.buildProgress >= 1) {
             const ps = document.createElement('button');
             ps.className = 'insp-btn';
@@ -1191,6 +1276,13 @@ export class GameHud {
           }
         }
         this.inspectorEl.appendChild(actRow);
+
+        if (upgradeNoteText) {
+          const note = document.createElement('div');
+          note.className = `insp-upgrade-note ${upgradeNoteWarn ? 'warn' : ''}`;
+          note.textContent = upgradeNoteText;
+          this.inspectorEl.appendChild(note);
+        }
 
         // Market 10-lot trade bar when Market is selected!
         if (b.type === 'market' && b.buildProgress >= 1) {

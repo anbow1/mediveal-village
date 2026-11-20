@@ -73,6 +73,65 @@ export function computeUpgradeCost(b: BuildingEntity, targetLevel: 2 | 3): Resou
   return out;
 }
 
+export interface UpgradeCheck {
+  readonly canUpgrade: boolean;
+  readonly targetLevel: 2 | 3 | null;
+  readonly cost: ResourceMap;
+  readonly missing: ResourceMap;
+  readonly reason: 'ok' | 'maxLevel' | 'constructing' | 'alreadyUpgrading' | 'needsKeepUpgrade' | 'insufficientResources';
+  readonly requiredKeepLevel?: number;
+}
+
+/** Evaluates upgrade cost, exact resource shortfalls, and blocking reasons for UI & command dispatch. */
+export function inspectBuildingUpgrade(
+  state: SimWorldState,
+  side: SideId,
+  b: BuildingEntity,
+): UpgradeCheck {
+  const def = BUILDING_DEFS[b.type];
+  if (b.level >= def.maxLevel) {
+    return { canUpgrade: false, targetLevel: null, cost: {}, missing: {}, reason: 'maxLevel' };
+  }
+  const targetLvl = (b.level + 1) as 2 | 3;
+  const cost = computeUpgradeCost(b, targetLvl);
+  const stock = state.sides[side].stock;
+  const missing: ResourceMap = {};
+  let hasMissing = false;
+  for (const g of Object.keys(cost) as GoodId[]) {
+    const req = cost[g] ?? 0;
+    const have = Math.floor(stock[g] ?? 0);
+    if (req > have) {
+      missing[g] = req - have;
+      hasMissing = true;
+    }
+  }
+
+  if (b.buildProgress < 1) {
+    return { canUpgrade: false, targetLevel: targetLvl, cost, missing, reason: 'constructing' };
+  }
+  if (b.upgradingToLevel !== null) {
+    return { canUpgrade: false, targetLevel: targetLvl, cost, missing, reason: 'alreadyUpgrading' };
+  }
+  if (b.type === 'barracks') {
+    const keep = findKeep(state, side);
+    const maxBar = keep ? ECONOMY.keepLevels[keep.level - 1]!.maxBarracksLevel : 1;
+    if (targetLvl > maxBar) {
+      return {
+        canUpgrade: false,
+        targetLevel: targetLvl,
+        cost,
+        missing,
+        reason: 'needsKeepUpgrade',
+        requiredKeepLevel: targetLvl,
+      };
+    }
+  }
+  if (hasMissing) {
+    return { canUpgrade: false, targetLevel: targetLvl, cost, missing, reason: 'insufficientResources' };
+  }
+  return { canUpgrade: true, targetLevel: targetLvl, cost, missing: {}, reason: 'ok' };
+}
+
 /**
  * Validates free building placement against every rule in `docs/ECONOMY.md` §7 & `docs/BUILDINGS.md`:
  *   - Map bounds, dry non-water, non-impassable mountain/ridge, max ground rise <= 2.2 m
@@ -256,21 +315,19 @@ export function executeCommand(
 
     case 'upgradeBuilding': {
       const b = state.buildings.find((x) => x.id === cmd.buildingId && x.side === cmd.side && x.hp > 0);
-      if (!b || b.buildProgress < 1 || b.upgradingToLevel !== null) return { ok: false, reason: 'invalidBuilding' };
-      const def = BUILDING_DEFS[b.type];
-      if (b.level >= def.maxLevel) return { ok: false, reason: 'maxLevel' };
-
-      const targetLvl = (b.level + 1) as 2 | 3;
-      // Barracks level cannot exceed Keep level (docs/BUILDINGS.md)
-      if (b.type === 'barracks') {
-        const keep = findKeep(state, cmd.side);
-        const maxBar = keep ? ECONOMY.keepLevels[keep.level - 1]!.maxBarracksLevel : 1;
-        if (targetLvl > maxBar) return { ok: false, reason: 'needsKeepUpgrade' };
+      if (!b) return { ok: false, reason: 'invalidBuilding' };
+      const check = inspectBuildingUpgrade(state, cmd.side, b);
+      if (!check.canUpgrade || !check.targetLevel) {
+        return {
+          ok: false,
+          reason:
+            check.reason === 'maxLevel' || check.reason === 'needsKeepUpgrade' || check.reason === 'insufficientResources'
+              ? check.reason
+              : 'invalidBuilding',
+        };
       }
-
-      const cost = computeUpgradeCost(b, targetLvl);
-      if ((sideState.stock.gold ?? 0) < (cost.gold ?? 0)) return { ok: false, reason: 'insufficientResources' };
-      if (b.type === 'keep' && !hasResources(sideState.stock, cost)) return { ok: false, reason: 'insufficientResources' };
+      const targetLvl = check.targetLevel;
+      const cost = check.cost;
 
       if (b.type === 'keep') {
         spendAllResources(sideState.stock, cost);
