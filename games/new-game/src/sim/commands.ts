@@ -346,6 +346,15 @@ export function executeCommand(
       b.upgradingToLevel = targetLvl;
       b.upgradeTimerS = 0;
       b.status = 'upgrading';
+      // Release workshop worker during upgrade so they help carry materials / build (docs/MANUAL.md §7.5)
+      for (const c of state.citizens) {
+        if (c.role === 'worker' && c.assignedBuildingId === b.id) {
+          c.role = 'carrier';
+          c.assignedBuildingId = null;
+          c.workPhase = 'atShop';
+        }
+      }
+      state.visualRevision++;
       return { ok: true, reason: 'ok' };
     }
 
@@ -441,17 +450,21 @@ export function executeCommand(
     }
 
     case 'placeWall': {
-      const dist = Math.hypot(cmd.x1 - cmd.x0, cmd.z1 - cmd.z0);
-      if (dist < 2.0) return { ok: false, reason: 'tooShort' };
-      const segs = Math.max(1, Math.round(dist / ECONOMY.wallSegmentLenM));
-      const stoneCost = Math.ceil((dist / 10) * ECONOMY.wallStonePer10M);
+      const dx = cmd.x1 - cmd.x0;
+      const dz = cmd.z1 - cmd.z0;
+      const dist = Math.hypot(dx, dz);
+      if (dist < 1.8) return { ok: false, reason: 'tooShort' };
+      // Space 2.08 m wall segments at <= 1.80 m centers so adjacent segments overlap by >= 0.28 m with zero gaps!
+      const segs = Math.max(1, Math.ceil(dist / 1.80));
+      const stoneCost = Math.max(1, Math.ceil((dist / 10) * ECONOMY.wallStonePer10M));
       if (sideState.stock.stone < stoneCost) return { ok: false, reason: 'insufficientResources' };
       const enemyKeep = findKeep(state, cmd.side === 0 ? 1 : 0);
-      const yaw = Math.atan2(cmd.x1 - cmd.x0, cmd.z1 - cmd.z0);
+      // `wall_segment` runs along its local X axis (2.08 m wide in X, 1.55 m thick in Z), so align local X with (dx, dz)!
+      const yaw = Math.atan2(-dz, dx);
       for (let i = 0; i < segs; i++) {
-        const t = (i + 0.5) / segs;
-        const wx = cmd.x0 + (cmd.x1 - cmd.x0) * t;
-        const wz = cmd.z0 + (cmd.z1 - cmd.z0) * t;
+        const t = segs === 1 ? 0.5 : (i + 0.5) / segs;
+        const wx = cmd.x0 + dx * t;
+        const wz = cmd.z0 + dz * t;
         if (terrain.waterDepthAt(wx, wz) > 0.1 || terrain.isImpassable(wx, wz)) {
           return { ok: false, reason: 'blocked' };
         }
@@ -461,12 +474,12 @@ export function executeCommand(
       }
       sideState.stock.stone -= stoneCost;
       for (let i = 0; i < segs; i++) {
-        const t = (i + 0.5) / segs;
+        const t = segs === 1 ? 0.5 : (i + 0.5) / segs;
         state.walls.push({
           id: state.nextEntityId++,
           side: cmd.side,
-          x: cmd.x0 + (cmd.x1 - cmd.x0) * t,
-          z: cmd.z0 + (cmd.z1 - cmd.z0) * t,
+          x: cmd.x0 + dx * t,
+          z: cmd.z0 + dz * t,
           yawRad: yaw,
           hp: ECONOMY.wallSegmentHp,
           maxHp: ECONOMY.wallSegmentHp,
@@ -484,9 +497,21 @@ export function executeCommand(
         return { ok: false, reason: 'blocked' };
       }
       spendAllResources(sideState.stock, ECONOMY.gateCost);
-      // Replace any wall segments within 3.2 m of gate center!
+      // If placed on/near an existing friendly wall, auto-align gate yaw to the wall line!
+      let gateYaw = cmd.yawRad;
+      let nearestWallDist = 5.5;
       for (const w of state.walls) {
-        if (!w.destroyed && Math.hypot(w.x - cmd.x, w.z - cmd.z) <= 3.2) {
+        if (!w.destroyed && w.side === cmd.side) {
+          const d = Math.hypot(w.x - cmd.x, w.z - cmd.z);
+          if (d < nearestWallDist) {
+            nearestWallDist = d;
+            gateYaw = w.yawRad;
+          }
+        }
+      }
+      // Replace any wall segments within 3.6 m of gate center so the 6.4 m gatehouse joins flush with wall ends!
+      for (const w of state.walls) {
+        if (!w.destroyed && Math.hypot(w.x - cmd.x, w.z - cmd.z) <= 3.6) {
           w.destroyed = true;
           w.hp = 0;
         }
@@ -496,7 +521,7 @@ export function executeCommand(
         side: cmd.side,
         x: cmd.x,
         z: cmd.z,
-        yawRad: cmd.yawRad,
+        yawRad: gateYaw,
         hp: ECONOMY.gateHp,
         maxHp: ECONOMY.gateHp,
         openFraction: 0,

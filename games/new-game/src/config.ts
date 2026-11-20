@@ -530,14 +530,31 @@ export interface BuildingDef {
     | 'keep_l1'
     | 'house_l1'
     | 'woodcutter_l1'
+    | 'sawmill_l1'
+    | 'forester_l1'
+    | 'hunter_l1'
+    | 'quarry_l1'
+    | 'iron_mine_l1'
     | 'farm_l1'
+    | 'vineyard_l1'
+    | 'winery_l1'
     | 'windmill_l1'
     | 'bakery_l1'
+    | 'brewery_l1'
+    | 'pig_farm_l1'
+    | 'butcher_l1'
+    | 'tavern_l1'
+    | 'tannery_l1'
+    | 'smelter_l1'
+    | 'smithy_l1'
+    | 'armourer_l1'
+    | 'fletcher_l1'
+    | 'stable_l1'
+    | 'barracks_l1'
+    | 'gun_foundry_l1'
     | 'watchtower_l1'
     | 'gate_l1'
     | 'chapel_l1'
-    | 'smithy_l1'
-    | 'barracks_l1'
     | 'market_l1'
     | 'well_l1'
     | 'storehouse_l1'
@@ -560,42 +577,42 @@ export interface BuildingDef {
   readonly recipe?: BuildingRecipe;
 }
 
-/** All 31 gameplay buildings + Gate, Ruin, Camp Tent matching docs/BUILDINGS.md exactly. */
+/** All 31 gameplay buildings + Gate, Ruin, Camp Tent matching docs/BUILDINGS.md — each with its own bespoke 3D model! */
 export const BUILDING_DEFS: Record<BuildingTypeId, BuildingDef> = {
-  keep:        { id: 'keep',        branch: 'town',      modelKind: 'keep_l1',       cost: {}, maxHp: 1800, workers: 0, radiusM: 7.5, terrainReq: 'any', maxLevel: 3, buildable: false },
-  house:       { id: 'house',       branch: 'town',      modelKind: 'house_l1',      cost: { gold: 40, timber: 10 }, maxHp: 250, workers: 0, radiusM: 4.5, terrainReq: 'any', maxLevel: 3, buildable: true },
-  storehouse:  { id: 'storehouse',  branch: 'town',      modelKind: 'storehouse_l1', cost: { gold: 60, timber: 40, stone: 10 }, maxHp: 400, workers: 1, radiusM: 5.5, terrainReq: 'any', maxLevel: 3, buildable: true },
-  market:      { id: 'market',      branch: 'town',      modelKind: 'market_l1',     cost: { gold: 80, timber: 40, stone: 20 }, maxHp: 400, workers: 1, radiusM: 6.0, terrainReq: 'any', maxLevel: 3, buildable: true },
-  tavern:      { id: 'tavern',      branch: 'town',      modelKind: 'house_l1',      cost: { gold: 80, timber: 30, stone: 10 }, maxHp: 300, workers: 1, radiusM: 5.0, terrainReq: 'any', maxLevel: 3, buildable: true, recipe: { inputs: { ale: 1 }, outputs: { gold: 2 }, cycleS: 5 } },
-  chapel:      { id: 'chapel',      branch: 'town',      modelKind: 'chapel_l1',     cost: { gold: 120, timber: 20, stone: 50 }, maxHp: 450, workers: 1, radiusM: 5.8, terrainReq: 'any', maxLevel: 3, buildable: true },
-  well:        { id: 'well',        branch: 'town',      modelKind: 'well_l1',       cost: { gold: 25, stone: 15 }, maxHp: 200, workers: 1, radiusM: 2.8, terrainReq: 'any', maxLevel: 3, buildable: true },
-  woodcutter:  { id: 'woodcutter',  branch: 'materials', modelKind: 'woodcutter_l1', cost: { gold: 30 }, maxHp: 250, workers: 1, radiusM: 4.5, terrainReq: 'forest', terrainReqDistM: 26, anywhereOnMap: true, maxLevel: 3, buildable: true },
-  sawmill:     { id: 'sawmill',     branch: 'materials', modelKind: 'woodcutter_l1', cost: { gold: 60, timber: 30, stone: 10 }, maxHp: 300, workers: 1, radiusM: 5.0, terrainReq: 'any', maxLevel: 3, buildable: true, recipe: { inputs: { timber: 2 }, outputs: { planks: 2 }, cycleS: 6 } },
-  forester:    { id: 'forester',    branch: 'materials', modelKind: 'woodcutter_l1', cost: { gold: 35, timber: 10 }, maxHp: 250, workers: 1, radiusM: 4.2, terrainReq: 'forest', terrainReqDistM: 26, maxLevel: 3, buildable: true },
-  hunter:      { id: 'hunter',      branch: 'food',      modelKind: 'woodcutter_l1', cost: { gold: 40, timber: 10 }, maxHp: 250, workers: 1, radiusM: 4.2, terrainReq: 'forest', terrainReqDistM: 26, maxLevel: 3, buildable: true, recipe: { inputs: {}, outputs: { meat: 1, hides: 1 }, cycleS: 14 } },
-  quarry:      { id: 'quarry',      branch: 'materials', modelKind: 'storehouse_l1', cost: { gold: 40, timber: 10 }, maxHp: 300, workers: 1, radiusM: 4.8, terrainReq: 'stone', terrainReqDistM: 15, anywhereOnMap: true, maxLevel: 3, buildable: true, recipe: { inputs: {}, outputs: { stone: 1 }, cycleS: 6 } },
-  farm:        { id: 'farm',        branch: 'food',      modelKind: 'farm_l1',       cost: { gold: 40, timber: 10 }, maxHp: 250, workers: 1, radiusM: 5.2, terrainReq: 'openRear', farmReachBonus: true, maxLevel: 3, buildable: true },
-  fisher:      { id: 'fisher',      branch: 'food',      modelKind: 'fisher_l1',     cost: { gold: 40, timber: 10 }, maxHp: 250, workers: 1, radiusM: 4.5, terrainReq: 'lake', terrainReqDistM: 16, maxLevel: 3, buildable: true },
-  windmill:    { id: 'windmill',    branch: 'food',      modelKind: 'windmill_l1',   cost: { gold: 70, timber: 30 }, maxHp: 300, workers: 1, radiusM: 4.6, terrainReq: 'any', maxLevel: 3, buildable: true, recipe: { inputs: { grain: 2 }, outputs: { flour: 2 }, cycleS: 6 } },
-  bakery:      { id: 'bakery',      branch: 'food',      modelKind: 'bakery_l1',     cost: { gold: 50, timber: 15, stone: 5 }, maxHp: 300, workers: 1, radiusM: 4.8, terrainReq: 'any', maxLevel: 3, buildable: true, recipe: { inputs: { flour: 1 }, outputs: { bread: 1 }, cycleS: 5 } },
-  brewery:     { id: 'brewery',     branch: 'food',      modelKind: 'bakery_l1',     cost: { gold: 60, timber: 25, stone: 10 }, maxHp: 300, workers: 1, radiusM: 4.8, terrainReq: 'any', maxLevel: 3, buildable: true, recipe: { inputs: { grain: 2 }, outputs: { ale: 2 }, cycleS: 8 } },
-  pigFarm:     { id: 'pigFarm',     branch: 'food',      modelKind: 'farm_l1',       cost: { gold: 60, timber: 20 }, maxHp: 250, workers: 1, radiusM: 5.0, terrainReq: 'any', maxLevel: 3, buildable: true, recipe: { inputs: { grain: 1 }, outputs: { meat: 2, hides: 1 }, cycleS: 12 } },
-  butcher:     { id: 'butcher',     branch: 'food',      modelKind: 'bakery_l1',     cost: { gold: 60, timber: 15, stone: 10 }, maxHp: 300, workers: 1, radiusM: 4.6, terrainReq: 'any', maxLevel: 3, buildable: true, recipe: { inputs: { meat: 1 }, outputs: { sausages: 1 }, cycleS: 5 } },
-  vineyard:    { id: 'vineyard',    branch: 'food',      modelKind: 'farm_l1',       cost: { gold: 70, timber: 20 }, maxHp: 250, workers: 1, radiusM: 5.2, terrainReq: 'openRear', farmReachBonus: true, maxLevel: 3, buildable: true },
-  winery:      { id: 'winery',      branch: 'food',      modelKind: 'storehouse_l1', cost: { gold: 90, timber: 20, stone: 20 }, maxHp: 300, workers: 1, radiusM: 5.0, terrainReq: 'any', maxLevel: 3, buildable: true, recipe: { inputs: { grapes: 3 }, outputs: { wine: 2 }, cycleS: 12 } },
-  tannery:     { id: 'tannery',     branch: 'craft',     modelKind: 'smithy_l1',     cost: { gold: 60, timber: 15, stone: 10 }, maxHp: 300, workers: 1, radiusM: 4.8, terrainReq: 'any', maxLevel: 3, buildable: true, recipe: { inputs: { hides: 1 }, outputs: { leatherArmour: 1 }, cycleS: 8 } },
-  ironMine:    { id: 'ironMine',    branch: 'materials', modelKind: 'storehouse_l1', cost: { gold: 80, timber: 25 }, maxHp: 300, workers: 1, radiusM: 4.8, terrainReq: 'ore', terrainReqDistM: 15, anywhereOnMap: true, maxLevel: 3, buildable: true, recipe: { inputs: {}, outputs: { ironOre: 1 }, cycleS: 6 } },
-  smelter:     { id: 'smelter',     branch: 'craft',     modelKind: 'smithy_l1',     cost: { gold: 90, timber: 20, stone: 30 }, maxHp: 350, workers: 1, radiusM: 5.0, terrainReq: 'any', maxLevel: 3, buildable: true, recipe: { inputs: { timber: 1, ironOre: 2 }, outputs: { iron: 2 }, cycleS: 9 } },
-  smithy:      { id: 'smithy',      branch: 'craft',     modelKind: 'smithy_l1',     cost: { gold: 80, timber: 20, stone: 20 }, maxHp: 350, workers: 1, radiusM: 5.0, terrainReq: 'any', maxLevel: 3, buildable: true, recipe: { inputs: { timber: 1, iron: 1 }, outputs: { weapons: 1 }, cycleS: 7 } },
-  armourer:    { id: 'armourer',    branch: 'craft',     modelKind: 'smithy_l1',     cost: { gold: 120, timber: 20, stone: 40 }, maxHp: 350, workers: 1, radiusM: 5.0, terrainReq: 'any', maxLevel: 3, buildable: true, recipe: { inputs: { iron: 2 }, outputs: { mail: 1 }, cycleS: 12 } },
-  fletcher:    { id: 'fletcher',    branch: 'craft',     modelKind: 'woodcutter_l1', cost: { gold: 60, timber: 20 }, maxHp: 250, workers: 1, radiusM: 4.5, terrainReq: 'any', maxLevel: 3, buildable: true, recipe: { inputs: { timber: 1 }, outputs: { bows: 1 }, cycleS: 8 } },
-  stable:      { id: 'stable',      branch: 'craft',     modelKind: 'farm_l1',       cost: { gold: 100, timber: 40, stone: 10 }, maxHp: 300, workers: 1, radiusM: 5.8, terrainReq: 'any', maxLevel: 3, buildable: true, recipe: { inputs: { grain: 3 }, outputs: { horses: 1 }, cycleS: 25 } },
-  barracks:    { id: 'barracks',    branch: 'military',  modelKind: 'barracks_l1',   cost: { gold: 100, timber: 30, stone: 30 }, maxHp: 450, workers: 0, radiusM: 6.5, terrainReq: 'any', maxLevel: 3, buildable: true },
-  gunFoundry:  { id: 'gunFoundry',  branch: 'military',  modelKind: 'smithy_l1',     cost: { gold: 150, timber: 40, stone: 60 }, maxHp: 500, workers: 1, radiusM: 6.0, terrainReq: 'any', maxLevel: 3, buildable: true },
-  watchtower:  { id: 'watchtower',  branch: 'military',  modelKind: 'watchtower_l1', cost: { gold: 40, timber: 15, stone: 60 }, maxHp: 900, workers: 0, radiusM: 3.4, terrainReq: 'any', anywhereOnMap: true, maxLevel: 3, buildable: true },
-  gate:        { id: 'gate',        branch: 'military',  modelKind: 'gate_l1',       cost: { timber: 20, stone: 12 }, maxHp: 400, workers: 0, radiusM: 3.2, terrainReq: 'any', anywhereOnMap: true, maxLevel: 1, buildable: true },
-  ruin:        { id: 'ruin',        branch: 'town',      modelKind: 'ruin_house',    cost: {}, maxHp: 150, workers: 0, radiusM: 4.5, terrainReq: 'any', maxLevel: 1, buildable: false },
-  campTent:    { id: 'campTent',    branch: 'military',  modelKind: 'camp_tent_l1',  cost: {}, maxHp: 220, workers: 0, radiusM: 3.8, terrainReq: 'any', maxLevel: 1, buildable: false },
+  keep:        { id: 'keep',        branch: 'town',      modelKind: 'keep_l1',        cost: {}, maxHp: 1800, workers: 0, radiusM: 7.5, terrainReq: 'any', maxLevel: 3, buildable: false },
+  house:       { id: 'house',       branch: 'town',      modelKind: 'house_l1',       cost: { gold: 40, timber: 10 }, maxHp: 250, workers: 0, radiusM: 4.5, terrainReq: 'any', maxLevel: 3, buildable: true },
+  storehouse:  { id: 'storehouse',  branch: 'town',      modelKind: 'storehouse_l1',  cost: { gold: 60, timber: 40, stone: 10 }, maxHp: 400, workers: 1, radiusM: 5.5, terrainReq: 'any', maxLevel: 3, buildable: true },
+  market:      { id: 'market',      branch: 'town',      modelKind: 'market_l1',      cost: { gold: 80, timber: 40, stone: 20 }, maxHp: 400, workers: 1, radiusM: 6.0, terrainReq: 'any', maxLevel: 3, buildable: true },
+  tavern:      { id: 'tavern',      branch: 'town',      modelKind: 'tavern_l1',      cost: { gold: 80, timber: 30, stone: 10 }, maxHp: 300, workers: 1, radiusM: 5.0, terrainReq: 'any', maxLevel: 3, buildable: true, recipe: { inputs: { ale: 1 }, outputs: { gold: 2 }, cycleS: 5 } },
+  chapel:      { id: 'chapel',      branch: 'town',      modelKind: 'chapel_l1',      cost: { gold: 120, timber: 20, stone: 50 }, maxHp: 450, workers: 1, radiusM: 5.8, terrainReq: 'any', maxLevel: 3, buildable: true },
+  well:        { id: 'well',        branch: 'town',      modelKind: 'well_l1',        cost: { gold: 25, stone: 15 }, maxHp: 200, workers: 1, radiusM: 2.8, terrainReq: 'any', maxLevel: 3, buildable: true },
+  woodcutter:  { id: 'woodcutter',  branch: 'materials', modelKind: 'woodcutter_l1',  cost: { gold: 30 }, maxHp: 250, workers: 1, radiusM: 4.5, terrainReq: 'forest', terrainReqDistM: 26, anywhereOnMap: true, maxLevel: 3, buildable: true },
+  sawmill:     { id: 'sawmill',     branch: 'materials', modelKind: 'sawmill_l1',     cost: { gold: 60, timber: 30, stone: 10 }, maxHp: 300, workers: 1, radiusM: 5.0, terrainReq: 'any', maxLevel: 3, buildable: true, recipe: { inputs: { timber: 2 }, outputs: { planks: 2 }, cycleS: 6 } },
+  forester:    { id: 'forester',    branch: 'materials', modelKind: 'forester_l1',    cost: { gold: 35, timber: 10 }, maxHp: 250, workers: 1, radiusM: 4.2, terrainReq: 'forest', terrainReqDistM: 26, maxLevel: 3, buildable: true },
+  hunter:      { id: 'hunter',      branch: 'food',      modelKind: 'hunter_l1',      cost: { gold: 40, timber: 10 }, maxHp: 250, workers: 1, radiusM: 4.2, terrainReq: 'forest', terrainReqDistM: 26, maxLevel: 3, buildable: true, recipe: { inputs: {}, outputs: { meat: 1, hides: 1 }, cycleS: 14 } },
+  quarry:      { id: 'quarry',      branch: 'materials', modelKind: 'quarry_l1',      cost: { gold: 40, timber: 10 }, maxHp: 300, workers: 1, radiusM: 4.8, terrainReq: 'stone', terrainReqDistM: 15, anywhereOnMap: true, maxLevel: 3, buildable: true, recipe: { inputs: {}, outputs: { stone: 1 }, cycleS: 6 } },
+  farm:        { id: 'farm',        branch: 'food',      modelKind: 'farm_l1',        cost: { gold: 40, timber: 10 }, maxHp: 250, workers: 1, radiusM: 5.2, terrainReq: 'openRear', farmReachBonus: true, maxLevel: 3, buildable: true },
+  fisher:      { id: 'fisher',      branch: 'food',      modelKind: 'fisher_l1',      cost: { gold: 40, timber: 10 }, maxHp: 250, workers: 1, radiusM: 4.5, terrainReq: 'lake', terrainReqDistM: 16, maxLevel: 3, buildable: true },
+  windmill:    { id: 'windmill',    branch: 'food',      modelKind: 'windmill_l1',    cost: { gold: 70, timber: 30 }, maxHp: 300, workers: 1, radiusM: 4.6, terrainReq: 'any', maxLevel: 3, buildable: true, recipe: { inputs: { grain: 2 }, outputs: { flour: 2 }, cycleS: 6 } },
+  bakery:      { id: 'bakery',      branch: 'food',      modelKind: 'bakery_l1',      cost: { gold: 50, timber: 15, stone: 5 }, maxHp: 300, workers: 1, radiusM: 4.8, terrainReq: 'any', maxLevel: 3, buildable: true, recipe: { inputs: { flour: 1 }, outputs: { bread: 1 }, cycleS: 5 } },
+  brewery:     { id: 'brewery',     branch: 'food',      modelKind: 'brewery_l1',     cost: { gold: 60, timber: 25, stone: 10 }, maxHp: 300, workers: 1, radiusM: 4.8, terrainReq: 'any', maxLevel: 3, buildable: true, recipe: { inputs: { grain: 2 }, outputs: { ale: 2 }, cycleS: 8 } },
+  pigFarm:     { id: 'pigFarm',     branch: 'food',      modelKind: 'pig_farm_l1',    cost: { gold: 60, timber: 20 }, maxHp: 250, workers: 1, radiusM: 5.0, terrainReq: 'any', maxLevel: 3, buildable: true, recipe: { inputs: { grain: 1 }, outputs: { meat: 2, hides: 1 }, cycleS: 12 } },
+  butcher:     { id: 'butcher',     branch: 'food',      modelKind: 'butcher_l1',     cost: { gold: 60, timber: 15, stone: 10 }, maxHp: 300, workers: 1, radiusM: 4.6, terrainReq: 'any', maxLevel: 3, buildable: true, recipe: { inputs: { meat: 1 }, outputs: { sausages: 1 }, cycleS: 5 } },
+  vineyard:    { id: 'vineyard',    branch: 'food',      modelKind: 'vineyard_l1',    cost: { gold: 70, timber: 20 }, maxHp: 250, workers: 1, radiusM: 5.2, terrainReq: 'openRear', farmReachBonus: true, maxLevel: 3, buildable: true },
+  winery:      { id: 'winery',      branch: 'food',      modelKind: 'winery_l1',      cost: { gold: 90, timber: 20, stone: 20 }, maxHp: 300, workers: 1, radiusM: 5.0, terrainReq: 'any', maxLevel: 3, buildable: true, recipe: { inputs: { grapes: 3 }, outputs: { wine: 2 }, cycleS: 12 } },
+  tannery:     { id: 'tannery',     branch: 'craft',     modelKind: 'tannery_l1',     cost: { gold: 60, timber: 15, stone: 10 }, maxHp: 300, workers: 1, radiusM: 4.8, terrainReq: 'any', maxLevel: 3, buildable: true, recipe: { inputs: { hides: 1 }, outputs: { leatherArmour: 1 }, cycleS: 8 } },
+  ironMine:    { id: 'ironMine',    branch: 'materials', modelKind: 'iron_mine_l1',   cost: { gold: 80, timber: 25 }, maxHp: 300, workers: 1, radiusM: 4.8, terrainReq: 'ore', terrainReqDistM: 15, anywhereOnMap: true, maxLevel: 3, buildable: true, recipe: { inputs: {}, outputs: { ironOre: 1 }, cycleS: 6 } },
+  smelter:     { id: 'smelter',     branch: 'craft',     modelKind: 'smelter_l1',     cost: { gold: 90, timber: 20, stone: 30 }, maxHp: 350, workers: 1, radiusM: 5.0, terrainReq: 'any', maxLevel: 3, buildable: true, recipe: { inputs: { timber: 1, ironOre: 2 }, outputs: { iron: 2 }, cycleS: 9 } },
+  smithy:      { id: 'smithy',      branch: 'craft',     modelKind: 'smithy_l1',      cost: { gold: 80, timber: 20, stone: 20 }, maxHp: 350, workers: 1, radiusM: 5.0, terrainReq: 'any', maxLevel: 3, buildable: true, recipe: { inputs: { timber: 1, iron: 1 }, outputs: { weapons: 1 }, cycleS: 7 } },
+  armourer:    { id: 'armourer',    branch: 'craft',     modelKind: 'armourer_l1',    cost: { gold: 120, timber: 20, stone: 40 }, maxHp: 350, workers: 1, radiusM: 5.0, terrainReq: 'any', maxLevel: 3, buildable: true, recipe: { inputs: { iron: 2 }, outputs: { mail: 1 }, cycleS: 12 } },
+  fletcher:    { id: 'fletcher',    branch: 'craft',     modelKind: 'fletcher_l1',    cost: { gold: 60, timber: 20 }, maxHp: 250, workers: 1, radiusM: 4.5, terrainReq: 'any', maxLevel: 3, buildable: true, recipe: { inputs: { timber: 1 }, outputs: { bows: 1 }, cycleS: 8 } },
+  stable:      { id: 'stable',      branch: 'craft',     modelKind: 'stable_l1',      cost: { gold: 100, timber: 40, stone: 10 }, maxHp: 300, workers: 1, radiusM: 5.8, terrainReq: 'any', maxLevel: 3, buildable: true, recipe: { inputs: { grain: 3 }, outputs: { horses: 1 }, cycleS: 25 } },
+  barracks:    { id: 'barracks',    branch: 'military',  modelKind: 'barracks_l1',    cost: { gold: 100, timber: 30, stone: 30 }, maxHp: 450, workers: 0, radiusM: 6.5, terrainReq: 'any', maxLevel: 3, buildable: true },
+  gunFoundry:  { id: 'gunFoundry',  branch: 'military',  modelKind: 'gun_foundry_l1', cost: { gold: 150, timber: 40, stone: 60 }, maxHp: 500, workers: 1, radiusM: 6.0, terrainReq: 'any', maxLevel: 3, buildable: true },
+  watchtower:  { id: 'watchtower',  branch: 'military',  modelKind: 'watchtower_l1',  cost: { gold: 40, timber: 15, stone: 60 }, maxHp: 900, workers: 0, radiusM: 3.4, terrainReq: 'any', anywhereOnMap: true, maxLevel: 3, buildable: true },
+  gate:        { id: 'gate',        branch: 'military',  modelKind: 'gate_l1',        cost: { timber: 20, stone: 12 }, maxHp: 400, workers: 0, radiusM: 3.2, terrainReq: 'any', anywhereOnMap: true, maxLevel: 1, buildable: true },
+  ruin:        { id: 'ruin',        branch: 'town',      modelKind: 'ruin_house',     cost: {}, maxHp: 150, workers: 0, radiusM: 4.5, terrainReq: 'any', maxLevel: 1, buildable: false },
+  campTent:    { id: 'campTent',    branch: 'military',  modelKind: 'camp_tent_l1',   cost: {}, maxHp: 220, workers: 0, radiusM: 3.8, terrainReq: 'any', maxLevel: 1, buildable: false },
 };
 
 export type UnitTypeId =

@@ -1,6 +1,22 @@
 {
-  "totalBytes": 29896091,
+  "totalBytes": 32001959,
   "files": [
+    {
+      "path": "assets/buildings/armourer_l1_lod0.glb",
+      "bytes": 45800
+    },
+    {
+      "path": "assets/buildings/armourer_l1_lod1.glb",
+      "bytes": 41108
+    },
+    {
+      "path": "assets/buildings/armourer_l1_lod2.glb",
+      "bytes": 13472
+    },
+    {
+      "path": "assets/buildings/armourer_l1_shadow.glb",
+      "bytes": 4008
+    },
     {
       "path": "assets/buildings/bakery_l1_lod0.glb",
       "bytes": 93160
@@ -32,6 +48,38 @@
     {
       "path": "assets/buildings/barracks_l1_shadow.glb",
       "bytes": 4232
+    },
+    {
+      "path": "assets/buildings/brewery_l1_lod0.glb",
+      "bytes": 62420
+    },
+    {
+      "path": "assets/buildings/brewery_l1_lod1.glb",
+      "bytes": 57196
+    },
+    {
+      "path": "assets/buildings/brewery_l1_lod2.glb",
+      "bytes": 15920
+    },
+    {
+      "path": "assets/buildings/brewery_l1_shadow.glb",
+      "bytes": 4288
+    },
+    {
+      "path": "assets/buildings/butcher_l1_lod0.glb",
+      "bytes": 58608
+    },
+    {
+      "path": "assets/buildings/butcher_l1_lod1.glb",
+      "bytes": 53384
+    },
+    {
+      "path": "assets/buildings/butcher_l1_lod2.glb",
+      "bytes": 13900
+    },
+    {
+      "path": "assets/buildings/butcher_l1_shadow.glb",
+      "bytes": 4000
     },
     {
       "path": "assets/buildings/camp_tent_l1_lod0.glb",
@@ -98,6 +146,38 @@
       "bytes": 10144
     },
     {
+      "path": "assets/buildings/fletcher_l1_lod0.glb",
+      "bytes": 60008
+    },
+    {
+      "path": "assets/buildings/fletcher_l1_lod1.glb",
+      "bytes": 55032
+    },
+    {
+      "path": "assets/buildings/fletcher_l1_lod2.glb",
+      "bytes": 17980
+    },
+    {
+      "path": "assets/buildings/fletcher_l1_shadow.glb",
+      "bytes": 3900
+    },
+    {
+      "path": "assets/buildings/forester_l1_lod0.glb",
+      "bytes": 57180
+    },
+    {
+      "path": "assets/buildings/forester_l1_lod1.glb",
+      "bytes": 53932
+    },
+    {
+      "path": "assets/buildings/forester_l1_lod2.glb",
+      "bytes": 28128
+    },
+    {
+      "path": "assets/buildings/forester_l1_shadow.glb",
+      "bytes": 4240
+    },
+    {
       "path": "assets/buildings/fortress_donzon_lod0.glb",
       "bytes": 174000
     },
@@ -130,6 +210,22 @@
       "bytes": 6568
     },
     {
+      "path": "assets/buildings/gun_foundry_l1_lod0.glb",
+      "bytes": 49728
+    },
+    {
+      "path": "assets/buildings/gun_foundry_l1_lod1.glb",
+      "bytes": 44536
+    },
+    {
+      "path": "assets/buildings/gun_foundry_l1_lod2.glb",
+      "bytes": 23420
+    },
+    {
+      "path": "assets/buildings/gun_foundry_l1_shadow.glb",
+      "bytes": 4276
+    },
+    {
       "path": "assets/buildings/house_l1_impostor.ktx2",
       "bytes": 163926
     },
@@ -148,6 +244,38 @@
     {
       "path": "assets/buildings/house_l1_shadow.glb",
       "bytes": 5092
+    },
+    {
+      "path": "assets/buildings/hunter_l1_lod0.glb",
+      "bytes": 43428
+    },
+    {
+      "path": "assets/buildings/hunter_l1_lod1.glb",
+      "bytes": 43236
+    },
+    {
+      "path": "assets/buildings/hunter_l1_lod2.glb",
+      "bytes": 16600
+    },
+    {
+      "path": "assets/buildings/hunter_l1_shadow.glb",
+      "bytes": 3996
+    },
+    {
+      "path": "assets/buildings/iron_mine_l1_lod0.glb",
+      "bytes": 45168
+    },
+    {
+      "path": "assets/buildings/iron_mine_l1_lod1.glb",
+      "bytes": 44980
+    },
+    {
+      "path": "assets/buildings/iron_mine_l1_lod2.glb",
+      "bytes": 41592
+    },
+    {
+      "path": "assets/buildings/iron_mine_l1_shadow.glb",
+      "bytes": 4024
     },
     {
       "path": "assets/buildings/keep_l1_lod0.glb",
@@ -182,6 +310,38 @@
       "bytes": 3992
     },
     {
+      "path": "assets/buildings/pig_farm_l1_lod0.glb",
+      "bytes": 35488
+    },
+    {
+      "path": "assets/buildings/pig_farm_l1_lod1.glb",
+      "bytes": 30184
+    },
+    {
+      "path": "assets/buildings/pig_farm_l1_lod2.glb",
+      "bytes": 15724
+    },
+    {
+      "path": "assets/buildings/pig_farm_l1_shadow.glb",
+      "bytes": 4012
+    },
+    {
+      "path": "assets/buildings/quarry_l1_lod0.glb",
+      "bytes": 35096
+    },
+    {
+      "path": "assets/buildings/quarry_l1_lod1.glb",
+      "bytes": 34912
+    },
+    {
+      "path": "assets/buildings/quarry_l1_lod2.glb",
+      "bytes": 32264
+    },
+    {
+      "path": "assets/buildings/quarry_l1_shadow.glb",
+      "bytes": 4264
+    },
+    {
       "path": "assets/buildings/ruin_house_lod0.glb",
       "bytes": 35912
     },
@@ -196,6 +356,38 @@
     {
       "path": "assets/buildings/ruin_house_shadow.glb",
       "bytes": 3972
+    },
+    {
+      "path": "assets/buildings/sawmill_l1_lod0.glb",
+      "bytes": 49624
+    },
+    {
+      "path": "assets/buildings/sawmill_l1_lod1.glb",
+      "bytes": 44360
+    },
+    {
+      "path": "assets/buildings/sawmill_l1_lod2.glb",
+      "bytes": 32140
+    },
+    {
+      "path": "assets/buildings/sawmill_l1_shadow.glb",
+      "bytes": 3992
+    },
+    {
+      "path": "assets/buildings/smelter_l1_lod0.glb",
+      "bytes": 18592
+    },
+    {
+      "path": "assets/buildings/smelter_l1_lod1.glb",
+      "bytes": 18400
+    },
+    {
+      "path": "assets/buildings/smelter_l1_lod2.glb",
+      "bytes": 15072
+    },
+    {
+      "path": "assets/buildings/smelter_l1_shadow.glb",
+      "bytes": 4052
     },
     {
       "path": "assets/buildings/smithy_l1_lod0.glb",
@@ -214,6 +406,22 @@
       "bytes": 4196
     },
     {
+      "path": "assets/buildings/stable_l1_lod0.glb",
+      "bytes": 72284
+    },
+    {
+      "path": "assets/buildings/stable_l1_lod1.glb",
+      "bytes": 64852
+    },
+    {
+      "path": "assets/buildings/stable_l1_lod2.glb",
+      "bytes": 17268
+    },
+    {
+      "path": "assets/buildings/stable_l1_shadow.glb",
+      "bytes": 3972
+    },
+    {
       "path": "assets/buildings/storehouse_l1_lod0.glb",
       "bytes": 66360
     },
@@ -228,6 +436,54 @@
     {
       "path": "assets/buildings/storehouse_l1_shadow.glb",
       "bytes": 4260
+    },
+    {
+      "path": "assets/buildings/tannery_l1_lod0.glb",
+      "bytes": 61024
+    },
+    {
+      "path": "assets/buildings/tannery_l1_lod1.glb",
+      "bytes": 55308
+    },
+    {
+      "path": "assets/buildings/tannery_l1_lod2.glb",
+      "bytes": 18528
+    },
+    {
+      "path": "assets/buildings/tannery_l1_shadow.glb",
+      "bytes": 3956
+    },
+    {
+      "path": "assets/buildings/tavern_l1_lod0.glb",
+      "bytes": 83752
+    },
+    {
+      "path": "assets/buildings/tavern_l1_lod1.glb",
+      "bytes": 76672
+    },
+    {
+      "path": "assets/buildings/tavern_l1_lod2.glb",
+      "bytes": 17060
+    },
+    {
+      "path": "assets/buildings/tavern_l1_shadow.glb",
+      "bytes": 4252
+    },
+    {
+      "path": "assets/buildings/vineyard_l1_lod0.glb",
+      "bytes": 62260
+    },
+    {
+      "path": "assets/buildings/vineyard_l1_lod1.glb",
+      "bytes": 57276
+    },
+    {
+      "path": "assets/buildings/vineyard_l1_lod2.glb",
+      "bytes": 15296
+    },
+    {
+      "path": "assets/buildings/vineyard_l1_shadow.glb",
+      "bytes": 4004
     },
     {
       "path": "assets/buildings/wall_segment_lod0.glb",
@@ -292,6 +548,22 @@
     {
       "path": "assets/buildings/windmill_l1_shadow.glb",
       "bytes": 4236
+    },
+    {
+      "path": "assets/buildings/winery_l1_lod0.glb",
+      "bytes": 35972
+    },
+    {
+      "path": "assets/buildings/winery_l1_lod1.glb",
+      "bytes": 35792
+    },
+    {
+      "path": "assets/buildings/winery_l1_lod2.glb",
+      "bytes": 14684
+    },
+    {
+      "path": "assets/buildings/winery_l1_shadow.glb",
+      "bytes": 3992
     },
     {
       "path": "assets/buildings/woodcutter_l1_lod0.glb",

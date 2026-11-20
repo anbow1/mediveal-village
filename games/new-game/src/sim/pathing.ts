@@ -433,10 +433,14 @@ export class NavGrid {
     rawCells.reverse();
 
     if (rawCells.length === 0) {
-      return [{ x: this.cellToWorld(tx), z: this.cellToWorld(tz) }];
+      if (startIdx === goalIdx) {
+        return [{ x: this.cellToWorld(tx), z: this.cellToWorld(tz) }];
+      }
+      // Blocked by a closed wall / river with no closer reachable cell on this side
+      return [];
     }
 
-    // Line-of-sight string pulling (preserves water/wall safety with 1 m step checks)
+    // Line-of-sight string pulling (preserves water/wall safety with 0.5 m step checks)
     const out: PathPoint[] = [];
     let anchorX = this.cellToWorld(sx);
     let anchorZ = this.cellToWorld(sz);
@@ -466,12 +470,20 @@ export class NavGrid {
   /** Checks line segment stays strictly inside walkable cells (never clips water or walls). */
   hasSafeClearLine(x0: number, z0: number, x1: number, z1: number, side: SideId): boolean {
     const dist = Math.hypot(x1 - x0, z1 - z0);
-    const steps = Math.max(2, Math.ceil(dist / 1.0));
+    const steps = Math.max(2, Math.ceil(dist / 0.5));
     for (let s = 0; s <= steps; s++) {
       const t = s / steps;
       const x = x0 + (x1 - x0) * t;
       const z = z0 + (z1 - z0) * t;
-      if (!this.isWalkableAt(x, z, side)) return false;
+      if (
+        !this.isWalkableAt(x, z, side) ||
+        !this.isWalkableAt(x + 0.35, z, side) ||
+        !this.isWalkableAt(x - 0.35, z, side) ||
+        !this.isWalkableAt(x, z + 0.35, side) ||
+        !this.isWalkableAt(x, z - 0.35, side)
+      ) {
+        return false;
+      }
     }
     return true;
   }

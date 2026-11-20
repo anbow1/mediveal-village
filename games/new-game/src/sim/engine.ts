@@ -71,22 +71,56 @@ function mapVisualKindToBuildingType(kind: BuildingKind): BuildingTypeId {
       return 'house';
     case 'woodcutter_l1':
       return 'woodcutter';
+    case 'sawmill_l1':
+      return 'sawmill';
+    case 'forester_l1':
+      return 'forester';
+    case 'hunter_l1':
+      return 'hunter';
+    case 'quarry_l1':
+      return 'quarry';
+    case 'iron_mine_l1':
+      return 'ironMine';
     case 'farm_l1':
       return 'farm';
+    case 'vineyard_l1':
+      return 'vineyard';
+    case 'winery_l1':
+      return 'winery';
     case 'windmill_l1':
       return 'windmill';
     case 'bakery_l1':
       return 'bakery';
+    case 'brewery_l1':
+      return 'brewery';
+    case 'pig_farm_l1':
+      return 'pigFarm';
+    case 'butcher_l1':
+      return 'butcher';
+    case 'tavern_l1':
+      return 'tavern';
+    case 'tannery_l1':
+      return 'tannery';
+    case 'smelter_l1':
+      return 'smelter';
+    case 'smithy_l1':
+      return 'smithy';
+    case 'armourer_l1':
+      return 'armourer';
+    case 'fletcher_l1':
+      return 'fletcher';
+    case 'stable_l1':
+      return 'stable';
+    case 'barracks_l1':
+      return 'barracks';
+    case 'gun_foundry_l1':
+      return 'gunFoundry';
     case 'watchtower_l1':
       return 'watchtower';
     case 'gate_l1':
       return 'gate';
     case 'chapel_l1':
       return 'chapel';
-    case 'smithy_l1':
-      return 'smithy';
-    case 'barracks_l1':
-      return 'barracks';
     case 'market_l1':
       return 'market';
     case 'well_l1':

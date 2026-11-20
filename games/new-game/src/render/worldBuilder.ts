@@ -59,6 +59,7 @@ import {
   type LodLevel,
   type LodThresholds,
 } from '../sim/lodMath.ts';
+import { computeBuildingStripTransform } from '../sim/economy.ts';
 import {
   buildMapLayout,
   type BuildingKind,
@@ -66,7 +67,7 @@ import {
   type MapLayoutSpec,
 } from '../sim/maps.ts';
 import { TerrainField, type MapLayoutId } from '../sim/terrain.ts';
-import type { SimWorldState } from '../sim/types.ts';
+import type { BuildingEntity, SimWorldState } from '../sim/types.ts';
 import {
   type AssetLoader,
   type AssetManifest,
@@ -343,7 +344,13 @@ function buildWheatField(
   terrain: TerrainField,
   strips: readonly FarmStripSpec[],
   quality: QualityPreset,
-): { mesh: InstancedMesh; uWindTime: { value: number }; count: number; dispose: () => void } {
+): {
+  mesh: InstancedMesh;
+  uWindTime: { value: number };
+  count: number;
+  syncDynamicFarms: (buildings: readonly BuildingEntity[]) => void;
+  dispose: () => void;
+} {
   const positions: number[] = [];
   const normals: number[] = [];
   const colors: number[] = [];
@@ -396,55 +403,93 @@ function buildWheatField(
   const sway = sin(uWindTime.mul(1.85).add(positionLocal.x.mul(2.5))).mul(0.065).mul(bend).mul(bend);
   mat.positionNode = positionLocal.add(vec3(sway, float(0.0), sway.mul(0.55)));
 
-  const spacingM = quality === 'high' ? 0.52 : 0.74;
-  const matrices: Matrix4[] = [];
-  const dummy = new Object3D();
-  let seed = 101;
-  const nextRand = (): number => {
-    seed = (seed * 1664525 + 1013904223) >>> 0;
-    return seed / 4294967296;
-  };
-
-  for (const st of strips) {
-    const ca = Math.cos(st.yawRad);
-    const sa = Math.sin(st.yawRad);
-    const nx = Math.max(2, Math.floor((st.lenM - 0.35) / spacingM));
-    const nz = Math.max(2, Math.floor((st.widM - 0.35) / spacingM));
-    for (let iz = 0; iz < nz; iz++) {
-      for (let ix = 0; ix < nx; ix++) {
-        const lx = -st.lenM * 0.46 + (ix + 0.5 + (nextRand() - 0.5) * 0.42) * ((st.lenM * 0.92) / nx);
-        const lz = -st.widM * 0.46 + (iz + 0.5 + (nextRand() - 0.5) * 0.42) * ((st.widM * 0.92) / nz);
-        const wx = st.cx + lx * ca - lz * sa;
-        const wz = st.cz + lx * sa + lz * ca;
-        dummy.position.set(wx, terrain.heightAt(wx, wz), wz);
-        dummy.rotation.set(0, nextRand() * Math.PI * 2, 0);
-        const s = 0.85 + nextRand() * 0.36;
-        dummy.scale.set(s, s * (0.9 + nextRand() * 0.25), s);
-        dummy.updateMatrix();
-        matrices.push(dummy.matrix.clone());
-      }
-    }
-  }
-
-  const maxC = Math.max(1, matrices.length);
+  const spacingM = quality === 'high' ? 0.56 : 0.78;
+  const maxC = 2400;
   const mesh = new InstancedMesh(geo, mat, maxC);
   mesh.name = 'MarchlandWheatClusters';
   mesh.castShadow = false;
   mesh.receiveShadow = true;
   mesh.frustumCulled = false;
-  if (matrices.length === 0) {
-    mesh.setMatrixAt(0, ZERO_MATRIX);
-    mesh.count = 1;
-  } else {
-    for (let i = 0; i < matrices.length; i++) mesh.setMatrixAt(i, matrices[i]!);
-    mesh.count = matrices.length;
-  }
   markStaticInstances(mesh);
+
+  const dummy = new Object3D();
+  const populateFromStrips = (
+    activeStrips: readonly { readonly cx: number; readonly cz: number; readonly lenM: number; readonly widM: number; readonly yawRad: number; readonly growth01: number }[],
+  ): number => {
+    let seed = 101;
+    const nextRand = (): number => {
+      seed = (seed * 1664525 + 1013904223) >>> 0;
+      return seed / 4294967296;
+    };
+    let count = 0;
+    for (const st of activeStrips) {
+      if (st.growth01 <= 0.01) continue;
+      const ca = Math.cos(st.yawRad);
+      const sa = Math.sin(st.yawRad);
+      const nx = Math.max(2, Math.floor((st.lenM - 0.35) / spacingM));
+      const nz = Math.max(2, Math.floor((st.widM - 0.35) / spacingM));
+      const hScale = 0.28 + 0.82 * st.growth01;
+      for (let iz = 0; iz < nz; iz++) {
+        for (let ix = 0; ix < nx; ix++) {
+          if (count >= maxC) break;
+          const lx = -st.lenM * 0.46 + (ix + 0.5 + (nextRand() - 0.5) * 0.42) * ((st.lenM * 0.92) / nx);
+          const lz = -st.widM * 0.46 + (iz + 0.5 + (nextRand() - 0.5) * 0.42) * ((st.widM * 0.92) / nz);
+          const wx = st.cx + lx * ca - lz * sa;
+          const wz = st.cz + lx * sa + lz * ca;
+          dummy.position.set(wx, terrain.heightAt(wx, wz), wz);
+          dummy.rotation.set(0, nextRand() * Math.PI * 2, 0);
+          const s = 0.85 + nextRand() * 0.36;
+          dummy.scale.set(s, s * (0.9 + nextRand() * 0.25) * hScale, s);
+          dummy.updateMatrix();
+          mesh.setMatrixAt(count++, dummy.matrix);
+        }
+      }
+    }
+    if (count === 0) {
+      mesh.setMatrixAt(0, ZERO_MATRIX);
+      mesh.count = 1;
+      mesh.visible = false;
+    } else {
+      mesh.visible = true;
+      mesh.count = count;
+    }
+    const uploadCount = Math.max(1, count);
+    mesh.instanceMatrix.clearUpdateRanges();
+    mesh.instanceMatrix.addUpdateRange(0, uploadCount * 16);
+    mesh.instanceMatrix.needsUpdate = true;
+    return count;
+  };
+
+  const initialCount = populateFromStrips(
+    strips.map((s) => ({ ...s, growth01: 1.0 })),
+  );
+
+  const syncDynamicFarms = (buildings: readonly BuildingEntity[]): void => {
+    const dynStrips: { cx: number; cz: number; lenM: number; widM: number; yawRad: number; growth01: number }[] = [];
+    for (const b of buildings) {
+      if (b.hp <= 0 || b.buildProgress < 1 || b.type !== 'farm') continue;
+      for (let si = 0; si < b.strips.length; si++) {
+        const st = b.strips[si]!;
+        const tr = computeBuildingStripTransform(b, si);
+        const g01 =
+          st.phase === 'ready'
+            ? 1.0
+            : st.phase === 'growing'
+              ? Math.max(0.22, st.growth01)
+              : st.phase === 'sowing'
+                ? 0.18
+                : 0.08;
+        dynStrips.push({ ...tr, growth01: g01 });
+      }
+    }
+    populateFromStrips(dynStrips);
+  };
 
   return {
     mesh,
     uWindTime,
-    count: matrices.length,
+    count: initialCount,
+    syncDynamicFarms,
     dispose() {
       geo.dispose();
       mat.dispose();
@@ -803,9 +848,6 @@ export async function buildStage5World(
   for (const road of layout.roads) {
     groundWorks.stampRoadPolyline(road, 2.0, 1.8);
   }
-  for (const fs of layout.farmStrips) {
-    groundWorks.stampFarmStrip(fs.cx, fs.cz, fs.lenM, fs.widM, fs.yawRad);
-  }
   for (const tr of layout.trees) {
     const crownR = tr.species === 'oak' ? 5.0 : tr.species === 'pine' ? 3.8 : 4.0;
     groundWorks.stampTreeCanopy(tr.x, tr.z, crownR * tr.scale, 0.78);
@@ -887,19 +929,36 @@ export async function buildStage5World(
     };
   };
 
-  // Pre-load all map building kinds + all player-buildable zero-texture templates (~0.3 MB total, 0 extra textures -> 0 mid-play GPU pipelines!)
+  // Pre-load all map building kinds + all player-buildable zero-texture templates (~1.1 MB total, 0 extra textures -> 0 mid-play GPU pipelines!)
   const ALWAYS_BUILDABLE_KINDS: readonly BuildingKind[] = [
     'keep_l1',
     'house_l1',
     'woodcutter_l1',
+    'sawmill_l1',
+    'forester_l1',
+    'hunter_l1',
+    'quarry_l1',
+    'iron_mine_l1',
     'farm_l1',
+    'vineyard_l1',
+    'winery_l1',
     'windmill_l1',
     'bakery_l1',
+    'brewery_l1',
+    'pig_farm_l1',
+    'butcher_l1',
+    'tavern_l1',
+    'tannery_l1',
+    'smelter_l1',
+    'smithy_l1',
+    'armourer_l1',
+    'fletcher_l1',
+    'stable_l1',
+    'barracks_l1',
+    'gun_foundry_l1',
     'watchtower_l1',
     'gate_l1',
     'chapel_l1',
-    'smithy_l1',
-    'barracks_l1',
     'market_l1',
     'well_l1',
     'storehouse_l1',
@@ -957,7 +1016,10 @@ export async function buildStage5World(
     if (m) o.material = upgradeFoliageTranslucency(m, skyUniforms, disposableMats, 0.32);
   });
 
-  // 3. Place Buildings (batch repeated static buildings into MultiLodInstancedBatches; animate windmill sails & gate leaves!)
+  // 3. Place Buildings: all non-animated buildings and wall segments are rendered dynamically by `simRenderer`
+  // (`DynBld_*` and `DynWalls`) from `state.buildings` & `state.walls` so there are zero duplicate GPU pipelines
+  // and zero ghost walls/buildings in Tutorial or Skirmish mode! Only buildings with articulated child sub-nodes
+  // (`windmill_l1` rotating sails and `gate_l1` opening oak gate leaves) use static LOD actors hooked to `staticBuildings`.
   const lodActors: LodActor[] = [];
   const multiLodBatches: MultiLodInstancedBatch[] = [];
   const windmillSails: Object3D[] = [];
@@ -995,49 +1057,21 @@ export async function buildStage5World(
     };
     const smokeOffset = findSmokeOffset(tpl.lod0);
 
-    // Batch repeated non-animated buildings (>= 3 instances, e.g., house_l1, watchtower_l1, camp_tent_l1, ruin_house)
-    if (!animatedBuildingKinds.has(kind) && list.length >= 3) {
-      const placements: InstancedPlacement[] = list.map((b) => {
-        const y = terrain.heightAt(b.x, b.z);
-        if (smokeOffset) {
+    // Non-animated buildings are rendered by simRenderer's pre-warmed DynBld_<kind> instanced pools.
+    // Record chimney smoke positions for Keep / Donżon which are always present at map start.
+    if (!animatedBuildingKinds.has(kind)) {
+      if (smokeOffset && (kind === 'keep_l1' || kind === 'fortress_donzon')) {
+        for (const b of list) {
+          const y = terrain.heightAt(b.x, b.z);
           const sx = b.x + smokeOffset.x * Math.cos(b.yawRad) + smokeOffset.z * Math.sin(b.yawRad);
           const sz = b.z - smokeOffset.x * Math.sin(b.yawRad) + smokeOffset.z * Math.cos(b.yawRad);
           smokePositions.push(new Vector3(sx, y + smokeOffset.y, sz));
         }
-        TEMP_POS.set(b.x, y, b.z);
-        TEMP_QUAT.setFromAxisAngle(UP_AXIS, b.yawRad);
-        TEMP_SCALE.set(1, 1, 1);
-        const m = new Matrix4().compose(TEMP_POS, TEMP_QUAT, TEMP_SCALE);
-        return { x: b.x, y, z: b.z, yawRad: b.yawRad, scale: 1, matrix: m, level: 0 };
-      });
-      const bBatch = createMultiLodBatch(
-        scene,
-        `BldBatch_${kind}`,
-        tpl,
-        placements,
-        stage5BuildingLod,
-        shadowProxyMat,
-        surfaces.buildingMaterial,
-        165,
-      );
-      multiLodBatches.push(bBatch);
-      for (const pl of placements) {
-        staticBuildings.push({
-          x: pl.x,
-          z: pl.z,
-          setVisible: (vis) => {
-            const wantHidden = !vis;
-            if (Boolean(pl.hidden) !== wantHidden) {
-              pl.hidden = wantHidden;
-              bBatch.dirtyBuckets = true;
-            }
-          },
-        });
       }
       continue;
     }
 
-    // Individual LOD actor for hero/unique/animated buildings (Keep, Donżon, Windmill, Gate, Chapel, Market, etc.)
+    // Individual LOD actor for animated buildings (Windmill rotating sails, Gate opening oak leaves)
     for (const b of list) {
       const y = terrain.heightAt(b.x, b.z);
       const root = new Group();
@@ -1078,11 +1112,6 @@ export async function buildStage5World(
           staticGates.push({ x: b.x, z: b.z, leafL, leafR });
         }
       }
-      if (smokeOffset) {
-        const sx = b.x + smokeOffset.x * Math.cos(b.yawRad) + smokeOffset.z * Math.sin(b.yawRad);
-        const sz = b.z - smokeOffset.x * Math.sin(b.yawRad) + smokeOffset.z * Math.cos(b.yawRad);
-        smokePositions.push(new Vector3(sx, y + smokeOffset.y, sz));
-      }
 
       lodActors.push({
         root,
@@ -1091,39 +1120,15 @@ export async function buildStage5World(
         thresholds: stage5BuildingLod,
         level: 0,
       });
-      if (kind !== 'gate_l1') {
-        staticBuildings.push({
-          x: b.x,
-          z: b.z,
-          setVisible: (vis) => {
-            root.visible = vis;
-          },
-        });
-      }
+      staticBuildings.push({
+        x: b.x,
+        z: b.z,
+        isGate: kind === 'gate_l1',
+        setVisible: (vis) => {
+          root.visible = vis;
+        },
+      });
     }
-  }
-
-  // 4. Instanced Curtain Wall Segments (even Mission 5's 360+ wall segments draw in <= 3 calls!)
-  if (wallTpl && layout.walls.length > 0) {
-    const wallPlacements: InstancedPlacement[] = layout.walls.map((w) => {
-      const y = terrain.heightAt(w.x, w.z);
-      TEMP_POS.set(w.x, y, w.z);
-      TEMP_QUAT.setFromAxisAngle(UP_AXIS, w.yawRad);
-      TEMP_SCALE.set(1, 1, 1);
-      return { x: w.x, y, z: w.z, yawRad: w.yawRad, scale: 1, matrix: new Matrix4().compose(TEMP_POS, TEMP_QUAT, TEMP_SCALE), level: 0 };
-    });
-    multiLodBatches.push(
-      createMultiLodBatch(
-        scene,
-        'WallSegments',
-        wallTpl,
-        wallPlacements,
-        stage5BuildingLod,
-        shadowProxyMat,
-        surfaces.buildingMaterial,
-        165,
-      ),
-    );
   }
 
   // 5. Batched 3-Species Forest (`oak`, `pine`, `birch`, 420-540 trees in <= 24 draw calls total!)
@@ -1390,7 +1395,7 @@ export async function buildStage5World(
   const unitInstancer = await buildUnitInstancer(scene, loader, unitSpawns, tracker);
 
   // 10. Swaying Golden Wheat, Shoreline Reeds, Chimney Smoke, Capture Points, Contact Shadows & Calibration Rig
-  const wheat = buildWheatField(terrain, layout.farmStrips, quality);
+  const wheat = buildWheatField(terrain, [], quality);
   scene.add(wheat.mesh);
 
   const reeds = buildShorelineReeds(terrain, quality);
@@ -1405,16 +1410,15 @@ export async function buildStage5World(
   // Terrain-conforming ambient ground contact shadows (1 draw call anchoring buildings, trees, props & regiments!)
   const contactBatch = new ContactShadowBatch();
   for (const b of layout.buildings) {
-    contactBatch.addRect(b.x, b.z, b.yardRx * 1.15, b.yardRz * 1.15, b.yawRad, 0.92, 0.95);
+    if (b.kind === 'keep_l1' || b.kind === 'fortress_donzon') {
+      contactBatch.addRect(b.x, b.z, b.yardRx * 1.15, b.yardRz * 1.15, b.yawRad, 0.92, 0.95);
+    }
   }
   for (const tr of layout.trees) {
     contactBatch.addDisc(tr.x, tr.z, 1.45 * tr.scale, 0.72, 0.25);
   }
   for (const p of layout.props) {
     if (p.kind !== 'pier') contactBatch.addDisc(p.x, p.z, p.kind === 'cannon' ? 1.55 : 0.85, 0.78, 0.28);
-  }
-  for (const u of unitSpawns) {
-    if (!u.patrol) contactBatch.addDisc(u.x, u.z, 0.62 * u.scale, 0.72, 0.25);
   }
   const contactShadowMesh = contactBatch.build(
     skyUniforms.uContactShadowGain,
@@ -1579,6 +1583,7 @@ export async function buildStage5World(
     terrain,
     groundWorks,
     syncGroundWorks: () => terrainHandles.syncGroundWorks(),
+    syncDynamicFarms: (blds) => wheat.syncDynamicFarms(blds),
     buildingMaterial: surfaces.buildingMaterial,
     buildingTemplates,
     wallTemplate: wallTpl,
@@ -1602,7 +1607,7 @@ export async function buildStage5World(
   ) => {
     simDrivenUnits = true;
     const hAt = (x: number, z: number): number => terrain.heightAt(x, z);
-    simRenderer.sync(state);
+    simRenderer.sync(state, placementGhost);
     unitInstancer.syncFromSim(state, cameraPos, hAt, state.timeS);
     combatFx.update(
       dtS,

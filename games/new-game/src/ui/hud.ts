@@ -185,10 +185,14 @@ export class GameHud {
   private selMission: CampaignMissionId = 1;
 
   // Gameplay HUD interactive tab state
-  private activeTab: 'build' | 'recruit' | 'production' | null = 'build';
+  private activeTab: 'build' | 'recruit' | 'production' | 'buildings' | null = 'build';
   private activeBranch: BuildingBranch = 'town';
   private activeTool: PlacementTool = null;
+  private showResLabels = false;
   private lastHudRefreshMs = 0;
+  private lastDrawerRefreshMs = 0;
+  private lastInspectorSig = '';
+  private buildingJumpCursor = 0;
   private lastEndShown = false;
 
   // Latest snapshot refs for button handlers
@@ -697,6 +701,16 @@ export class GameHud {
     rotR.textContent = '⟳';
     rotR.addEventListener('click', () => this.cb.onRotateCamera(Math.PI / 6));
 
+    const aaBtn = document.createElement('button');
+    aaBtn.className = `hud-btn hud-btn-sm ${this.showResLabels ? 'active' : ''}`;
+    aaBtn.textContent = 'Aa';
+    aaBtn.title = this.lang === 'pl' ? 'Pokaż/ukryj nazwy towarów' : 'Toggle resource names';
+    aaBtn.addEventListener('click', () => {
+      this.showResLabels = !this.showResLabels;
+      this.rebuildTopControls();
+      this.lastHudRefreshMs = 0;
+    });
+
     const langBtn = document.createElement('button');
     langBtn.className = 'hud-btn hud-btn-sm';
     langBtn.textContent = this.lang.toUpperCase();
@@ -707,46 +721,51 @@ export class GameHud {
     menuBtn.textContent = s.menuBtn;
     menuBtn.addEventListener('click', () => this.cb.onOpenPauseMenu());
 
-    this.speedBarEl.append(pauseBtn, rotL, rotR, langBtn, menuBtn);
+    this.speedBarEl.append(pauseBtn, rotL, rotR, aaBtn, langBtn, menuBtn);
   }
 
-  private rebuildDrawer(): void {
+  private rebuildDrawer(bodyOnly = false): void {
     const s = this.str;
-    // Tab header row
+    // Tab header row (kept persistent when bodyOnly === true so tab clicks NEVER get swallowed by background refresh!)
     let tabBar = this.drawerEl.querySelector('.rts-tab-bar') as HTMLDivElement | null;
     if (!tabBar) {
       tabBar = document.createElement('div');
       tabBar.className = 'rts-tab-bar';
       this.drawerEl.insertBefore(tabBar, this.drawerBodyEl);
     }
-    tabBar.innerHTML = '';
 
-    const tabs: readonly { id: 'build' | 'recruit' | 'production'; label: string }[] = [
-      { id: 'build', label: s.tabBuild },
-      { id: 'recruit', label: s.tabRecruit },
-      { id: 'production', label: s.tabProduction },
-    ];
-    for (const t of tabs) {
-      const btn = document.createElement('button');
-      btn.className = `rts-tab-btn ${this.activeTab === t.id ? 'active' : ''}`;
-      btn.textContent = t.label;
-      btn.addEventListener('click', () => {
-        this.activeTab = this.activeTab === t.id ? null : t.id;
-        this.rebuildDrawer();
-      });
-      tabBar.appendChild(btn);
-    }
+    if (!bodyOnly || tabBar.children.length === 0) {
+      tabBar.innerHTML = '';
+      const tabBuildingsLabel = this.lang === 'pl' ? 'Budynki' : 'Buildings';
+      const tabs: readonly { id: 'build' | 'recruit' | 'production' | 'buildings'; label: string }[] = [
+        { id: 'build', label: s.tabBuild },
+        { id: 'recruit', label: s.tabRecruit },
+        { id: 'production', label: s.tabProduction },
+        { id: 'buildings', label: tabBuildingsLabel },
+      ];
+      for (const t of tabs) {
+        const btn = document.createElement('button');
+        btn.className = `rts-tab-btn ${this.activeTab === t.id ? 'active' : ''}`;
+        btn.setAttribute('data-tab', t.id);
+        btn.textContent = t.label;
+        btn.addEventListener('click', () => {
+          this.activeTab = this.activeTab === t.id ? null : t.id;
+          this.rebuildDrawer(false);
+        });
+        tabBar.appendChild(btn);
+      }
 
-    if (this.activeTool) {
-      const rotBtn = document.createElement('button');
-      rotBtn.className = 'rts-tab-btn';
-      rotBtn.textContent = '↻ R';
-      rotBtn.addEventListener('click', () => this.cb.onRotatePlacement());
-      const cancelBtn = document.createElement('button');
-      cancelBtn.className = 'rts-tab-btn bad';
-      cancelBtn.textContent = `✕ ${s.cancelTool}`;
-      cancelBtn.addEventListener('click', () => this.cb.onSelectTool(null));
-      tabBar.append(rotBtn, cancelBtn);
+      if (this.activeTool) {
+        const rotBtn = document.createElement('button');
+        rotBtn.className = 'rts-tab-btn';
+        rotBtn.textContent = '↻ R';
+        rotBtn.addEventListener('click', () => this.cb.onRotatePlacement());
+        const cancelBtn = document.createElement('button');
+        cancelBtn.className = 'rts-tab-btn bad';
+        cancelBtn.textContent = `✕ ${s.cancelTool}`;
+        cancelBtn.addEventListener('click', () => this.cb.onSelectTool(null));
+        tabBar.append(rotBtn, cancelBtn);
+      }
     }
 
     this.drawerBodyEl.classList.toggle('hidden', this.activeTab === null);
@@ -760,10 +779,11 @@ export class GameHud {
       for (const br of BUILD_BRANCHES) {
         const b = document.createElement('button');
         b.className = `rts-pill ${this.activeBranch === br ? 'active' : ''}`;
+        b.setAttribute('data-branch', br);
         b.textContent = s.branchNames[br];
         b.addEventListener('click', () => {
           this.activeBranch = br;
-          this.rebuildDrawer();
+          this.rebuildDrawer(false);
         });
         brRow.appendChild(b);
       }
@@ -781,6 +801,7 @@ export class GameHud {
         const btn = document.createElement('button');
         const isSel = this.activeTool?.kind === it.tool?.kind;
         btn.className = `rts-item-btn rts-item-sm ${isSel ? 'active' : ''}`;
+        if (it.tool) btn.setAttribute('data-tool', it.tool.kind);
         btn.innerHTML = `<span>${it.label}</span><small>${it.cost}</small>`;
         btn.addEventListener('click', () => this.cb.onSelectTool(isSel ? null : it.tool));
         infraRow.appendChild(btn);
@@ -800,6 +821,7 @@ export class GameHud {
         const isSel = this.activeTool?.kind === 'building' && this.activeTool.buildingType === bId;
         const btn = document.createElement('button');
         btn.className = `rts-item-btn ${isSel ? 'active' : ''} ${canAffordGold ? '' : 'dim'}`;
+        btn.setAttribute('data-build', bId);
         btn.innerHTML = `<span>${s.buildings[bId]}</span><small>${formatCostShort(def.cost)}</small>`;
         btn.title = `${s.buildings[bId]} (${formatCostShort(def.cost)})`;
         btn.addEventListener('click', () => {
@@ -850,9 +872,16 @@ export class GameHud {
       }
       this.drawerBodyEl.appendChild(grid);
     } else if (this.activeTab === 'production' && this.latestState) {
-      // Production ledger + clickable Bottlenecks!
+      // Complete 21-good Production ledger + clickable Bottlenecks (docs/MANUAL.md §4.3)!
       const rates = computeProductionRates(this.latestState, 0);
       const bns = listBottlenecks(this.latestState, 0);
+      const yardTotals: Partial<Record<GoodId, number>> = {};
+      for (const b of this.latestState.buildings) {
+        if (b.side !== 0 || b.hp <= 0) continue;
+        for (const g of Object.keys(b.yard) as GoodId[]) {
+          yardTotals[g] = (yardTotals[g] ?? 0) + (b.yard[g] ?? 0);
+        }
+      }
 
       const bnHeader = document.createElement('div');
       bnHeader.className = 'rts-sec-title';
@@ -867,7 +896,7 @@ export class GameHud {
       } else {
         const bnList = document.createElement('div');
         bnList.className = 'rts-bn-list';
-        for (const bn of bns.slice(0, 6)) {
+        for (const bn of bns.slice(0, 8)) {
           const btn = document.createElement('button');
           btn.className = 'rts-bn-btn';
           const miss = bn.missingGood ? ` (${s.goods[bn.missingGood]})` : '';
@@ -878,18 +907,59 @@ export class GameHud {
         this.drawerBodyEl.appendChild(bnList);
       }
 
+      const yardHeader = this.lang === 'pl' ? 'Podw.' : 'Yards';
       const table = document.createElement('table');
       table.className = 'rts-prod-table';
-      table.innerHTML = `<thead><tr><th>${s.prodHeaderGood}</th><th>${s.prodHeaderStock}</th><th>${s.prodHeaderRate}</th><th>${s.prodHeaderNet}</th></tr></thead>`;
+      table.innerHTML = `<thead><tr><th>${s.prodHeaderGood}</th><th>${s.prodHeaderStock}</th><th>${yardHeader}</th><th>${s.prodHeaderRate}</th><th>${s.prodHeaderNet}</th></tr></thead>`;
       const tb = document.createElement('tbody');
-      for (const r of rates.slice(0, 14)) {
+      for (const r of rates) {
         const tr = document.createElement('tr');
         const netCls = r.netPerMin > 0.1 ? 'pos' : r.netPerMin < -0.1 ? 'neg' : '';
-        tr.innerHTML = `<td>${s.goods[r.good]}</td><td>${Math.floor(r.stock)}</td><td>+${r.producedPerMin.toFixed(1)}</td><td class="${netCls}">${r.netPerMin >= 0 ? '+' : ''}${r.netPerMin.toFixed(1)}</td>`;
+        const yAmt = Math.floor(yardTotals[r.good] ?? 0);
+        tr.innerHTML =
+          `<td>${s.goods[r.good]}</td>` +
+          `<td><strong>${Math.floor(r.stock)}</strong></td>` +
+          `<td>${yAmt > 0 ? yAmt : '·'}</td>` +
+          `<td>+${r.producedPerMin.toFixed(1)}</td>` +
+          `<td class="${netCls}">${r.netPerMin >= 0 ? '+' : ''}${r.netPerMin.toFixed(1)}</td>`;
         tb.appendChild(tr);
       }
       table.appendChild(tb);
       this.drawerBodyEl.appendChild(table);
+    } else if (this.activeTab === 'buildings' && this.latestState) {
+      // 4th Tab: Buildings overview by type (count, levels, constructing, stalled, click to cycle camera & inspect; docs/MANUAL.md §4.4)
+      const p0Blds = this.latestState.buildings.filter((b) => b.side === 0 && b.hp > 0);
+      const byType = new Map<BuildingTypeId, BuildingEntity[]>();
+      for (const b of p0Blds) {
+        const arr = byType.get(b.type) ?? [];
+        arr.push(b);
+        byType.set(b.type, arr);
+      }
+      const listEl = document.createElement('div');
+      listEl.className = 'rts-bn-list';
+      for (const [bType, arr] of byType) {
+        const l1 = arr.filter((x) => x.level === 1 && x.buildProgress >= 1).length;
+        const l2 = arr.filter((x) => x.level === 2 && x.buildProgress >= 1).length;
+        const l3 = arr.filter((x) => x.level === 3 && x.buildProgress >= 1).length;
+        const constr = arr.filter((x) => x.buildProgress < 1 || x.upgradingToLevel !== null).length;
+        const stalled = arr.filter((x) => x.buildProgress >= 1 && (x.status === 'noInput' || x.status === 'noWorker' || x.status === 'yardFull')).length;
+        const lvlParts: string[] = [];
+        if (l1 > 0) lvlParts.push(`${l1}×L1`);
+        if (l2 > 0) lvlParts.push(`${l2}×L2`);
+        if (l3 > 0) lvlParts.push(`${l3}×L3`);
+        if (constr > 0) lvlParts.push(`⏳${constr}`);
+        if (stalled > 0) lvlParts.push(`⚠${stalled}`);
+        const row = document.createElement('button');
+        row.className = 'rts-bn-btn';
+        row.textContent = `${s.buildings[bType]} (${arr.length}) · ${lvlParts.join(' ')}`;
+        row.addEventListener('click', () => {
+          const target = arr[this.buildingJumpCursor % arr.length]!;
+          this.buildingJumpCursor++;
+          this.cb.onJumpCamera(target.x, target.z);
+        });
+        listEl.appendChild(row);
+      }
+      this.drawerBodyEl.appendChild(listEl);
     }
   }
 
@@ -925,16 +995,49 @@ export class GameHud {
     const armyCap = getArmyCap(state);
     const rations = Math.floor(countFoodRationsInStock(p0.stock));
 
-    // Top resource bar
+    // Complete 21-good Top Resource Bar grouped into Materials, Food, Craft & Military + Pop & Army (docs/MANUAL.md §3.1)!
+    const GOOD_ICONS: Record<GoodId, string> = {
+      gold: '🪙',
+      timber: '🪵',
+      planks: '🪚',
+      stone: '🪨',
+      grain: '🌾',
+      flour: '🥡',
+      bread: '🍞',
+      fish: '🐟',
+      meat: '🥩',
+      sausages: '🌭',
+      grapes: '🍇',
+      wine: '🍷',
+      ale: '🍺',
+      hides: '🦌',
+      leatherArmour: '🦺',
+      ironOre: '⛏',
+      iron: '🔩',
+      weapons: '⚔',
+      mail: '🛡',
+      bows: '🏹',
+      horses: '🐎',
+    };
+    const chip = (g: GoodId, extraCls = ''): string => {
+      const val = Math.floor(p0.stock[g] ?? 0);
+      const lbl = this.showResLabels ? ` ${s.goods[g]}` : '';
+      return `<span class="res-chip ${extraCls}" title="${s.goods[g]}: ${val}">${GOOD_ICONS[g]}${lbl} ${val}</span>`;
+    };
+    const matGroup: readonly GoodId[] = ['gold', 'timber', 'planks', 'stone'];
+    const foodGroup: readonly GoodId[] = ['grain', 'flour', 'bread', 'fish', 'meat', 'sausages', 'grapes', 'wine', 'ale'];
+    const craftGroup: readonly GoodId[] = ['hides', 'leatherArmour', 'ironOre', 'iron', 'weapons', 'mail', 'bows', 'horses'];
+
     this.resBarEl.innerHTML =
-      `<span class="res-chip gold">🪙 ${Math.floor(p0.stock.gold)}</span>` +
-      `<span class="res-chip">🪵 ${Math.floor(p0.stock.timber)}${p0.stock.planks > 0 ? `/${Math.floor(p0.stock.planks)}` : ''}</span>` +
-      `<span class="res-chip">🪨 ${Math.floor(p0.stock.stone)}</span>` +
-      `<span class="res-chip ${rations < 10 ? 'warn' : ''}">🍞 ${rations}</span>` +
-      `<span class="res-chip">🍷 ${Math.floor(p0.stock.wine)}</span>` +
-      `<span class="res-chip">⚔ ${Math.floor(p0.stock.weapons)}/${Math.floor(p0.stock.leatherArmour + p0.stock.mail)}/${Math.floor(p0.stock.bows)}</span>` +
+      matGroup.map((g) => chip(g, g === 'gold' ? 'gold' : '')).join('') +
+      `<span class="res-sep">|</span>` +
+      foodGroup.map((g) => chip(g)).join('') +
+      `<span class="res-sep">|</span>` +
+      craftGroup.map((g) => chip(g)).join('') +
+      `<span class="res-sep">|</span>` +
+      `<span class="res-chip ${rations < 10 ? 'warn' : ''}" title="Racje żywności">🍽 ${rations}</span>` +
       `<span class="res-chip">👥 ${pop.total}/${pop.capacity} (${s.freeCarriersLabel} ${pop.carriers + pop.builders})</span>` +
-      `<span class="res-chip ${p0.armyStarving || p0.unpaidPenaltyActive ? 'warn' : ''}">🛡 ${armyMen}/${armyCap}</span>`;
+      `<span class="res-chip ${p0.armyStarving || p0.unpaidPenaltyActive ? 'warn' : ''}">⚔ ${armyMen}/${armyCap}</span>`;
 
     // Objective / Scenario strip
     this.objStripEl.innerHTML = '';
@@ -991,9 +1094,14 @@ export class GameHud {
       this.objStripEl.appendChild(w);
     }
 
-    // Refresh Production tab live when open
-    if (this.activeTab === 'production') {
-      this.rebuildDrawer();
+    // Refresh Production / Buildings body at a calm 900 ms cadence without touching tab buttons or interrupting hover clicks!
+    if (
+      (this.activeTab === 'production' || this.activeTab === 'buildings') &&
+      now - this.lastDrawerRefreshMs >= 900 &&
+      !this.drawerEl.matches(':hover')
+    ) {
+      this.lastDrawerRefreshMs = now;
+      this.rebuildDrawer(true);
     }
 
     // Clickable alerts feed (last 4 side-0 alerts within 45 s)
@@ -1037,7 +1145,7 @@ export class GameHud {
       this.regStripEl.appendChild(card);
     }
 
-    this.refreshInspector();
+    this.refreshInspector(false);
 
     // Victory / Defeat End Screen trigger!
     if (sc.outcome !== 'playing' && !this.lastEndShown) {
@@ -1046,10 +1154,11 @@ export class GameHud {
     }
   }
 
-  refreshInspector(): void {
+  refreshInspector(force = true): void {
     const state = this.latestState;
     if (!state) {
       this.inspectorEl.classList.add('hidden');
+      this.lastInspectorSig = '';
       return;
     }
     const s = this.str;
@@ -1063,22 +1172,33 @@ export class GameHud {
       }
       if (regs.length === 0) {
         this.inspectorEl.classList.add('hidden');
+        this.lastInspectorSig = '';
         return;
       }
       this.inspectorEl.classList.remove('hidden');
-      this.inspectorEl.innerHTML = '';
 
       const primary = regs[0]!;
       const def = UNIT_DEFS[primary.unitType];
       const alive = countAliveSoldiers(primary);
       const ids = regs.map((r) => r.id);
+      const regSig = `r:${ids.join(',')}:${primary.unitType}:${primary.formation}:${primary.stance}:${primary.holdFire}:${primary.routing}`;
 
-      const header = document.createElement('div');
-      header.className = 'insp-head';
-      header.innerHTML =
+      const headHtml =
         `<strong>${regs.length > 1 ? `${regs.length}× ` : ''}${s.units[primary.unitType]}</strong>` +
         `<span>${alive}/${primary.maxMen} · ${s.moraleLabel} ${Math.round(primary.morale)}/${Math.round(primary.maxMorale)} · ${s.fatigueLabel} ${Math.round(primary.fatigue * 100)}%</span>` +
         `<span class="insp-cap">${primary.routing ? s.routingLabel : def.unitClass === 'siege' ? '' : primary.captainAlive ? s.captainAlive : s.captainFallen}${primary.veteranTier > 0 ? ` · ${s.veteranLabel} ${'★'.repeat(primary.veteranTier)}` : ''}</span>`;
+
+      if (!force && regSig === this.lastInspectorSig) {
+        const existingHead = this.inspectorEl.querySelector('.insp-head');
+        if (existingHead) existingHead.innerHTML = headHtml;
+        return;
+      }
+      this.lastInspectorSig = regSig;
+      this.inspectorEl.innerHTML = '';
+
+      const header = document.createElement('div');
+      header.className = 'insp-head';
+      header.innerHTML = headHtml;
       this.inspectorEl.appendChild(header);
 
       const actRow = document.createElement('div');
@@ -1157,50 +1277,108 @@ export class GameHud {
       return;
     }
 
-    // 2. Selected Building Inspector
+    // 2. Selected Building Inspector (diffed by signature so Upgrade/Pause/Demolish buttons NEVER drop clicks!)
     if (this.latestSelectedBld !== null) {
       const b: BuildingEntity | undefined = state.buildings.find((x) => x.id === this.latestSelectedBld && x.hp > 0);
       if (!b) {
         this.inspectorEl.classList.add('hidden');
+        this.lastInspectorSig = '';
         return;
       }
       this.inspectorEl.classList.remove('hidden');
-      this.inspectorEl.innerHTML = '';
 
       const def = BUILDING_DEFS[b.type];
+      const uCheck = inspectBuildingUpgrade(state, 0, b);
+      const formatGoodList = (map: ResourceMap, includeSawmillHint = false): string => {
+        const hasSawmill = state.buildings.some(
+          (x) => x.side === 0 && x.type === 'sawmill' && x.hp > 0 && x.buildProgress >= 1,
+        );
+        const parts: string[] = [];
+        for (const g of Object.keys(map) as GoodId[]) {
+          const amt = map[g] ?? 0;
+          if (amt <= 0) continue;
+          const hint = includeSawmillHint && g === 'planks' && !hasSawmill ? ` (${s.sawmillHint})` : '';
+          parts.push(`${amt} ${s.goods[g]}${hint}`);
+        }
+        return parts.join(', ');
+      };
+
+      const matProgressStr = (): string => {
+        const parts: string[] = [];
+        for (const g of Object.keys(b.buildCostNeeded) as GoodId[]) {
+          const need = b.buildCostNeeded[g] ?? 0;
+          if (need <= 0) continue;
+          const deliv = Math.min(need, Math.floor(b.buildCostDelivered[g] ?? 0));
+          parts.push(`${s.goods[g]} ${deliv}/${need}`);
+        }
+        return parts.length > 0 ? ` (${parts.join(', ')})` : '';
+      };
+
       const extra =
         b.type === 'house'
           ? ` · ${s.residentsLabel}: ${b.residents}/${ECONOMY.houseCapacityByLevel[b.level - 1]} · 🍞${b.houseFoodRations.toFixed(1)} 🍷${b.houseWineCasks.toFixed(1)}`
           : b.buildProgress < 1
-            ? ` · ${Math.round(b.buildProgress * 100)}%`
-            : '';
+            ? ` · ${Math.round(b.buildProgress * 100)}%${matProgressStr()}`
+            : b.upgradingToLevel !== null
+              ? ` · → ${s.levelLabel}${b.upgradingToLevel}${matProgressStr()}`
+              : (b.type === 'farm' || b.type === 'vineyard') && b.strips.length > 0
+                ? ` · ${this.lang === 'pl' ? 'Pola' : 'Strips'}: ${b.strips.length}/12`
+                : '';
+
+      const headHtml =
+        `<strong>${s.buildings[b.type]} ${s.levelLabel}${b.level}/${def.maxLevel}</strong>` +
+        `<span>${s.hpLabel} ${Math.round(b.hp)}/${b.maxHp} · ${s.statusLabels[b.status] ?? b.status}${extra}</span>`;
+
+      let upgradeNoteText = '';
+      let upgradeNoteWarn = false;
+      if (b.side === 0 && b.type !== 'ruin' && def.maxLevel > 1) {
+        if (uCheck.reason === 'maxLevel') {
+          upgradeNoteText = `✓ ${s.upgradeMaxLevel(b.level)}`;
+        } else if (uCheck.reason === 'alreadyUpgrading' && b.upgradingToLevel !== null) {
+          const targetDur =
+            b.type === 'keep'
+              ? ECONOMY.keepLevels[b.upgradingToLevel - 1]!.upgradeS
+              : ECONOMY.upgradeBuilderS;
+          const pct = Math.min(99, Math.round((b.upgradeTimerS / Math.max(1, targetDur)) * 100));
+          upgradeNoteText = `⏳ ${s.upgradeInProgress(b.upgradingToLevel, pct)}${matProgressStr()}`;
+        } else if (!uCheck.canUpgrade && uCheck.targetLevel !== null) {
+          upgradeNoteWarn = true;
+          if (uCheck.reason === 'constructing') {
+            upgradeNoteText = `⚠ ${s.upgradeWaitBuild(Math.round(b.buildProgress * 100))}`;
+          } else if (uCheck.reason === 'needsKeepUpgrade') {
+            upgradeNoteText = `⚠ ${s.upgradeNeedsKeep(uCheck.requiredKeepLevel ?? uCheck.targetLevel)}`;
+          } else if (uCheck.reason === 'insufficientResources') {
+            upgradeNoteText = `⚠ ${s.upgradeMissing(formatGoodList(uCheck.missing, true))}`;
+          }
+        }
+      }
+
+      const missingSig = Object.keys(uCheck.missing)
+        .map((g) => `${g}:${uCheck.missing[g as GoodId]}`)
+        .join(',');
+      const bldSig = `b:${b.id}:${b.type}:${b.level}:${b.upgradingToLevel}:${b.paused}:${b.buildProgress < 1}:${uCheck.canUpgrade}:${uCheck.reason}:${missingSig}:${this.lang}`;
+
+      if (!force && bldSig === this.lastInspectorSig) {
+        const existingHead = this.inspectorEl.querySelector('.insp-head');
+        if (existingHead) existingHead.innerHTML = headHtml;
+        const existingNote = this.inspectorEl.querySelector('.insp-upgrade-note');
+        if (existingNote && upgradeNoteText) {
+          existingNote.textContent = upgradeNoteText;
+          existingNote.className = `insp-upgrade-note ${upgradeNoteWarn ? 'warn' : ''}`;
+        }
+        return;
+      }
+      this.lastInspectorSig = bldSig;
+      this.inspectorEl.innerHTML = '';
 
       const head = document.createElement('div');
       head.className = 'insp-head';
-      head.innerHTML =
-        `<strong>${s.buildings[b.type]} ${s.levelLabel}${b.level}</strong>` +
-        `<span>${s.hpLabel} ${Math.round(b.hp)}/${b.maxHp} · ${s.statusLabels[b.status] ?? b.status}${extra}</span>`;
+      head.innerHTML = headHtml;
       this.inspectorEl.appendChild(head);
 
       if (b.side === 0) {
         const actRow = document.createElement('div');
         actRow.className = 'insp-actions';
-        let upgradeNoteText = '';
-        let upgradeNoteWarn = false;
-
-        const formatGoodList = (map: ResourceMap, includeSawmillHint = false): string => {
-          const hasSawmill = state.buildings.some(
-            (x) => x.side === 0 && x.type === 'sawmill' && x.hp > 0 && x.buildProgress >= 1,
-          );
-          const parts: string[] = [];
-          for (const g of Object.keys(map) as GoodId[]) {
-            const amt = map[g] ?? 0;
-            if (amt <= 0) continue;
-            const hint = includeSawmillHint && g === 'planks' && !hasSawmill ? ` (${s.sawmillHint})` : '';
-            parts.push(`${amt} ${s.goods[g]}${hint}`);
-          }
-          return parts.join(', ');
-        };
 
         if (b.type === 'ruin') {
           const base = BUILDING_DEFS.house.cost;
@@ -1227,51 +1405,47 @@ export class GameHud {
             upgradeNoteWarn = true;
           }
         } else {
-          const uCheck = inspectBuildingUpgrade(state, 0, b);
-          if (def.maxLevel > 1) {
-            if (uCheck.reason === 'maxLevel') {
-              upgradeNoteText = `✓ ${s.upgradeMaxLevel(b.level)}`;
-            } else if (uCheck.reason === 'alreadyUpgrading' && b.upgradingToLevel !== null) {
-              const targetDur =
-                b.type === 'keep'
-                  ? ECONOMY.keepLevels[b.upgradingToLevel - 1]!.upgradeS
-                  : ECONOMY.upgradeBuilderS;
-              const pct = Math.min(99, Math.round((b.upgradeTimerS / Math.max(1, targetDur)) * 100));
-              upgradeNoteText = `⏳ ${s.upgradeInProgress(b.upgradingToLevel, pct)}`;
-            } else if (uCheck.targetLevel !== null) {
-              const costStr = formatGoodList(uCheck.cost);
-              const up = document.createElement('button');
-              up.className = `insp-btn ${uCheck.canUpgrade ? 'btn-primary' : 'disabled'}`;
-              up.disabled = !uCheck.canUpgrade;
-              up.textContent = `${s.upgradeBtn} → ${s.levelLabel}${uCheck.targetLevel} (${costStr})`;
-              up.addEventListener('click', () => this.cb.onExecute({ type: 'upgradeBuilding', side: 0, buildingId: b.id }));
-              actRow.appendChild(up);
+          if (def.maxLevel > 1 && uCheck.targetLevel !== null && uCheck.reason !== 'alreadyUpgrading') {
+            const costStr = formatGoodList(uCheck.cost);
+            const up = document.createElement('button');
+            up.className = `insp-btn ${uCheck.canUpgrade ? 'btn-primary' : 'disabled'}`;
+            up.disabled = !uCheck.canUpgrade;
+            up.textContent = `${s.upgradeBtn} → ${s.levelLabel}${uCheck.targetLevel} (${costStr})`;
+            up.addEventListener('click', () => {
+              this.cb.onExecute({ type: 'upgradeBuilding', side: 0, buildingId: b.id });
+              this.refreshInspector(true);
+            });
+            actRow.appendChild(up);
+          }
 
-              if (!uCheck.canUpgrade) {
-                upgradeNoteWarn = true;
-                if (uCheck.reason === 'constructing') {
-                  upgradeNoteText = `⚠ ${s.upgradeWaitBuild(Math.round(b.buildProgress * 100))}`;
-                } else if (uCheck.reason === 'needsKeepUpgrade') {
-                  upgradeNoteText = `⚠ ${s.upgradeNeedsKeep(uCheck.requiredKeepLevel ?? uCheck.targetLevel)}`;
-                } else if (uCheck.reason === 'insufficientResources') {
-                  upgradeNoteText = `⚠ ${s.upgradeMissing(formatGoodList(uCheck.missing, true))}`;
-                }
-              }
-            }
+          if (b.buildProgress < 1 && b.type !== 'keep') {
+            const rotB = document.createElement('button');
+            rotB.className = 'insp-btn';
+            rotB.textContent = '↻ R';
+            rotB.addEventListener('click', () => {
+              this.cb.onExecute({ type: 'rotateBuilding', side: 0, buildingId: b.id, yawRad: b.yawRad + Math.PI * 0.5 });
+            });
+            actRow.appendChild(rotB);
           }
 
           if (b.type !== 'keep' && b.buildProgress >= 1) {
             const ps = document.createElement('button');
             ps.className = 'insp-btn';
             ps.textContent = b.paused ? s.resumeShopBtn : s.pauseShopBtn;
-            ps.addEventListener('click', () => this.cb.onExecute({ type: 'togglePauseBuilding', side: 0, buildingId: b.id }));
+            ps.addEventListener('click', () => {
+              this.cb.onExecute({ type: 'togglePauseBuilding', side: 0, buildingId: b.id });
+              this.refreshInspector(true);
+            });
             actRow.appendChild(ps);
           }
           if (b.type !== 'keep') {
             const dm = document.createElement('button');
             dm.className = 'insp-btn danger';
             dm.textContent = s.demolishBtn;
-            dm.addEventListener('click', () => this.cb.onExecute({ type: 'demolishBuilding', side: 0, buildingId: b.id }));
+            dm.addEventListener('click', () => {
+              this.cb.onExecute({ type: 'demolishBuilding', side: 0, buildingId: b.id });
+              this.refreshInspector(true);
+            });
             actRow.appendChild(dm);
           }
         }
@@ -1308,6 +1482,7 @@ export class GameHud {
     }
 
     this.inspectorEl.classList.add('hidden');
+    this.lastInspectorSig = '';
   }
 
   private showEndScreen(state: SimWorldState): void {

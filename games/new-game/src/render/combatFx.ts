@@ -36,6 +36,7 @@ import { markStaticInstances } from './instancing.ts';
 import { BUILDING_DEFS, UNIT_DEFS, type BuildingTypeId, type GoodId } from '../config.ts';
 import type { FxEvent, SimWorldState } from '../sim/types.ts';
 import { computeFormationSlotOffset, countAliveSoldiers } from '../sim/combat.ts';
+import { computeBuildingStripTransform } from '../sim/economy.ts';
 
 export interface FormationGhostPreview {
   readonly active: boolean;
@@ -659,6 +660,21 @@ export function buildCombatFx(scene: Scene): CombatFxHandles {
         ringMesh.setColorAt(ringCount, col);
         ringCount++;
 
+        // Front entrance / doorway apron ring pointing out the building's doorway direction (+Z local rotated by yawRad)!
+        if (ringCount < 128) {
+          const fx = Math.sin(placementGhost.yawRad);
+          const fz = Math.cos(placementGhost.yawRad);
+          const ex = placementGhost.x + fx * (rad + 1.45);
+          const ez = placementGhost.z + fz * (rad + 1.45);
+          TEMP_POS.set(ex, heightAt(ex, ez) + 0.20, ez);
+          TEMP_QUAT.identity();
+          TEMP_SCALE.set(1.25, 1, 1.25);
+          TEMP_MAT.compose(TEMP_POS, TEMP_QUAT, TEMP_SCALE);
+          ringMesh.setMatrixAt(ringCount, TEMP_MAT);
+          ringMesh.setColorAt(ringCount, col);
+          ringCount++;
+        }
+
         // When placing a Quarry or Iron Mine, pulse bright 15 m build-radius rings around EVERY matching deposit!
         const wantKind =
           placementGhost.buildingType === 'quarry'
@@ -684,10 +700,10 @@ export function buildCombatFx(scene: Scene): CombatFxHandles {
       }
     }
 
-    // 2. Carried goods crates/sacks visibly held by Carriers
+    // 2. Carried goods crates/sacks visibly held by Carriers + Building Entrance Direction Arrow & Farm/Vineyard Strip Previews!
     let crateCount = 0;
     for (const c of state.citizens) {
-      if (!c.carryingGood || crateCount >= 140) continue;
+      if (!c.carryingGood || crateCount >= 110) continue;
       const y = heightAt(c.x, c.z);
       const bob = Math.abs(Math.sin(c.travelM * 3.1)) * 0.08;
       const fx = Math.sin(c.yawRad) * 0.34;
@@ -706,6 +722,81 @@ export function buildCombatFx(scene: Scene): CombatFxHandles {
         crateMesh.setColorAt(crateCount, COL_CRATE_DEFAULT);
       }
       crateCount++;
+    }
+
+    // Helper drawing a bold 4-piece 3D Entrance / Doorway Direction Arrow (threshold bar + shaft + twin chevron wings)
+    const pushEntranceDirectionArrow = (bx: number, bz: number, yawRad: number, radM: number, arrowCol: Color) => {
+      if (crateCount + 4 > 140) return;
+      const fx = Math.sin(yawRad);
+      const fz = Math.cos(yawRad);
+      const rx = Math.cos(yawRad);
+      const rz = -Math.sin(yawRad);
+
+      // 1) Wide doorway threshold bar right across the front entrance (+Z local)
+      const tx = bx + fx * (radM * 0.86);
+      const tz = bz + fz * (radM * 0.86);
+      TEMP_POS.set(tx, heightAt(tx, tz) + 0.24, tz);
+      TEMP_QUAT.setFromAxisAngle(UP, yawRad);
+      TEMP_SCALE.set(5.4, 0.85, 1.35);
+      TEMP_MAT.compose(TEMP_POS, TEMP_QUAT, TEMP_SCALE);
+      crateMesh.setMatrixAt(crateCount, TEMP_MAT);
+      crateMesh.setColorAt(crateCount, arrowCol);
+      crateCount++;
+
+      // 2) Outward-pointing arrow shaft from doorway threshold into the front apron
+      const sx = bx + fx * (radM + 1.15);
+      const sz = bz + fz * (radM + 1.15);
+      TEMP_POS.set(sx, heightAt(sx, sz) + 0.24, sz);
+      TEMP_QUAT.setFromAxisAngle(UP, yawRad);
+      TEMP_SCALE.set(1.55, 0.85, 6.2);
+      TEMP_MAT.compose(TEMP_POS, TEMP_QUAT, TEMP_SCALE);
+      crateMesh.setMatrixAt(crateCount, TEMP_MAT);
+      crateMesh.setColorAt(crateCount, arrowCol);
+      crateCount++;
+
+      // 3 & 4) Left & right chevron arrowhead wings meeting at (radM + 2.45 m)
+      for (const side of [-1, 1] as const) {
+        const wx = bx + fx * (radM + 1.95) + rx * (side * 0.62);
+        const wz = bz + fz * (radM + 1.95) + rz * (side * 0.62);
+        TEMP_POS.set(wx, heightAt(wx, wz) + 0.26, wz);
+        TEMP_QUAT.setFromAxisAngle(UP, yawRad - side * 0.62);
+        TEMP_SCALE.set(1.35, 0.90, 4.2);
+        TEMP_MAT.compose(TEMP_POS, TEMP_QUAT, TEMP_SCALE);
+        crateMesh.setMatrixAt(crateCount, TEMP_MAT);
+        crateMesh.setColorAt(crateCount, arrowCol);
+        crateCount++;
+      }
+    };
+
+    if (placementGhost && placementGhost.active && (placementGhost.mode === 'building' || placementGhost.mode === 'gate')) {
+      const rad = placementGhost.buildingType ? BUILDING_DEFS[placementGhost.buildingType].radiusM : 3.4;
+      const col = placementGhost.valid ? COL_VALID : COL_INVALID;
+      pushEntranceDirectionArrow(placementGhost.x, placementGhost.z, placementGhost.yawRad, rad, col);
+
+      // For Farm & Vineyard: preview the 12 rear cultivated field strips in Level 1 (green), Level 2 (amber), Level 3 (pale gold) (docs/MANUAL.md §4.1)!
+      if (placementGhost.buildingType === 'farm' || placementGhost.buildingType === 'vineyard') {
+        for (let si = 0; si < 12 && crateCount < 140; si++) {
+          const st = computeBuildingStripTransform(placementGhost, si);
+          TEMP_POS.set(st.cx, heightAt(st.cx, st.cz) + 0.16, st.cz);
+          TEMP_QUAT.setFromAxisAngle(UP, placementGhost.yawRad);
+          TEMP_SCALE.set(22.0, 0.35, 4.8);
+          TEMP_MAT.compose(TEMP_POS, TEMP_QUAT, TEMP_SCALE);
+          crateMesh.setMatrixAt(crateCount, TEMP_MAT);
+          if (!placementGhost.valid) {
+            crateMesh.setColorAt(crateCount, COL_INVALID);
+          } else {
+            COL_TMP.setHex(si < 4 ? 0x3dc468 : si < 8 ? 0xd9a838 : 0xe8deb5);
+            crateMesh.setColorAt(crateCount, COL_TMP);
+          }
+          crateCount++;
+        }
+      }
+    } else if (selectedBuildingId !== null) {
+      const sb = state.buildings.find((b) => b.id === selectedBuildingId && b.hp > 0);
+      if (sb && sb.type !== 'ruin') {
+        const rad = BUILDING_DEFS[sb.type].radiusM;
+        pushEntranceDirectionArrow(sb.x, sb.z, sb.yawRad, rad, COL_GOLD);
+      }
     }
 
     // 3. Ballistic Projectiles (Arrows/Bolts + Cannonballs/Mortar Shells)

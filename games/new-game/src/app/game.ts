@@ -661,20 +661,33 @@ export class Game {
         this.toggleActivePause();
       } else if (action === 'menu') {
         e.preventDefault();
-        if (this.inputCtrl.placementTool) {
-          this.inputCtrl.setPlacementTool(null);
+        if (this.inputCtrl.cancelPlacementStepOrTool()) {
+          this.sound.playUi('uiClick');
+        } else if (this.inputCtrl.selectedRegimentIds.size > 0 || this.inputCtrl.selectedBuildingId !== null) {
+          this.inputCtrl.selectBuilding(null);
         } else if (this.ui.isPauseMenuOpen()) {
           this.resumeFromPauseMenu();
         } else {
           this.openPauseMenu();
         }
+      } else if (e.code === 'KeyT' && !this.ui.isPauseMenuOpen()) {
+        this.inputCtrl.toggleGridSnap();
+        this.sound.playUi('uiClick');
       } else if (action === 'nextLighting') {
         const idx = (LIGHTING_ORDER.indexOf(this.lighting.state.presetId) + 1) % LIGHTING_ORDER.length;
         this.setLightingPreset(LIGHTING_ORDER[idx] ?? 'lateAutumn');
       } else if (action === 'buildRoad' && !this.ui.isPauseMenuOpen()) {
         this.inputCtrl.setPlacementTool(this.inputCtrl.placementTool?.kind === 'road' ? null : { kind: 'road' });
-      } else if (action === 'rotateBuilding' && this.inputCtrl.placementTool) {
-        this.inputCtrl.rotatePlacement();
+      } else if (action === 'rotateBuilding') {
+        if (this.inputCtrl.placementTool) {
+          this.inputCtrl.rotatePlacement();
+          this.sound.playUi('uiClick');
+        } else if (this.inputCtrl.selectedBuildingId !== null) {
+          const sb = this.sim.state.buildings.find((b) => b.id === this.inputCtrl.selectedBuildingId && b.side === 0 && b.hp > 0);
+          if (sb && sb.buildProgress < 1) {
+            this.executeSimCommand({ type: 'rotateBuilding', side: 0, buildingId: sb.id, yawRad: sb.yawRad + Math.PI * 0.5 });
+          }
+        }
       } else if (action === 'haltRegiment' && this.inputCtrl.selectedRegimentIds.size > 0) {
         this.executeSimCommand({
           type: 'issueOrder',

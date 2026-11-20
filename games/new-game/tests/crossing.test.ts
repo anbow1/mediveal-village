@@ -101,4 +101,37 @@ describe('Stage 6 2 m A* pathfinding, ford & gate crossings', () => {
     const minAbsZ = Math.min(...path.map((p) => Math.abs(p.z)));
     expect(minAbsZ).toBeLessThan(8);
   });
+
+  it('builds a 100% watertight stone wall enclosure that blocks enemy pathfinding and prevents regiments from leaking through', () => {
+    const sim = new SimEngine({ mapId: 'openField', mode: 'skirmish', disableAi: true, seed: 29 });
+    sim.state.regiments.length = 0;
+    sim.state.sides[0].stock.stone = 800;
+
+    // Enclose point (-110, 0) with a closed 4-sided stone wall box (including diagonal/axis walls)
+    expect(sim.execute({ type: 'placeWall', side: 0, x0: -126, z0: -16, x1: -94, z1: -16 }).ok).toBe(true);
+    expect(sim.execute({ type: 'placeWall', side: 0, x0: -94, z0: -16, x1: -94, z1: 16 }).ok).toBe(true);
+    expect(sim.execute({ type: 'placeWall', side: 0, x0: -94, z0: 16, x1: -126, z1: 16 }).ok).toBe(true);
+    expect(sim.execute({ type: 'placeWall', side: 0, x0: -126, z0: 16, x1: -126, z1: -16 }).ok).toBe(true);
+    sim.rebuildNav();
+
+    // A* path from outside (-70, 0) to inside (-110, 0) must stop strictly outside the x = -94 wall
+    // and return [] once standing at the outer wall face (-91, 1)
+    const approachPath = sim.nav.findPath(-70, 0, -110, 0, 1);
+    expect(approachPath.every((pt) => pt.x > -93)).toBe(true);
+    const atWallPath = sim.nav.findPath(-91, 1, -110, 0, 1);
+    expect(atWallPath).toHaveLength(0);
+
+    // Enemy regiment ordered to march inside (-110, 0) must NOT leak across the x = -94 wall line!
+    const enemy = spawnRegiment(sim.state, 1, 'swordsmen', -74, 0, Math.PI);
+    sim.execute({
+      type: 'issueOrder',
+      side: 1,
+      regimentIds: [enemy.id],
+      order: { kind: 'march', x: -110, z: 0, facingYawRad: Math.PI },
+      queue: false,
+    });
+    for (let i = 0; i < 120; i++) sim.step(0.1);
+    expect(enemy.x).toBeGreaterThan(-93);
+  });
 });
+

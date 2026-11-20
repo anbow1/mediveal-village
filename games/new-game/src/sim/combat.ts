@@ -941,7 +941,14 @@ export function stepCombat(
               }
               reg.currentSpeedMs = 0;
             } else {
-              moveRegimentAlongPath(reg, tgt.x, tgt.z, isRun, dtS, nav);
+              const blockedOrDone = moveRegimentAlongPath(reg, tgt.x, tgt.z, isRun, dtS, nav);
+              if (blockedOrDone && d > engageDist) {
+                const bw =
+                  state.walls.find((w) => w.side !== reg.side && !w.destroyed && w.hp > 0 && Math.hypot(w.x - reg.x, w.z - reg.z) <= 5.5) ??
+                  state.gates.find((g) => g.side !== reg.side && !g.destroyed && g.hp > 0 && Math.hypot(g.x - reg.x, g.z - reg.z) <= 5.5) ??
+                  null;
+                if (bw) siegeTargetWall = bw;
+              }
             }
           }
         } else if (ord.targetBuildingId !== undefined) {
@@ -960,7 +967,14 @@ export function stepCombat(
               reg.currentSpeedMs = 0;
               siegeTargetBuilding = tb;
             } else {
-              moveRegimentAlongPath(reg, tb.x, tb.z, isRun, dtS, nav);
+              const blockedOrDone = moveRegimentAlongPath(reg, tb.x, tb.z, isRun, dtS, nav);
+              if (blockedOrDone && d > BUILDING_DEFS[tb.type].radiusM + 4.5) {
+                const bw =
+                  state.walls.find((w) => w.side !== reg.side && !w.destroyed && w.hp > 0 && Math.hypot(w.x - reg.x, w.z - reg.z) <= 5.5) ??
+                  state.gates.find((g) => g.side !== reg.side && !g.destroyed && g.hp > 0 && Math.hypot(g.x - reg.x, g.z - reg.z) <= 5.5) ??
+                  null;
+                if (bw) siegeTargetWall = bw;
+              }
             }
           }
         } else if (ord.targetWallId !== undefined) {
@@ -992,9 +1006,17 @@ export function stepCombat(
           } else {
             const done = moveRegimentAlongPath(reg, ord.x, ord.z, isRun, dtS, nav);
             if (done) {
-              if (ord.facingYawRad !== undefined) reg.yawRad = ord.facingYawRad;
-              reg.order = reg.orderQueue.shift() ?? null;
-              reg.path = [];
+              const bw =
+                state.walls.find((w) => w.side !== reg.side && !w.destroyed && w.hp > 0 && Math.hypot(w.x - reg.x, w.z - reg.z) <= 5.5) ??
+                state.gates.find((g) => g.side !== reg.side && !g.destroyed && g.hp > 0 && Math.hypot(g.x - reg.x, g.z - reg.z) <= 5.5) ??
+                null;
+              if (bw && Math.hypot(ord.x - reg.x, ord.z - reg.z) > 4.5) {
+                siegeTargetWall = bw;
+              } else {
+                if (ord.facingYawRad !== undefined) reg.yawRad = ord.facingYawRad;
+                reg.order = reg.orderQueue.shift() ?? null;
+                reg.path = [];
+              }
             }
           }
         }
@@ -1289,8 +1311,7 @@ function moveRegimentAlongPath(
   keepFacing = false,
 ): boolean {
   const def = UNIT_DEFS[reg.unitType];
-  const last = reg.path[reg.path.length - 1];
-  if (!last || Math.hypot(last.x - destX, last.z - destZ) > 3.5) {
+  if (reg.path.length === 0) {
     if (nav.hasSafeClearLine(reg.x, reg.z, destX, destZ, reg.side)) {
       reg.path = [{ x: destX, z: destZ }];
     } else {
@@ -1298,7 +1319,12 @@ function moveRegimentAlongPath(
     }
   }
 
-  const wp = reg.path[0] ?? { x: destX, z: destZ };
+  const wp = reg.path[0];
+  if (!wp) {
+    // Destination is sealed behind an impassable wall or river and we are already at the closest reachable cell!
+    reg.currentSpeedMs = 0;
+    return true;
+  }
   const dx = wp.x - reg.x;
   const dz = wp.z - reg.z;
   const dist = Math.hypot(dx, dz);
@@ -1313,11 +1339,13 @@ function moveRegimentAlongPath(
   const step = speed * dtS;
 
   if (dist <= Math.max(0.55, step)) {
-    reg.x = wp.x;
-    reg.z = wp.z;
+    if (nav.isWalkableAt(wp.x, wp.z, reg.side)) {
+      reg.x = wp.x;
+      reg.z = wp.z;
+    }
     reg.currentSpeedMs = speed;
     if (reg.path.length > 0) reg.path.shift();
-    return reg.path.length === 0 && Math.hypot(destX - reg.x, destZ - reg.z) <= 2.5;
+    return reg.path.length === 0;
   }
 
   const nx = reg.x + (dx / dist) * step;
@@ -1328,6 +1356,10 @@ function moveRegimentAlongPath(
   } else {
     // Recompute safe path around newly built obstacle/wall
     reg.path = nav.findPath(reg.x, reg.z, destX, destZ, reg.side, 18_000);
+    if (reg.path.length === 0) {
+      reg.currentSpeedMs = 0;
+      return true;
+    }
   }
   if (!keepFacing) {
     reg.yawRad = Math.atan2(dx, dz);

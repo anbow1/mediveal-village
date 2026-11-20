@@ -59,6 +59,8 @@ export class RtsInputController {
   private lastRightClickMs = 0;
 
   private lineDragStart: { x: number; z: number } | null = null;
+  private lineJustStarted = false;
+  private gridSnap = false;
   private hoverWorld: { x: number; z: number } | null = null;
   private lastHoverReason: PlacementRejectionReason | null = null;
 
@@ -94,9 +96,31 @@ export class RtsInputController {
     return this.placementGhost;
   }
 
+  isGridSnap(): boolean {
+    return this.gridSnap;
+  }
+
+  toggleGridSnap(): boolean {
+    this.gridSnap = !this.gridSnap;
+    if (this.gridSnap) {
+      this.placementYawRad = Math.round(this.placementYawRad / (Math.PI * 0.5)) * (Math.PI * 0.5);
+    }
+    this.cb.onSelectionChanged();
+    return this.gridSnap;
+  }
+
+  private snapBuildingPoint(pt: { x: number; z: number }): { x: number; z: number } {
+    if (!this.gridSnap) return pt;
+    return {
+      x: Math.round(pt.x / 8) * 8,
+      z: Math.round(pt.z / 8) * 8,
+    };
+  }
+
   setPlacementTool(tool: PlacementTool): void {
     this.placementTool = tool;
     this.lineDragStart = null;
+    this.lineJustStarted = false;
     this.placementGhost = null;
     if (!tool) {
       this.cb.onPlacementHover(null, 0, 0);
@@ -104,8 +128,23 @@ export class RtsInputController {
     this.cb.onSelectionChanged();
   }
 
-  rotatePlacement(stepRad = Math.PI * 0.25): void {
-    this.placementYawRad = (this.placementYawRad + stepRad) % (Math.PI * 2);
+  /** Cancels line start point first if active, or exits active placement tool (docs/MANUAL.md §4.1). */
+  cancelPlacementStepOrTool(): boolean {
+    if (this.lineDragStart) {
+      this.lineDragStart = null;
+      this.lineJustStarted = false;
+      return true;
+    }
+    if (this.placementTool) {
+      this.setPlacementTool(null);
+      return true;
+    }
+    return false;
+  }
+
+  rotatePlacement(stepRad?: number): void {
+    const step = stepRad ?? (this.gridSnap ? Math.PI * 0.5 : Math.PI * 0.25);
+    this.placementYawRad = (this.placementYawRad + step) % (Math.PI * 2);
     if (this.placementGhost) {
       this.placementGhost = { ...this.placementGhost, yawRad: this.placementYawRad };
     }
@@ -425,19 +464,31 @@ export class RtsInputController {
 
     const sim = this.cb.getSim();
     if (this.placementTool.kind === 'building') {
-      const reason = sim.validatePlacement(0, this.placementTool.buildingType, pt.x, pt.z, this.placementYawRad, true);
+      const snapped = this.snapBuildingPoint(pt);
+      const reason = sim.validatePlacement(0, this.placementTool.buildingType, snapped.x, snapped.z, this.placementYawRad, true);
       this.lastHoverReason = reason;
       this.placementGhost = {
         active: true,
         mode: 'building',
         buildingType: this.placementTool.buildingType,
-        x: pt.x,
-        z: pt.z,
+        x: snapped.x,
+        z: snapped.z,
         yawRad: this.placementYawRad,
         valid: reason === 'ok',
       };
       this.cb.onPlacementHover(reason, clientX, clientY);
     } else if (this.placementTool.kind === 'gate') {
+      let gateYaw = this.placementYawRad;
+      let nearestWallDist = 5.5;
+      for (const w of sim.state.walls) {
+        if (!w.destroyed && w.side === 0) {
+          const d = Math.hypot(w.x - pt.x, w.z - pt.z);
+          if (d < nearestWallDist) {
+            nearestWallDist = d;
+            gateYaw = w.yawRad;
+          }
+        }
+      }
       const valid =
         sim.terrain.waterDepthAt(pt.x, pt.z) <= 0.1 &&
         !sim.terrain.isImpassable(pt.x, pt.z) &&
@@ -450,14 +501,34 @@ export class RtsInputController {
         mode: 'gate',
         x: pt.x,
         z: pt.z,
-        yawRad: this.placementYawRad,
+        yawRad: gateYaw,
         valid,
       };
       this.cb.onPlacementHover(reason, clientX, clientY);
     } else {
-      // Road or Wall drag preview
+      // Road or Wall preview (supports both click-start -> click-end AND drag!)
       const start = this.lineDragStart ?? pt;
-      const valid = sim.terrain.waterDepthAt(pt.x, pt.z) <= 0.1 && !sim.terrain.isImpassable(pt.x, pt.z);
+      const dist = Math.hypot(pt.x - start.x, pt.z - start.z);
+      const isWall = this.placementTool.kind === 'wall';
+      const stonePer10 = isWall ? 15 : 1.7;
+      const stoneCost = dist >= 1.5 ? Math.max(1, Math.ceil((dist / 10) * stonePer10)) : 1;
+      const hasStone = sim.state.sides[0].stock.stone >= stoneCost;
+      let terrainOk = sim.terrain.waterDepthAt(pt.x, pt.z) <= 0.1 && !sim.terrain.isImpassable(pt.x, pt.z);
+      if (terrainOk && dist >= 1.8) {
+        const steps = Math.max(2, Math.ceil(dist / 2.0));
+        for (let i = 0; i <= steps; i++) {
+          const t = i / steps;
+          const sx = start.x + (pt.x - start.x) * t;
+          const sz = start.z + (pt.z - start.z) * t;
+          if (sim.terrain.waterDepthAt(sx, sz) > 0.1 || sim.terrain.isImpassable(sx, sz)) {
+            terrainOk = false;
+            break;
+          }
+        }
+      }
+      const valid = terrainOk && hasStone;
+      const reason: PlacementRejectionReason = !terrainOk ? 'blocked' : !hasStone ? 'insufficientResources' : 'ok';
+      this.lastHoverReason = reason;
       this.placementGhost = {
         active: true,
         mode: this.placementTool.kind,
@@ -465,10 +536,10 @@ export class RtsInputController {
         z: start.z,
         x1: pt.x,
         z1: pt.z,
-        yawRad: 0,
+        yawRad: dist > 0.5 ? Math.atan2(-(pt.z - start.z), pt.x - start.x) : 0,
         valid,
       };
-      this.cb.onPlacementHover(valid ? 'ok' : 'blocked', clientX, clientY);
+      this.cb.onPlacementHover(reason, clientX, clientY);
     }
   }
 
@@ -482,12 +553,13 @@ export class RtsInputController {
         if (this.placementTool) {
           if (pt) {
             if (this.placementTool.kind === 'building') {
+              const snapped = this.snapBuildingPoint(pt);
               const ok = this.cb.onExecute({
                 type: 'placeBuilding',
                 side: 0,
                 buildingType: this.placementTool.buildingType,
-                x: pt.x,
-                z: pt.z,
+                x: snapped.x,
+                z: snapped.z,
                 yawRad: this.placementYawRad,
               });
               this.cb.onPlayUiSound(ok ? 'uiClick' : 'uiError');
@@ -503,8 +575,13 @@ export class RtsInputController {
               this.cb.onPlayUiSound(ok ? 'uiClick' : 'uiError');
               if (ok && !e.shiftKey) this.setPlacementTool(null);
             } else {
-              // Road / Wall drag start
-              this.lineDragStart = pt;
+              // Road / Wall: if no start point yet, anchor start point; if start point already set, second click will complete on mouseup!
+              if (!this.lineDragStart) {
+                this.lineDragStart = pt;
+                this.lineJustStarted = true;
+              } else {
+                this.lineJustStarted = false;
+              }
             }
           }
           return;
@@ -516,7 +593,8 @@ export class RtsInputController {
         this.leftStartY = e.clientY;
       } else if (e.button === 2) {
         if (this.placementTool) {
-          this.setPlacementTool(null);
+          // First right-click cancels active start point; second right-click exits tool (docs/MANUAL.md §4.1)
+          this.cancelPlacementStepOrTool();
           this.cb.onPlayUiSound('uiClick');
           return;
         }
@@ -578,19 +656,38 @@ export class RtsInputController {
     const onMouseUp = (e: MouseEvent): void => {
       if (!this.cb.isPlaying()) return;
       if (e.button === 0) {
-        // Road or Wall drag finish
+        // Road or Wall: supports BOTH click-start -> click-end AND press-drag-release!
         if (this.placementTool && (this.placementTool.kind === 'road' || this.placementTool.kind === 'wall') && this.lineDragStart) {
           const endPt = this.screenToGround(e.clientX, e.clientY) ?? this.hoverWorld;
-          if (endPt) {
+          const minLen = this.placementTool.kind === 'wall' ? 1.8 : 1.5;
+          const dist = endPt ? Math.hypot(endPt.x - this.lineDragStart.x, endPt.z - this.lineDragStart.z) : 0;
+
+          if (this.lineJustStarted && dist < minLen) {
+            // First click anchored the start point (`klik — początek`); wait for second click at end point!
+            this.lineJustStarted = false;
+            this.cb.onPlayUiSound('uiClick');
+            return;
+          }
+
+          if (endPt && dist >= minLen) {
             const ok = this.cb.onExecute(
               this.placementTool.kind === 'road'
                 ? { type: 'placeRoad', side: 0, x0: this.lineDragStart.x, z0: this.lineDragStart.z, x1: endPt.x, z1: endPt.z }
                 : { type: 'placeWall', side: 0, x0: this.lineDragStart.x, z0: this.lineDragStart.z, x1: endPt.x, z1: endPt.z },
             );
             this.cb.onPlayUiSound(ok ? 'uiClick' : 'uiError');
+            if (ok && e.shiftKey) {
+              // Shift chains next segment from the end point (docs/MANUAL.md §4.1)!
+              this.lineDragStart = endPt;
+              this.lineJustStarted = false;
+              return;
+            }
+            this.lineDragStart = null;
+            this.lineJustStarted = false;
+            if (ok && !e.shiftKey) this.setPlacementTool(null);
+          } else {
+            this.cb.onPlayUiSound('uiError');
           }
-          this.lineDragStart = null;
-          if (!e.shiftKey) this.setPlacementTool(null);
           return;
         }
 

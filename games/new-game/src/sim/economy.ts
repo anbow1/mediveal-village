@@ -151,6 +151,31 @@ export function spawnCitizen(state: SimWorldState, side: SideId, home: BuildingE
   return c;
 }
 
+/**
+ * Computes exact world-space position & orientation of strip `stripIndex` (0..11) behind a Farm or Vineyard
+ * (opposite the front door `+Z` local, arranged in 2 columns × 6 rows, 11.2 × 2.6 m per strip; docs/ECONOMY.md §5-§6).
+ */
+export function computeBuildingStripTransform(
+  b: { readonly x: number; readonly z: number; readonly yawRad: number },
+  stripIndex: number,
+): { readonly cx: number; readonly cz: number; readonly lenM: number; readonly widM: number; readonly yawRad: number } {
+  const col = stripIndex % 2;
+  const row = Math.floor(stripIndex / 2);
+  const lateralM = col === 0 ? -6.1 : 6.1;
+  const rearM = -(8.4 + row * 3.35);
+  const fx = Math.sin(b.yawRad);
+  const fz = Math.cos(b.yawRad);
+  const rx = Math.cos(b.yawRad);
+  const rz = -Math.sin(b.yawRad);
+  return {
+    cx: b.x + rx * lateralM + fx * rearM,
+    cz: b.z + rz * lateralM + fz * rearM,
+    lenM: 11.2,
+    widM: 2.6,
+    yawRad: -b.yawRad,
+  };
+}
+
 /** Runs every 1 s: automatically allocates workers -> builders (30% of free, max 3/site) -> carriers (min 4 free!). */
 export function allocateRolesForSide(state: SimWorldState, side: SideId): void {
   const citizens = state.citizens.filter((c) => c.side === side && c.role !== 'recruit');
@@ -162,6 +187,7 @@ export function allocateRolesForSide(state: SimWorldState, side: SideId): void {
       b.side === side &&
       b.hp > 0 &&
       b.buildProgress >= 1 &&
+      b.upgradingToLevel === null &&
       !b.paused &&
       BUILDING_DEFS[b.type].workers > 0,
   );
@@ -692,20 +718,36 @@ export function stepEconomy(
       if (!site || site.hp <= 0 || (site.buildProgress >= 1 && site.upgradingToLevel === null)) {
         c.role = 'carrier';
         c.assignedBuildingId = null;
+        c.workPhase = 'atShop';
         continue;
       }
-      const siteReach = BUILDING_DEFS[site.type].radiusM + 1.8;
+      const siteRad = BUILDING_DEFS[site.type].radiusM;
+      // Orbit between 4 scaffolding corners around the site while hammering!
+      const cornerIdx = (c.id + Math.floor(state.timeS / 3.8)) % 4;
+      const cornerAng = site.yawRad + (cornerIdx + 0.5) * Math.PI * 0.5;
+      const tx = site.x + Math.sin(cornerAng) * (siteRad + 0.95);
+      const tz = site.z + Math.cos(cornerAng) * (siteRad + 0.95);
       const dist = Math.hypot(site.x - c.x, site.z - c.z);
-      if (dist > siteReach) {
-        moveCitizenToward(c, site.x, site.z, dtS, nav, true, siteReach);
+      if (dist > siteRad + 2.2) {
+        c.workPhase = 'toField';
+        moveCitizenToward(c, tx, tz, dtS, nav, true, 0.9);
       } else {
         buildersAtSite.set(site.id, (buildersAtSite.get(site.id) ?? 0) + 1);
+        if (Math.hypot(tx - c.x, tz - c.z) > 0.75) {
+          c.workPhase = 'toField';
+          moveCitizenToward(c, tx, tz, dtS, nav, false, 0.5);
+        } else {
+          c.workPhase = 'working';
+          c.path = [];
+          c.yawRad = Math.atan2(site.x - c.x, site.z - c.z);
+        }
       }
       continue;
     }
 
-    // Carrier executing 6-tier physical logistics job
+    // Carrier executing 6-tier physical logistics job (with 10 Keep perimeter stations per docs/RULES.md §3!)
     if (c.role === 'carrier') {
+      c.workPhase = 'atShop';
       if (!c.carryJob) {
         assignCarrierJob(state, c);
       }
@@ -721,9 +763,25 @@ export function stepEconomy(
           c.carryingAmount = 0;
           continue;
         }
+        const keepStationPos = (targetB: BuildingEntity, otherX: number, otherZ: number): { x: number; z: number; reachM: number } => {
+          if (targetB.type !== 'keep') {
+            return { x: targetB.x, z: targetB.z, reachM: BUILDING_DEFS[targetB.type].radiusM + 1.8 };
+          }
+          const baseAng = Math.atan2(otherZ - targetB.z, otherX - targetB.x);
+          const stationIdx = ((Math.round((baseAng / (Math.PI * 2)) * 10) + (c.id % 3) - 1) % 10 + 10) % 10;
+          const stAng = (stationIdx / 10) * Math.PI * 2;
+          const stR = BUILDING_DEFS.keep.radiusM + 0.9;
+          return {
+            x: targetB.x + Math.cos(stAng) * stR,
+            z: targetB.z + Math.sin(stAng) * stR,
+            reachM: 1.8,
+          };
+        };
         if (!job.pickedUp && fromB) {
-          const arrived = moveCitizenToward(c, fromB.x, fromB.z, dtS, nav, true, BUILDING_DEFS[fromB.type].radiusM + 1.8);
+          const st = keepStationPos(fromB, toB.x, toB.z);
+          const arrived = moveCitizenToward(c, st.x, st.z, dtS, nav, true, st.reachM);
           if (arrived) {
+            c.yawRad = Math.atan2(fromB.x - c.x, fromB.z - c.z);
             job.transferTimerS += dtS;
             if (job.transferTimerS >= ECONOMY.carrierTransferS) {
               job.pickedUp = true;
@@ -734,8 +792,10 @@ export function stepEconomy(
             }
           }
         } else {
-          const arrived = moveCitizenToward(c, toB.x, toB.z, dtS, nav, true, BUILDING_DEFS[toB.type].radiusM + 1.8);
+          const st = keepStationPos(toB, fromB ? fromB.x : c.x, fromB ? fromB.z : c.z);
+          const arrived = moveCitizenToward(c, st.x, st.z, dtS, nav, true, st.reachM);
           if (arrived) {
+            c.yawRad = Math.atan2(toB.x - c.x, toB.z - c.z);
             job.transferTimerS += dtS;
             if (job.transferTimerS >= ECONOMY.carrierTransferS) {
               // Deposit into destination!
@@ -761,9 +821,13 @@ export function stepEconomy(
           }
         }
       } else if (keep) {
-        // Idle carrier waits near Keep square
-        if (Math.hypot(keep.x - c.x, keep.z - c.z) > 10) {
-          moveCitizenToward(c, keep.x + 5, keep.z + 5, dtS, nav, false);
+        // Idle carrier waits scattered around the Keep square using golden-angle distribution (docs/PLAYBOOK.md §4.7)
+        const goldAng = c.id * 2.3999632;
+        const waitR = 8.8 + (c.id % 4) * 1.45;
+        const wx = keep.x + Math.cos(goldAng) * waitR;
+        const wz = keep.z + Math.sin(goldAng) * waitR;
+        if (Math.hypot(wx - c.x, wz - c.z) > 1.8) {
+          moveCitizenToward(c, wx, wz, dtS, nav, false, 1.2);
         }
       }
       continue;
@@ -772,9 +836,10 @@ export function stepEconomy(
     // Worker assigned to workshop / gatherer
     if (c.role === 'worker' && c.assignedBuildingId !== null) {
       const shop = buildingById.get(c.assignedBuildingId);
-      if (!shop || shop.hp <= 0 || shop.paused || shop.buildProgress < 1) {
+      if (!shop || shop.hp <= 0 || shop.paused || shop.buildProgress < 1 || shop.upgradingToLevel !== null) {
         c.role = 'carrier';
         c.assignedBuildingId = null;
+        c.workPhase = 'atShop';
         continue;
       }
 
@@ -789,6 +854,7 @@ export function stepEconomy(
         workerAtShop.set(shop.id, c);
         if (totalMapUnits(shop.yard) >= ECONOMY.workshopYardMax) {
           shop.status = 'yardFull';
+          c.workPhase = 'atShop';
           continue;
         }
         if (c.workPhase === 'atShop') {
@@ -813,6 +879,7 @@ export function stepEconomy(
           }
         } else if (c.workPhase === 'working') {
           shop.status = 'working';
+          c.yawRad = Math.atan2(c.workTargetX - c.x, c.workTargetZ - c.z);
           c.workTimerS += dtS * speedMul;
           if (c.workTimerS >= ECONOMY.woodcutterChopS) {
             const tree = state.trees.find((t) => t.id === c.workTargetTreeId);
@@ -843,6 +910,7 @@ export function stepEconomy(
       if (shop.type === 'fisher') {
         if (totalMapUnits(shop.yard) >= ECONOMY.workshopYardMax) {
           shop.status = 'yardFull';
+          c.workPhase = 'atShop';
           continue;
         }
         shop.status = 'working';
@@ -856,6 +924,7 @@ export function stepEconomy(
             c.workTimerS = 0;
           }
         } else if (c.workPhase === 'working') {
+          c.yawRad = shop.yawRad;
           c.workTimerS += dtS * speedMul;
           if (c.workTimerS >= ECONOMY.fisherTripS) {
             c.carryingGood = 'fish';
@@ -875,11 +944,92 @@ export function stepEconomy(
         continue;
       }
 
-      // Standard workshop / farm / vineyard worker walks to building & operates it
-      if (Math.hypot(shop.x - c.x, shop.z - c.z) > 4.5) {
-        moveCitizenToward(c, shop.x, shop.z, dtS, nav, true);
+      // Farmers & Vintners walk directly onto their rear cultivated field strips and hoe/sow/harvest!
+      if (shop.type === 'farm' || shop.type === 'vineyard') {
+        workerAtShop.set(shop.id, c);
+        let activeStripIdx = shop.strips.findIndex((s) => s.phase === 'ready');
+        if (activeStripIdx < 0) activeStripIdx = shop.strips.findIndex((s) => s.phase === 'sowing');
+        if (activeStripIdx < 0) activeStripIdx = shop.strips.findIndex((s) => s.phase === 'uncleared');
+        if (activeStripIdx < 0) activeStripIdx = Math.floor(state.timeS / 5 + c.id) % Math.max(1, shop.strips.length);
+        const st = computeBuildingStripTransform(shop, Math.max(0, activeStripIdx));
+        const sweep = Math.sin(state.timeS * 0.45 + c.id) * (st.lenM * 0.32);
+        const tx = st.cx + Math.cos(shop.yawRad) * sweep;
+        const tz = st.cz - Math.sin(shop.yawRad) * sweep;
+        if (Math.hypot(tx - c.x, tz - c.z) > 1.4) {
+          c.workPhase = 'toField';
+          moveCitizenToward(c, tx, tz, dtS, nav, false, 0.9);
+        } else {
+          c.workPhase = 'working';
+          c.path = [];
+          c.yawRad = shop.yawRad + Math.PI + Math.sin(state.timeS * 1.2 + c.id) * 0.45;
+        }
+        continue;
+      }
+
+      // Quarrymen & Iron Miners work between the pit/tunnel portal and the rock outcrop!
+      if (shop.type === 'quarry' || shop.type === 'ironMine') {
+        workerAtShop.set(shop.id, c);
+        const wantKind = shop.type === 'quarry' ? 'stone' : 'ore';
+        const oc = state.outcrops.find((o) => o.kind === wantKind && Math.hypot(o.x - shop.x, o.z - shop.z) <= 18);
+        const useOutcrop = oc && Math.floor((state.timeS + c.id * 3) / 6) % 2 === 0;
+        const fx = Math.sin(shop.yawRad);
+        const fz = Math.cos(shop.yawRad);
+        const tx = useOutcrop ? oc.x - fx * 1.6 : shop.x + fx * 1.8;
+        const tz = useOutcrop ? oc.z - fz * 1.6 : shop.z + fz * 1.8;
+        if (Math.hypot(tx - c.x, tz - c.z) > 1.2) {
+          c.workPhase = 'toField';
+          moveCitizenToward(c, tx, tz, dtS, nav, false, 0.8);
+        } else {
+          c.workPhase = shop.status === 'working' ? 'working' : 'atShop';
+          c.path = [];
+          c.yawRad = useOutcrop && oc ? Math.atan2(oc.x - c.x, oc.z - c.z) : Math.atan2(shop.x - c.x, shop.z - c.z);
+        }
+        continue;
+      }
+
+      // Foresters & Hunters patrol between their lodge and nearby forest saplings/trees!
+      if (shop.type === 'forester' || shop.type === 'hunter') {
+        workerAtShop.set(shop.id, c);
+        const phaseSlot = Math.floor((state.timeS + c.id * 2) / 5) % 3;
+        const ang = shop.yawRad + (phaseSlot - 1) * 0.95;
+        const rad = phaseSlot === 1 ? 2.4 : 7.5;
+        const tx = shop.x + Math.sin(ang) * rad;
+        const tz = shop.z + Math.cos(ang) * rad;
+        if (Math.hypot(tx - c.x, tz - c.z) > 1.2) {
+          c.workPhase = 'toField';
+          moveCitizenToward(c, tx, tz, dtS, nav, false, 0.8);
+        } else {
+          c.workPhase = 'working';
+          c.path = [];
+          c.yawRad = ang;
+        }
+        continue;
+      }
+
+      // All other Workshop Artisans (Smithy, Bakery, Sawmill, Windmill, Brewery, PigFarm, Butcher, Winery,
+      // Tannery, Smelter, Armourer, Fletcher, Stable, GunFoundry, Tavern, etc.):
+      // Stand at the front workbench/forge apron, alternate between workbench & yard stack, face the building, and animate working!
+      const fx = Math.sin(shop.yawRad);
+      const fz = Math.cos(shop.yawRad);
+      const rx = Math.cos(shop.yawRad);
+      const rz = -Math.sin(shop.yawRad);
+      const stationSide = Math.floor((state.timeS + c.id * 1.7) / 4.5) % 2 === 0 ? -0.95 : 0.95;
+      const frontDist = Math.min(3.4, BUILDING_DEFS[shop.type].radiusM * 0.62);
+      const tx = shop.x + fx * frontDist + rx * stationSide;
+      const tz = shop.z + fz * frontDist + rz * stationSide;
+      if (Math.hypot(shop.x - c.x, shop.z - c.z) > 5.0) {
+        c.workPhase = 'toField';
+        moveCitizenToward(c, tx, tz, dtS, nav, true, 1.0);
       } else {
         workerAtShop.set(shop.id, c);
+        if (Math.hypot(tx - c.x, tz - c.z) > 0.65) {
+          c.workPhase = 'toField';
+          moveCitizenToward(c, tx, tz, dtS, nav, false, 0.4);
+        } else {
+          c.path = [];
+          c.yawRad = Math.atan2(shop.x - c.x, shop.z - c.z);
+          c.workPhase = shop.status === 'working' ? 'working' : 'atShop';
+        }
       }
     }
   }
@@ -920,32 +1070,39 @@ export function stepEconomy(
       continue;
     }
 
-    // Active upgrade
+    // Active upgrade (advances proportionally as materials arrive; scales HP x1/x2/x3 on completion per docs/MANUAL.md §7.5!)
     if (b.upgradingToLevel !== null) {
       b.status = 'upgrading';
       const matFrac = computeMaterialDeliveryFraction(b);
-      const builders = Math.max(b.type === 'keep' ? 1 : 0, buildersAtSite.get(b.id) ?? 0);
+      const builders = Math.max(matFrac > 0 ? 1 : 0, buildersAtSite.get(b.id) ?? 0);
       const targetDuration = b.type === 'keep' ? ECONOMY.keepLevels[b.upgradingToLevel - 1]!.upgradeS : ECONOMY.upgradeBuilderS;
-      if (matFrac >= 0.999 && builders > 0) {
-        b.upgradeTimerS += dtS * builders;
-        if (b.upgradeTimerS >= targetDuration) {
+      const maxTimerAllowed = matFrac * targetDuration;
+      if (builders > 0 && b.upgradeTimerS < maxTimerAllowed) {
+        b.upgradeTimerS = Math.min(maxTimerAllowed, b.upgradeTimerS + dtS * builders);
+        if (b.upgradeTimerS >= targetDuration - 0.001) {
           b.level = b.upgradingToLevel;
           b.upgradingToLevel = null;
           b.upgradeTimerS = 0;
           b.buildCostNeeded = {};
           b.buildCostDelivered = {};
+          const hpRatio = b.hp / Math.max(1, b.maxHp);
           if (b.type === 'keep') {
             const kLvl = ECONOMY.keepLevels[b.level - 1]!;
-            const hpRatio = b.hp / Math.max(1, b.maxHp);
             b.maxHp = kLvl.maxHp;
-            b.hp = Math.round(b.maxHp * Math.max(0.5, hpRatio));
-          } else if (b.type === 'farm' || b.type === 'vineyard') {
+          } else {
+            // Every building scales HP x1 / x2 / x3 with level (docs/MANUAL.md §7.5)
+            b.maxHp = BUILDING_DEFS[b.type].maxHp * b.level;
+          }
+          b.hp = Math.round(b.maxHp * Math.max(0.5, hpRatio));
+          if (b.type === 'farm' || b.type === 'vineyard') {
             const targetStrips = ECONOMY.farmStripsByLevel[b.level - 1]!;
             while (b.strips.length < targetStrips) {
               b.strips.push({ phase: 'uncleared', timerS: 0, growth01: 0 });
             }
           }
+          b.status = 'idle';
           state.visualRevision++;
+          state.fxEvents.push({ kind: 'buildHammer', x: b.x, y: terrain.heightAt(b.x, b.z), z: b.z, intensity: 1.0 });
         }
       }
       continue;

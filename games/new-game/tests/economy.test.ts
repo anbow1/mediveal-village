@@ -235,4 +235,47 @@ describe('Stage 6 living town economy & logistics', () => {
     const felledCount = sim.state.trees.filter((t) => t.state !== 'mature').length;
     expect(felledCount).toBeGreaterThanOrEqual(1);
   });
+
+  it('upgrades Farm, Vineyard & Woodcutter to Level 2 (scaling maxHp x2, expanding strips 4->8) and animates working artisans', () => {
+    const sim = new SimEngine({ mapId: 'openField', mode: 'skirmish', disableAi: true, seed: 91 });
+    const keep = sim.state.buildings.find((b) => b.side === 0 && b.type === 'keep')!;
+    const stock = sim.state.sides[0].stock;
+    stock.gold = 2500;
+    stock.timber = 400;
+    stock.planks = 250;
+    stock.stone = 300;
+    keep.level = 2;
+
+    const farmSp = findValidSpot(sim, 'farm', keep.x, keep.z);
+    const fRes = sim.execute({ type: 'placeBuilding', side: 0, buildingType: 'farm', x: farmSp.x, z: farmSp.z, yawRad: 0 });
+    expect(fRes.ok).toBe(true);
+    const vineSp = findValidSpot(sim, 'vineyard', keep.x, keep.z);
+    const vRes = sim.execute({ type: 'placeBuilding', side: 0, buildingType: 'vineyard', x: vineSp.x, z: vineSp.z, yawRad: 0 });
+    expect(vRes.ok).toBe(true);
+
+    const farm = sim.state.buildings.find((b) => b.id === fRes.createdId)!;
+    const vineyard = sim.state.buildings.find((b) => b.id === vRes.createdId)!;
+    farm.buildProgress = 1;
+    vineyard.buildProgress = 1;
+    expect(farm.strips).toHaveLength(4);
+    expect(vineyard.strips).toHaveLength(4);
+
+    // Step 15s so workers arrive and animate on their strips
+    stepMinutes(sim, 0.35);
+    const activeWorkers = sim.state.citizens.filter((c) => c.side === 0 && c.role === 'worker');
+    expect(activeWorkers.length).toBeGreaterThanOrEqual(2);
+    expect(activeWorkers.some((c) => c.workPhase === 'working')).toBe(true);
+
+    // Trigger Farm upgrade L1 -> L2 while a worker is assigned
+    const upFarm = sim.execute({ type: 'upgradeBuilding', side: 0, buildingId: farm.id });
+    expect(upFarm.ok).toBe(true);
+    expect(farm.upgradingToLevel).toBe(2);
+
+    stepMinutes(sim, 2.2);
+    expect(farm.level).toBe(2);
+    expect(farm.upgradingToLevel).toBeNull();
+    expect(farm.maxHp).toBe(BUILDING_DEFS.farm.maxHp * 2);
+    expect(farm.strips).toHaveLength(8);
+  });
 });
+

@@ -263,22 +263,29 @@ canvas {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
   pointer-events: auto;
-  background: rgba(20, 17, 13, 0.88);
-  border: 1px solid rgba(196, 173, 130, 0.36);
+  background: rgba(20, 17, 13, 0.90);
+  border: 1px solid rgba(196, 173, 130, 0.38);
   border-radius: 5px;
-  padding: 4px 8px;
+  padding: 3px 6px;
 }
 
 .res-chip {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
   color: #efe5ce;
-  padding: 2px 6px;
+  padding: 1px 4px;
   border-radius: 3px;
   background: rgba(45, 38, 30, 0.72);
   white-space: nowrap;
+}
+
+.res-sep {
+  color: rgba(196, 173, 130, 0.42);
+  font-size: 11px;
+  padding: 0 1px;
+  user-select: none;
 }
 
 .res-chip.gold {
