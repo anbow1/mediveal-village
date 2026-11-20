@@ -6,7 +6,12 @@ o krok starszy.
 
 | Dokument | Co zawiera | Jak powstaje |
 |---|---|---|
+| [RULES.md](RULES.md) | **wszystkie zasady gry**: cel i tryby, mapa i punkty, wojsko i utrzymanie, ruch, walka wręcz i szarża, ostrzał, zmęczenie, morale, doświadczenie, szyki, mury i oblężenie, komputer, kampania | generowany z `src/config.ts` |
+| [MANUAL.md](MANUAL.md) | **podręcznik gry**: menu i ustawienia, ekran i każda liczba na nim, panele, sterowanie (mysz, klawiatura, dotyk), wojsko, gospodarka, animacje, kampania | pisany ręcznie |
 | [GAMEPLAY.md](GAMEPLAY.md) | filary rozgrywki, przebieg sesji, wojsko, przeciwnik, kamienie milowe | pisany ręcznie |
+| [PLAYBOOK.md](PLAYBOOK.md) | zastosowane techniki krok po kroku (renderer, teren, postacie i animacja na GPU, ruch wojska, kampania, dźwięk, wydanie, pułapki) | pisany ręcznie |
+| [CAMPAIGN.md](CAMPAIGN.md) | kampania: pięć misji, ich stan i pomiary | pisany ręcznie |
+| [ASSETS.md](ASSETS.md) | skąd jest każdy model, tekstura i dźwięk, licencje, spis plików | pisany ręcznie (spis plików ze skryptu) |
 | [ECONOMY.md](ECONOMY.md) | ludność, logistyka, jedzenie, pola, stawianie budynków, drogi | generowany z `src/config.ts` |
 | [BUILDINGS.md](BUILDINGS.md) | lista budynków (po angielsku): koszt, wymagany teren, produkcja; łańcuchy; budynki do dodania | generowany z `src/config.ts` |
 | [UNITS.md](UNITS.md) | jednostki: cena, ekwipunek, statystyki, zastosowanie, kto kogo bije | generowany z `src/config.ts` |

@@ -193,6 +193,41 @@ wysokości.
   „od środka oddziałów” przeskakiwała o 180°. Na dotyku to samo robi przytrzymany palec (350 ms), potem
   przeciągnięty. Ponowne stuknięcie zaznaczonego oddziału albo × na jego karcie odznacza go.
 
+### 4.7 Kampania, miasto, dźwięk (`campaign.ts`, `fortress.ts`, `errands.ts`, `sound.ts`)
+
+- **Scenariusz nad zwykłą grą.** Misja to funkcja `setupCampaign`, która na świeżym świecie stawia gotowe
+  miasto (planista miasta i od razu ukończone budowy), wojsko gracza z poprzedniej misji i siły wroga, oraz
+  `stepCampaign` (raz na sekundę), które prowadzi wroga i sprawdza wygraną. Wróg nie ma gracza-komputera, tylko
+  proste zachowania złożone z tych samych poleceń co gracz: *bij w promieniu i wracaj na miejsce*
+  (`holdGround`), *idź na zamek* (`fight` z `razeKeep`), *wypad na działa i powrót*. Stan misji jest zwykłym
+  obiektem w zapisie gry (nowe pola opcjonalne, więc stare zapisy się wczytują).
+- **Osada jak punkt.** Odbicie osady w misji 3 to ta sama mechanika co zajmowanie punktów (20 s na miejscu,
+  bez wroga w 30 m), z wsią w środku mapy jako punktem.
+- **Ruina** to budynek w stanie `ruin`: nie produkuje, nie mieści ludzi, nie dostaje robotników ani
+  budowniczych (`isBuilt` zwraca fałsz, liczenie placów budowy ją pomija). „Odbuduj” robi z niej zwykły plac
+  budowy z połową ceny i materiału. W widoku ten sam model ucięty maską na 38% wysokości, w materiale
+  przyciemnionym jak sadza.
+- **Twierdza z murów gry.** Model zamku ma mury, których nie dałoby się burzyć, więc z modelu zostaje tylko
+  donżon: przy wczytaniu (`cutOut`) zostają trójkąty, których środek leży nad jego obrysem. Mury, bramy i wieże
+  stawia scenariusz zwykłymi wywołaniami (`wallCellsFor`, `layWall`, `gateCells`, `layGate`, plac wieży bez
+  sprawdzania zasięgu) w ramie twierdzy (`fortressFrame`: oś do obozu gracza i oś w poprzek). Dzięki temu
+  wyłomy, gruz i bramy działają jak wszędzie. Pod twierdzę jest osobny układ mapy (płaskowyż, bez jeziora,
+  złóż i lasu); pod misje 3–4 układ *Dolina* (grzbiety gór z „kopców” rozstawionych wzdłuż osi).
+- **Strojenie botem.** Trudność misji mierzy test, w którym armię gracza prowadzi prosty skrypt (np. moździerze
+  w mur, armaty w bramę, piechota rozbija wypad i odsiecz przed murami, potem szturm tylko tam, gdzie da się
+  dojść). Bot musi grać rozsądnie: pierwsza wersja goniła wypad pod wieże i przegrywała przez własny błąd, nie
+  przez bilans.
+- **Stanowiska przy zamku.** Wszyscy tragarze oddawali towar w jednym punkcie przed drzwiami zamku i stali
+  w kolejce. Zamek ma 10 stanowisk dookoła; tragarz bierze to od strony drugiego końca swojej drogi, sąsiedzi
+  (numer w kolejności przyjścia na świat) sąsiednie; bezczynni czekają rozproszeni po placu („złoty kąt”).
+  Pomiar: czekających 2,0 → 0,4. Obwodnica i sieć dróg wypadły gorzej (wspólne drogi = taczki jedna za drugą).
+- **Dźwięk.** Nagrania CC0 (Kenney) dla walki, strzał, budowy i kliknięć, każde odtworzenie losuje nagranie
+  z kilku i lekko zmienia wysokość. Czego nie ma w nagraniach (róg, fanfara, huk działa pod nagranym
+  trzaskiem), robi WebAudio: róg to dwa piłowe głosy rozstrojone o kilka centów, filtr dolnoprzepustowy
+  otwierający się z narastaniem tonu, wejście lekko poniżej dźwięku, późne vibrato i pogłos z wygenerowanej
+  odpowiedzi impulsowej (zanikający szum). Każdy dźwięk jest cichszy z odległością i spóźniony o czas
+  dojścia dźwięku (343 m/s).
+
 ## 5. Budynki
 
 - **Zestaw skryptów Blendera** (`tools/blender/kit.py`, `parts.py`, `buildings.py`, `build.py`): ściany
@@ -284,6 +319,9 @@ Pełna lista z autorami i licencjami jest w `ASSETS.md`, a podpisy w `public/*/C
 | `.exe` nie trafia do wydania | Token Actions bez zgody na tworzenie wydań (HTTP 403) | Zgoda w ustawieniach repozytorium albo instalacja z przeglądarki |
 | Żołnierze w głębokiej wodzie na brodzie pod kątem | Trasa krawędzią brodu; sztywna kolumna przy skręcie zatacza łuk ogonem | Koszt komórek przy brzegu, kolumna po śladzie czoła (§4.6) |
 | Mur pod kątem rozpada się na schodki | Odcinki obrócone do najbliższej wielokrotności 45° | Kierunek z osi głównej sąsiednich komórek (§5) |
+| Taczki w kolejce przed zamkiem | Wszyscy tragarze oddają towar w jednym punkcie | 10 stanowisk wokół zamku (§4.7) |
+| Szturm twierdzy przegrany przez bota, nie przez bilans | Bot goni wypad pod wieże | Bot bije tylko poza zasięgiem murów, szturm dopiero po wyłomie (§4.7) |
+| Oddziały czekają w nieskończoność przy grobli | Czekający stoją przy wylocie, którym ma wyjść idący z przeciwka | Najwyżej 30 s czekania, potem 45 s przejścia mimo kolejki |
 | Kierunek oddziału przeskakuje o 180° przy przeciąganiu | Zwrot wybierany „od środka oddziałów” | Stały zwrot: w lewo od przeciągnięcia (§4.6) |
 | Długie złożone polecenia w powłoce odrzucane | Kontrola bezpieczeństwa narzędzia | Dzielić na krótsze kroki |
 
