@@ -30,7 +30,7 @@ const params = new URLSearchParams(window.location.search);
 const container = document.getElementById('app');
 if (!container) throw new Error('#app mount element missing');
 
-void Game.boot({
+Game.boot({
   container,
   autostart: params.has('autostart'),
   debug: params.has('debug'),
@@ -42,4 +42,12 @@ void Game.boot({
   lang: parseLang(params.get('lang')),
   mapId: parseMapId(params.get('map')),
   initialSpot: params.get('spot'),
+}).catch((err: unknown) => {
+  console.error('[boot] fatal error:', err);
+  const msg = err instanceof Error ? err.message : String(err);
+  const stageEl = document.querySelector('#loading .loading-stage');
+  if (stageEl) {
+    stageEl.textContent = `Boot failed: ${msg}`;
+    (stageEl as HTMLElement).style.color = '#e67c73';
+  }
 });
