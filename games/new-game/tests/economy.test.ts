@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { ALL_GOODS, BUILDING_DEFS, ECONOMY, EQUIPMENT_WORKSHOP_TYPES, type BuildingTypeId } from '../src/config.ts';
+import { ALL_GOODS, BUILDING_DEFS, ECONOMY, EQUIPMENT_WORKSHOP_TYPES, TRANSPORT_LEVELS, type BuildingTypeId } from '../src/config.ts';
 import { SimEngine } from '../src/sim/engine.ts';
+import { inspectTransportUpgrade } from '../src/sim/commands.ts';
 import { computeProductionRates, countPopulation, listBottlenecks } from '../src/sim/economy.ts';
 
 function stepMinutes(sim: SimEngine, minutes: number, dtS = 0.25): void {
@@ -333,6 +334,81 @@ describe('Stage 6 living town economy & logistics', () => {
     expect(farm.maxHp).toBe(BUILDING_DEFS.farm.maxHp * 2);
     expect(farm.strips).toHaveLength(8);
   });
+
+  it('upgrades town transport L1 (On Foot, cap 8) -> L2 (Handcarts, cap 14) -> L3 (Wagons, Keep L2, cap 20, 1.35x pace)', () => {
+    const sim = new SimEngine({ mapId: 'openField', mode: 'skirmish', disableAi: true, seed: 108 });
+    const keep = sim.state.buildings.find((b) => b.side === 0 && b.type === 'keep')!;
+    const side = sim.state.sides[0];
+    side.stock.gold = 1000;
+    side.stock.timber = 400;
+    side.stock.horses = 12;
+
+    expect(side.transportLevel).toBe(1);
+    const info1 = inspectTransportUpgrade(sim.state, 0);
+    expect(info1.canUpgrade).toBe(true);
+    expect(info1.targetLevel).toBe(2);
+
+    // Upgrade L1 -> L2 (Handcarts)
+    expect(sim.execute({ type: 'upgradeTransport', side: 0 }).ok).toBe(true);
+    expect(side.upgradingTransportTo).toBe(2);
+    stepMinutes(sim, 1.0); // > 45 s
+    expect(side.transportLevel).toBe(2);
+    expect(side.upgradingTransportTo).toBeNull();
+    expect(TRANSPORT_LEVELS[1]!.capacity).toBe(14);
+
+    // L3 requires Keep L2 -> must fail while Keep is L1
+    expect(inspectTransportUpgrade(sim.state, 0).reason).toBe('needsKeepUpgrade');
+    expect(sim.execute({ type: 'upgradeTransport', side: 0 }).ok).toBe(false);
+
+    // Raise Keep to L2 -> L3 upgrade succeeds and completes in 60 s
+    keep.level = 2;
+    expect(inspectTransportUpgrade(sim.state, 0).canUpgrade).toBe(true);
+    expect(sim.execute({ type: 'upgradeTransport', side: 0 }).ok).toBe(true);
+    expect(side.upgradingTransportTo).toBe(3);
+    stepMinutes(sim, 1.2); // > 60 s
+    expect(side.transportLevel).toBe(3);
+    expect(side.upgradingTransportTo).toBeNull();
+    expect(TRANSPORT_LEVELS[2]!.capacity).toBe(20);
+    expect(TRANSPORT_LEVELS[2]!.pace).toBeCloseTo(1.35, 2);
+  });
+
+  it('respects carrier goods priority (High/Low) when choosing which yard output to haul first', () => {
+    const sim = new SimEngine({ mapId: 'openField', mode: 'skirmish', disableAi: true, seed: 212 });
+    const keep = sim.state.buildings.find((b) => b.side === 0 && b.type === 'keep')!;
+    const side = sim.state.sides[0];
+    side.stock.gold = 1000;
+    side.stock.timber = 200;
+    side.stock.stone = 200;
+    side.stock.bread = 60;
+    side.stock.iron = 20;
+    side.stock.planks = 20;
+
+    // Place two workshops: Sawmill (planks) closer to keep, Smelter (iron) slightly farther
+    const sawSp = findValidSpot(sim, 'sawmill', keep.x + 12, keep.z, 30);
+    const smSp = findValidSpot(sim, 'smelter', keep.x + 24, keep.z + 12, 45);
+    const rSaw = sim.execute({ type: 'placeBuilding', side: 0, buildingType: 'sawmill', x: sawSp.x, z: sawSp.z, yawRad: 0 });
+    const rSm = sim.execute({ type: 'placeBuilding', side: 0, buildingType: 'smelter', x: smSp.x, z: smSp.z, yawRad: 0 });
+    expect(rSaw.ok && rSm.ok).toBe(true);
+    const saw = sim.state.buildings.find((b) => b.id === rSaw.createdId)!;
+    const sm = sim.state.buildings.find((b) => b.id === rSm.createdId)!;
+    saw.buildProgress = 1;
+    sm.buildProgress = 1;
+    saw.yard.planks = 12;
+    sm.yard.iron = 12;
+
+    // Mark iron as HIGH priority and planks as LOW priority
+    expect(sim.execute({ type: 'setGoodPriority', side: 0, good: 'iron', priority: 1 }).ok).toBe(true);
+    expect(sim.execute({ type: 'setGoodPriority', side: 0, good: 'planks', priority: -1 }).ok).toBe(true);
+    expect(side.goodPriorities?.iron).toBe(1);
+    expect(side.goodPriorities?.planks).toBe(-1);
+
+    // Step 1 second -> carrier must pick up HIGH priority iron ahead of closer LOW priority planks!
+    sim.step(0.5);
+    const ironJob = sim.state.citizens.some((c) => c.side === 0 && c.carryJob?.good === 'iron');
+    expect(ironJob).toBe(true);
+  });
 });
+
+
 
 

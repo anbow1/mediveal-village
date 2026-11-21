@@ -26,6 +26,7 @@ import type { BuildingKind } from '../sim/maps.ts';
 import type { TerrainField } from '../sim/terrain.ts';
 import type { BuildingEntity, SimWorldState } from '../sim/types.ts';
 import type { PlacementGhostPreview } from './combatFx.ts';
+import type { MarchlandBuildingLevelKey } from './marchlandBuildings.ts';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { markStaticInstances } from './instancing.ts';
 
@@ -190,6 +191,46 @@ function commitPool(meshes: readonly InstancedMesh[], count: number): void {
   }
 }
 
+/** Builds a unit rubble-stone plinth (1 x 1 x 1 spanning y = -1..0) compatible with surfaces.buildingMaterial (layer 8). */
+function buildPlinthGeometry(): BufferGeometry {
+  const raw = new BoxGeometry(1, 1, 1);
+  raw.translate(0, -0.5, 0);
+  const g = raw.index ? raw.toNonIndexed() : raw;
+  const pos = g.getAttribute('position');
+  const nor = g.getAttribute('normal');
+  const cnt = pos.count;
+  const uv0 = new Float32Array(cnt * 2);
+  const uv1 = new Float32Array(cnt * 2);
+  const col = new Float32Array(cnt * 3);
+  for (let i = 0; i < cnt; i++) {
+    const x = pos.getX(i);
+    const y = pos.getY(i);
+    const z = pos.getZ(i);
+    const nx = Math.abs(nor.getX(i));
+    const ny = Math.abs(nor.getY(i));
+    const nz = Math.abs(nor.getZ(i));
+    if (ny >= nx && ny >= nz) {
+      uv0[i * 2] = x * 2.2;
+      uv0[i * 2 + 1] = z * 2.2;
+    } else if (nx >= nz) {
+      uv0[i * 2] = z * 2.2;
+      uv0[i * 2 + 1] = y * 1.1;
+    } else {
+      uv0[i * 2] = x * 2.2;
+      uv0[i * 2 + 1] = y * 1.1;
+    }
+    uv1[i * 2] = 8 / 15.0; // Rubble stone layer
+    uv1[i * 2 + 1] = 1.0; // non-iron
+    col[i * 3] = 0.78;
+    col[i * 3 + 1] = 0.75;
+    col[i * 3 + 2] = 0.69;
+  }
+  g.setAttribute('uv', new Float32BufferAttribute(uv0, 2));
+  g.setAttribute('uv1', new Float32BufferAttribute(uv1, 2));
+  g.setAttribute('color', new Float32BufferAttribute(col, 3));
+  return g;
+}
+
 export function buildSimWorldRenderer(opts: {
   readonly scene: Scene;
   readonly terrain: TerrainField;
@@ -197,7 +238,9 @@ export function buildSimWorldRenderer(opts: {
   readonly syncGroundWorks: () => void;
   readonly syncDynamicFarms?: (buildings: readonly BuildingEntity[]) => void;
   readonly buildingMaterial: Material;
+  readonly siteBuildingMaterial?: Material;
   readonly buildingTemplates: ReadonlyMap<BuildingKind, SimBuildingTemplate>;
+  readonly marchlandBuildingLevels?: ReadonlyMap<MarchlandBuildingLevelKey, BufferGeometry>;
   readonly wallTemplate: SimBuildingTemplate | null;
   readonly stumpRoot: Object3D;
   readonly saplingRoot: Object3D;
@@ -212,7 +255,9 @@ export function buildSimWorldRenderer(opts: {
     syncGroundWorks,
     syncDynamicFarms,
     buildingMaterial,
+    siteBuildingMaterial,
     buildingTemplates,
+    marchlandBuildingLevels,
     wallTemplate,
     stumpRoot,
     saplingRoot,
@@ -223,12 +268,16 @@ export function buildSimWorldRenderer(opts: {
 
   const disposableGeos: BufferGeometry[] = [];
   const allMeshes: InstancedMesh[] = [];
+  const siteSlots: Mesh[] = [];
 
   // 1. Pre-warmed dynamic building pools for every loaded BuildingKind (0 new pipelines in play!)
   const dynamicBuildingPools = new Map<BuildingKind, { meshes: InstancedMesh[]; cap: number }>();
   for (const [kind, tpl] of buildingTemplates) {
     const parts = extractPartsFromRoot(tpl.lod0, buildingMaterial);
-    for (const p of parts) disposableGeos.push(p.geometry);
+    for (const p of parts) {
+      p.geometry.computeBoundingBox();
+      disposableGeos.push(p.geometry);
+    }
     const cap =
       kind === 'house_l1' || kind === 'farm_l1' || kind === 'watchtower_l1' || kind === 'camp_tent_l1' || kind === 'ruin_house'
         ? 48
@@ -236,6 +285,60 @@ export function buildSimWorldRenderer(opts: {
     const meshes = createPreWarmedPool(scene, `DynBld_${kind}`, parts, cap, true);
     allMeshes.push(...meshes);
     dynamicBuildingPools.set(kind, { meshes, cap });
+  }
+
+  // 1b. Pre-warmed high-detail L1/L2/L3 architectural pools from FPS/marchland (shared buildingMaterial -> 0 extra shaders!)
+  const marchlandLevelPools = new Map<MarchlandBuildingLevelKey, { mesh: InstancedMesh; cap: number }>();
+  if (marchlandBuildingLevels) {
+    for (const [key, geo] of marchlandBuildingLevels) {
+      geo.computeBoundingBox();
+      disposableGeos.push(geo);
+      const cap = key.startsWith('house_') || key.startsWith('farm_') || key.startsWith('watchtower_') ? 48 : 20;
+      const im = new InstancedMesh(geo, buildingMaterial, cap);
+      im.name = `MarchlandBld_${key}`;
+      im.castShadow = true;
+      im.receiveShadow = true;
+      im.frustumCulled = false;
+      markStaticInstances(im);
+      im.setMatrixAt(0, ZERO_MAT);
+      im.count = 1;
+      im.instanceMatrix.needsUpdate = true;
+      scene.add(im);
+      allMeshes.push(im);
+      marchlandLevelPools.set(key, { mesh: im, cap });
+    }
+  }
+
+  // 1c. Pre-warmed rubble-stone plinths under buildings on slopes (1 draw call, shared buildingMaterial!)
+  const plinthGeo = buildPlinthGeometry();
+  disposableGeos.push(plinthGeo);
+  const dynPlinthMesh = new InstancedMesh(plinthGeo, buildingMaterial, 160);
+  dynPlinthMesh.name = 'DynBuildingPlinths';
+  dynPlinthMesh.castShadow = true;
+  dynPlinthMesh.receiveShadow = true;
+  dynPlinthMesh.frustumCulled = false;
+  markStaticInstances(dynPlinthMesh);
+  dynPlinthMesh.setMatrixAt(0, ZERO_MAT);
+  dynPlinthMesh.count = 1;
+  dynPlinthMesh.instanceMatrix.needsUpdate = true;
+  scene.add(dynPlinthMesh);
+  allMeshes.push(dynPlinthMesh);
+
+  // 1d. Pre-warmed course-by-course construction site slots (zero mid-play shader compiles!)
+  if (siteBuildingMaterial) {
+    for (let i = 0; i < 16; i++) {
+      const m = new Mesh(plinthGeo, siteBuildingMaterial);
+      m.name = `ConstructionSiteSlot_${i}`;
+      m.castShadow = true;
+      m.receiveShadow = true;
+      m.frustumCulled = false;
+      // Keep slot 0 visible at scale 0 before warmUp() so siteBuildingMaterial compiles during load!
+      m.visible = i === 0;
+      m.scale.set(0, 0, 0);
+      m.userData['cutY'] = 1e6;
+      scene.add(m);
+      siteSlots.push(m);
+    }
   }
 
   // 2. Pre-warmed dynamic walls (capacity 520 covers Mission 5's 360 fortress wall segments + player walls!), stumps & saplings
@@ -438,25 +541,56 @@ export function buildSimWorldRenderer(opts: {
     // 3. Pack all non-static buildings (plus upgraded/constructing static buildings & live placement ghost!) into pre-warmed pools
     const poolCounts = new Map<BuildingKind, number>();
     for (const k of dynamicBuildingPools.keys()) poolCounts.set(k, 0);
+    const marchlandCounts = new Map<MarchlandBuildingLevelKey, number>();
+    for (const k of marchlandLevelPools.keys()) marchlandCounts.set(k, 0);
     let scafCount = 0;
     let vineCount = 0;
+    let plinthCount = 0;
+    let siteSlotIdx = 0;
 
     for (const b of state.buildings) {
       if (b.hp <= 0) continue;
+
+      const y = terrain.heightAt(b.x, b.z);
+
+      // Rubble-stone plinth under any building sitting on sloped ground so corners never float!
+      if (plinthCount < 160 && b.type !== 'fisher') {
+        const halfSpan = Math.max(2.6, BUILDING_DEFS[b.type].radiusM * 0.86);
+        const cb = Math.cos(b.yawRad);
+        const sb = Math.sin(b.yawRad);
+        let minCornerH = y;
+        for (const sx of [-halfSpan, halfSpan]) {
+          for (const sz of [-halfSpan, halfSpan]) {
+            const wx = b.x + sx * cb + sz * sb;
+            const wz = b.z - sx * sb + sz * cb;
+            const ch = terrain.heightAt(wx, wz);
+            if (ch < minCornerH) minCornerH = ch;
+          }
+        }
+        const drop = y - minCornerH;
+        if (drop > 0.10) {
+          const span = halfSpan * 2.05;
+          TEMP_POS.set(b.x, y + 0.08, b.z);
+          TEMP_QUAT.setFromAxisAngle(UP, b.yawRad);
+          TEMP_SCALE.set(span, drop + 0.45, span);
+          TEMP_MAT.compose(TEMP_POS, TEMP_QUAT, TEMP_SCALE);
+          dynPlinthMesh.setMatrixAt(plinthCount++, TEMP_MAT);
+        }
+      }
 
       // Render 3D staked grapevine trellises behind every completed Vineyard!
       if (b.type === 'vineyard' && b.buildProgress >= 1) {
         for (let si = 0; si < b.strips.length && vineCount < 128; si++) {
           const st = b.strips[si]!;
           const tr = computeBuildingStripTransform(b, si);
-          const y = terrain.heightAt(tr.cx, tr.cz);
+          const vy = terrain.heightAt(tr.cx, tr.cz);
           const growH =
             st.phase === 'ready'
               ? 1.05
               : st.phase === 'growing'
                 ? 0.42 + 0.63 * st.growth01
                 : 0.35;
-          TEMP_POS.set(tr.cx, y, tr.cz);
+          TEMP_POS.set(tr.cx, vy, tr.cz);
           TEMP_QUAT.setFromAxisAngle(UP, b.yawRad);
           TEMP_SCALE.set(1.0, growH, 1.0);
           TEMP_MAT.compose(TEMP_POS, TEMP_QUAT, TEMP_SCALE);
@@ -470,24 +604,59 @@ export function buildSimWorldRenderer(opts: {
         continue;
       }
 
-      const kind: BuildingKind = b.isFortressDonzon ? 'fortress_donzon' : BUILDING_DEFS[b.type].modelKind;
-      const pool = dynamicBuildingPools.get(kind);
-      if (!pool) continue;
-      const idx = poolCounts.get(kind) ?? 0;
-      if (idx >= pool.cap) continue;
-
-      const y = terrain.heightAt(b.x, b.z);
       const scaleY = b.buildProgress < 1 ? 0.22 + 0.78 * b.buildProgress : 1.0;
-      const levelScale = b.level === 3 ? 1.18 : b.level === 2 ? 1.09 : 1.0;
-      TEMP_POS.set(b.x, y, b.z);
-      TEMP_QUAT.setFromAxisAngle(UP, b.yawRad);
-      TEMP_SCALE.set(levelScale, scaleY * levelScale, levelScale);
-      TEMP_MAT.compose(TEMP_POS, TEMP_QUAT, TEMP_SCALE);
-      for (const m of pool.meshes) m.setMatrixAt(idx, TEMP_MAT);
-      poolCounts.set(kind, idx + 1);
+      const lvl = (b.level >= 3 ? 3 : b.level === 2 ? 2 : 1) as 1 | 2 | 3;
+      const mKey = `${b.type}_${lvl}` as MarchlandBuildingLevelKey;
+      const mPool = !b.isFortressDonzon ? marchlandLevelPools.get(mKey) : undefined;
+
+      // Course-by-course shader construction clipping for active construction sites!
+      if (b.buildProgress < 1 && siteSlotIdx < siteSlots.length) {
+        const kind: BuildingKind = b.isFortressDonzon ? 'fortress_donzon' : BUILDING_DEFS[b.type].modelKind;
+        const fallbackPool = dynamicBuildingPools.get(kind);
+        const siteGeo = mPool ? mPool.mesh.geometry : fallbackPool?.meshes[0]?.geometry;
+        if (siteGeo) {
+          const slot = siteSlots[siteSlotIdx++]!;
+          slot.geometry = siteGeo;
+          slot.position.set(b.x, y, b.z);
+          slot.rotation.set(0, b.yawRad, 0);
+          const levelScale = mPool ? 1.0 : b.level === 3 ? 1.18 : b.level === 2 ? 1.09 : 1.0;
+          slot.scale.set(levelScale, levelScale, levelScale);
+          const topH = (siteGeo.boundingBox?.max.y ?? 6.5) * levelScale;
+          const footingM = 0.35;
+          const cutH = b.buildProgress < 0.12
+            ? (b.buildProgress / 0.12) * footingM
+            : footingM + ((b.buildProgress - 0.12) / 0.88) * Math.max(2.0, topH - footingM);
+          slot.userData['cutY'] = y + cutH;
+          slot.visible = true;
+        }
+      } else if (mPool) {
+        const idx = marchlandCounts.get(mKey) ?? 0;
+        if (idx < mPool.cap) {
+          TEMP_POS.set(b.x, y, b.z);
+          TEMP_QUAT.setFromAxisAngle(UP, b.yawRad);
+          TEMP_SCALE.set(1.0, scaleY, 1.0);
+          TEMP_MAT.compose(TEMP_POS, TEMP_QUAT, TEMP_SCALE);
+          mPool.mesh.setMatrixAt(idx, TEMP_MAT);
+          marchlandCounts.set(mKey, idx + 1);
+        }
+      } else {
+        const kind: BuildingKind = b.isFortressDonzon ? 'fortress_donzon' : BUILDING_DEFS[b.type].modelKind;
+        const pool = dynamicBuildingPools.get(kind);
+        if (!pool) continue;
+        const idx = poolCounts.get(kind) ?? 0;
+        if (idx >= pool.cap) continue;
+        const levelScale = b.level === 3 ? 1.18 : b.level === 2 ? 1.09 : 1.0;
+        TEMP_POS.set(b.x, y, b.z);
+        TEMP_QUAT.setFromAxisAngle(UP, b.yawRad);
+        TEMP_SCALE.set(levelScale, scaleY * levelScale, levelScale);
+        TEMP_MAT.compose(TEMP_POS, TEMP_QUAT, TEMP_SCALE);
+        for (const m of pool.meshes) m.setMatrixAt(idx, TEMP_MAT);
+        poolCounts.set(kind, idx + 1);
+      }
 
       if ((b.buildProgress < 1 || b.upgradingToLevel !== null) && scafCount < 24) {
-        const r = BUILDING_DEFS[b.type].radiusM * 1.45 * levelScale;
+        const scafLevelMul = b.level === 3 ? 1.15 : b.level === 2 ? 1.07 : 1.0;
+        const r = BUILDING_DEFS[b.type].radiusM * 1.45 * scafLevelMul;
         const prog = b.buildProgress < 1 ? b.buildProgress : 0.75;
         TEMP_POS.set(b.x, y, b.z);
         TEMP_QUAT.setFromAxisAngle(UP, b.yawRad);
@@ -495,6 +664,10 @@ export function buildSimWorldRenderer(opts: {
         TEMP_MAT.compose(TEMP_POS, TEMP_QUAT, TEMP_SCALE);
         dynScafMesh.setMatrixAt(scafCount++, TEMP_MAT);
       }
+    }
+
+    for (let i = siteSlotIdx; i < siteSlots.length; i++) {
+      siteSlots[i]!.visible = false;
     }
 
     // Dynamic player-built gates (drawn via DynBld_gate_l1 pool if not matching static gate)
@@ -518,21 +691,37 @@ export function buildSimWorldRenderer(opts: {
 
     // Live 3D building / gate placement preview right under the player's cursor rotating live with R!
     if (placementGhost && placementGhost.active && (placementGhost.mode === 'building' || placementGhost.mode === 'gate')) {
-      const ghostKind: BuildingKind =
-        placementGhost.mode === 'gate'
-          ? 'gate_l1'
-          : BUILDING_DEFS[placementGhost.buildingType ?? 'house'].modelKind;
-      const gPool = dynamicBuildingPools.get(ghostKind);
-      if (gPool) {
-        const idx = poolCounts.get(ghostKind) ?? 0;
-        if (idx < gPool.cap) {
+      const ghostType = placementGhost.buildingType ?? 'house';
+      const mGhostKey = `${ghostType}_1` as MarchlandBuildingLevelKey;
+      const mGhostPool = placementGhost.mode === 'building' ? marchlandLevelPools.get(mGhostKey) : undefined;
+      if (mGhostPool) {
+        const idx = marchlandCounts.get(mGhostKey) ?? 0;
+        if (idx < mGhostPool.cap) {
           const y = terrain.heightAt(placementGhost.x, placementGhost.z);
           TEMP_POS.set(placementGhost.x, y + 0.04, placementGhost.z);
           TEMP_QUAT.setFromAxisAngle(UP, placementGhost.yawRad);
           TEMP_SCALE.set(1, 1, 1);
           TEMP_MAT.compose(TEMP_POS, TEMP_QUAT, TEMP_SCALE);
-          for (const m of gPool.meshes) m.setMatrixAt(idx, TEMP_MAT);
-          poolCounts.set(ghostKind, idx + 1);
+          mGhostPool.mesh.setMatrixAt(idx, TEMP_MAT);
+          marchlandCounts.set(mGhostKey, idx + 1);
+        }
+      } else {
+        const ghostKind: BuildingKind =
+          placementGhost.mode === 'gate'
+            ? 'gate_l1'
+            : BUILDING_DEFS[ghostType].modelKind;
+        const gPool = dynamicBuildingPools.get(ghostKind);
+        if (gPool) {
+          const idx = poolCounts.get(ghostKind) ?? 0;
+          if (idx < gPool.cap) {
+            const y = terrain.heightAt(placementGhost.x, placementGhost.z);
+            TEMP_POS.set(placementGhost.x, y + 0.04, placementGhost.z);
+            TEMP_QUAT.setFromAxisAngle(UP, placementGhost.yawRad);
+            TEMP_SCALE.set(1, 1, 1);
+            TEMP_MAT.compose(TEMP_POS, TEMP_QUAT, TEMP_SCALE);
+            for (const m of gPool.meshes) m.setMatrixAt(idx, TEMP_MAT);
+            poolCounts.set(ghostKind, idx + 1);
+          }
         }
       }
     }
@@ -540,6 +729,10 @@ export function buildSimWorldRenderer(opts: {
     for (const [kind, pool] of dynamicBuildingPools) {
       commitPool(pool.meshes, poolCounts.get(kind) ?? 0);
     }
+    for (const [key, pool] of marchlandLevelPools) {
+      commitPool([pool.mesh], marchlandCounts.get(key) ?? 0);
+    }
+    commitPool([dynPlinthMesh], plinthCount);
     commitPool([dynScafMesh], scafCount);
     commitPool([dynVineMesh], vineCount);
 
@@ -603,6 +796,7 @@ export function buildSimWorldRenderer(opts: {
     sync,
     dispose() {
       for (const m of allMeshes) scene.remove(m);
+      for (const sm of siteSlots) scene.remove(sm);
       for (const g of disposableGeos) g.dispose();
       scafMat.dispose();
       vineMat.dispose();

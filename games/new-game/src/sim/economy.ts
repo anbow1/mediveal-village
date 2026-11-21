@@ -4,12 +4,16 @@
 import {
   ALL_GOODS,
   BUILDING_DEFS,
+  CARRIER_PRIORITY,
+  CART_SPACING,
   ECONOMY,
   EQUIPMENT_GOODS,
   FOOD_GOODS,
   FOOD_RATIONS_PER_UNIT,
   GOOD_TO_WORKSHOP,
   isEquipmentWorkshop,
+  KEEP_BAYS,
+  TRANSPORT_LEVELS,
   type GoodId,
   type ResourceMap,
 } from '../config.ts';
@@ -317,6 +321,7 @@ function moveCitizenToward(
   nav: NavGrid,
   usePathing = false,
   arrivalRadiusM = 2.2,
+  paceMul = 1.0,
 ): boolean {
   const directDist = Math.hypot(tx - c.x, tz - c.z);
   if (directDist <= arrivalRadiusM) {
@@ -345,7 +350,7 @@ function moveCitizenToward(
   const dx = destX - c.x;
   const dz = destZ - c.z;
   const dist = Math.hypot(dx, dz);
-  const speed = ECONOMY.citizenWalkSpeedMs * nav.speedMultiplierAt(c.x, c.z) * (c.fleeing ? 1.35 : 1.0);
+  const speed = ECONOMY.citizenWalkSpeedMs * paceMul * nav.speedMultiplierAt(c.x, c.z) * (c.fleeing ? 1.35 : 1.0);
   const step = speed * dtS;
 
   if (dist <= Math.max(0.45, step)) {
@@ -418,6 +423,7 @@ function findSourceForGood(
 function assignCarrierJob(state: SimWorldState, c: TownsfolkEntity): void {
   const side = c.side;
   const sideState = state.sides[side];
+  const carryCap = TRANSPORT_LEVELS[(sideState.transportLevel ?? 1) - 1]!.capacity;
   const buildings = state.buildings;
 
   // Count in-flight reservations per (toBuildingId, good) so carriers don't pile 5 trips onto one slot
@@ -435,7 +441,7 @@ function assignCarrierJob(state: SimWorldState, c: TownsfolkEntity): void {
       const src = findSourceForGood(state, side, fg, house.x, house.z, true, house.id);
       if (!src) continue;
       const perUnit = FOOD_RATIONS_PER_UNIT[fg] ?? 1;
-      const wantUnits = Math.max(1, Math.min(ECONOMY.carrierCapacity, Math.ceil(needRations / perUnit), src.available));
+      const wantUnits = Math.max(1, Math.min(carryCap, Math.ceil(needRations / perUnit), src.available));
       if (wantUnits <= 0) continue;
       // Reserve immediately from source per docs/ECONOMY.md §3 ("disappears from source ledger on acceptance")
       if (src.fromDepot) sideState.stock[fg] = Math.max(0, (sideState.stock[fg] ?? 0) - wantUnits);
@@ -475,7 +481,7 @@ function assignCarrierJob(state: SimWorldState, c: TownsfolkEntity): void {
       if (needed <= 0) continue;
       const src = findSourceForGood(state, side, matGood, s.x, s.z, true, s.id);
       if (!src) continue;
-      const take = Math.min(ECONOMY.carrierCapacity, Math.ceil(needed), src.available);
+      const take = Math.min(carryCap, Math.ceil(needed), src.available);
       if (take <= 0) continue;
       if (src.fromDepot) sideState.stock[matGood] = Math.max(0, (sideState.stock[matGood] ?? 0) - take);
       else src.building.yard[matGood] = Math.max(0, (src.building.yard[matGood] ?? 0) - take);
@@ -513,7 +519,7 @@ function assignCarrierJob(state: SimWorldState, c: TownsfolkEntity): void {
     if (need < 1) continue;
     const src = findSourceForGood(state, side, 'wine', h.x, h.z, true, h.id);
     if (!src) break;
-    const take = Math.min(ECONOMY.carrierCapacity, Math.ceil(need), src.available);
+    const take = Math.min(carryCap, Math.ceil(need), src.available);
     if (src.fromDepot) sideState.stock.wine = Math.max(0, sideState.stock.wine - take);
     else src.building.yard.wine = Math.max(0, (src.building.yard.wine ?? 0) - take);
     c.carryJob = {
@@ -529,23 +535,30 @@ function assignCarrierJob(state: SimWorldState, c: TownsfolkEntity): void {
     return;
   }
 
-  // Tier 4: Yard output to nearest depot when Keep stock of that good is low (< 8)
-  let bestTier4: { b: BuildingEntity; g: GoodId; amt: number; depot: BuildingEntity; dist: number } | null = null;
+  const goodPriScore = (g: GoodId): number => {
+    const p = sideState.goodPriorities?.[g] ?? 0;
+    return p > 0 ? CARRIER_PRIORITY.high : p < 0 ? CARRIER_PRIORITY.low : 0;
+  };
+
+  // Tier 4: Yard output to nearest depot when Keep stock of that good is low (< 8) or marked high priority
+  let bestTier4: { b: BuildingEntity; g: GoodId; amt: number; depot: BuildingEntity; score: number } | null = null;
   for (const b of buildings) {
     if (b.side !== side || b.hp <= 0 || b.buildProgress < 1) continue;
     for (const g of Object.keys(b.yard) as GoodId[]) {
       const avail = Math.floor(b.yard[g] ?? 0);
       if (avail <= 0) continue;
-      if ((sideState.stock[g] ?? 0) >= 8) continue;
+      const pri = goodPriScore(g);
+      if ((sideState.stock[g] ?? 0) >= 8 && pri <= 0) continue;
       const depot = findNearestDepot(state, side, b.x, b.z);
       if (!depot || depot.id === b.id) continue;
       const d = Math.hypot(b.x - c.x, b.z - c.z);
-      if (!bestTier4 || d < bestTier4.dist) {
-        bestTier4 = { b, g, amt: Math.min(ECONOMY.carrierCapacity, avail), depot, dist: d };
+      const score = pri - d * 4;
+      if (!bestTier4 || score > bestTier4.score) {
+        bestTier4 = { b, g, amt: Math.min(carryCap, avail), depot, score };
       }
     }
   }
-  if (bestTier4) {
+  if (bestTier4 && bestTier4.score > -700) {
     bestTier4.b.yard[bestTier4.g] = Math.max(0, (bestTier4.b.yard[bestTier4.g] ?? 0) - bestTier4.amt);
     c.carryJob = {
       good: bestTier4.g,
@@ -560,8 +573,8 @@ function assignCarrierJob(state: SimWorldState, c: TownsfolkEntity): void {
     return;
   }
 
-  // Tier 5: Raw materials to workshops (empty input first; skip workshops with full yard >= 24!)
-  const workshopNeeds: { b: BuildingEntity; g: GoodId; need: number; empty: boolean; dist: number }[] = [];
+  // Tier 5: Raw materials to workshops (priority-weighted, empty input first; skip workshops with full yard >= 24!)
+  const workshopNeeds: { b: BuildingEntity; g: GoodId; need: number; score: number }[] = [];
   for (const b of buildings) {
     if (b.side !== side || b.hp <= 0 || b.buildProgress < 1 || b.paused) continue;
     const recipe = BUILDING_DEFS[b.type].recipe;
@@ -571,20 +584,18 @@ function assignCarrierJob(state: SimWorldState, c: TownsfolkEntity): void {
       const have = (b.inputs[g] ?? 0) + getReserved(b.id, g);
       const need = ECONOMY.workshopInputMax - have;
       if (need < 1) continue;
-      workshopNeeds.push({
-        b,
-        g,
-        need,
-        empty: (b.inputs[g] ?? 0) < (recipe.inputs[g] ?? 1),
-        dist: Math.hypot(b.x - c.x, b.z - c.z),
-      });
+      const empty = (b.inputs[g] ?? 0) < (recipe.inputs[g] ?? 1);
+      const dist = Math.hypot(b.x - c.x, b.z - c.z);
+      const outBonus = Object.keys(recipe.outputs).reduce((mx, og) => Math.max(mx, goodPriScore(og as GoodId)), 0);
+      const score = Math.max(goodPriScore(g), outBonus) + (empty ? 320 : 0) - dist * 4;
+      workshopNeeds.push({ b, g, need, score });
     }
   }
-  workshopNeeds.sort((a, b) => (a.empty !== b.empty ? (a.empty ? -1 : 1) : a.dist - b.dist));
+  workshopNeeds.sort((a, b) => b.score - a.score);
   for (const req of workshopNeeds) {
     const src = findSourceForGood(state, side, req.g, req.b.x, req.b.z, true, req.b.id);
     if (!src) continue;
-    const take = Math.min(ECONOMY.carrierCapacity, Math.floor(req.need), src.available);
+    const take = Math.min(carryCap, Math.floor(req.need), src.available);
     if (take <= 0) continue;
     if (src.fromDepot) sideState.stock[req.g] = Math.max(0, (sideState.stock[req.g] ?? 0) - take);
     else src.building.yard[req.g] = Math.max(0, (src.building.yard[req.g] ?? 0) - take);
@@ -601,8 +612,8 @@ function assignCarrierJob(state: SimWorldState, c: TownsfolkEntity): void {
     return;
   }
 
-  // Tier 6: Collect yard output >= 4 to nearest depot
-  let bestTier6: { b: BuildingEntity; g: GoodId; amt: number; depot: BuildingEntity; dist: number } | null = null;
+  // Tier 6: Collect yard output >= 4 to nearest depot (priority-weighted)
+  let bestTier6: { b: BuildingEntity; g: GoodId; amt: number; depot: BuildingEntity; score: number } | null = null;
   for (const b of buildings) {
     if (b.side !== side || b.hp <= 0 || b.buildProgress < 1) continue;
     const totalYard = totalMapUnits(b.yard);
@@ -613,8 +624,9 @@ function assignCarrierJob(state: SimWorldState, c: TownsfolkEntity): void {
       const depot = findNearestDepot(state, side, b.x, b.z);
       if (!depot || depot.id === b.id) continue;
       const d = Math.hypot(b.x - c.x, b.z - c.z);
-      if (!bestTier6 || d < bestTier6.dist) {
-        bestTier6 = { b, g, amt: Math.min(ECONOMY.carrierCapacity, avail), depot, dist: d };
+      const score = goodPriScore(g) - d * 4;
+      if (!bestTier6 || score > bestTier6.score) {
+        bestTier6 = { b, g, amt: Math.min(carryCap, avail), depot, score };
       }
     }
   }
@@ -653,6 +665,20 @@ export function stepEconomy(
     state.roleAllocTimerS -= 1.0;
     allocateRolesForSide(state, 0);
     allocateRolesForSide(state, 1);
+  }
+
+  // 1b. Transport Upgrade timers (L1 On Foot -> L2 Handcarts -> L3 Horse & Wagon)
+  for (const sideId of [0, 1] as const) {
+    const sideSt = state.sides[sideId];
+    if (sideSt.upgradingTransportTo !== null) {
+      sideSt.transportUpgradeTimerS -= dtS;
+      if (sideSt.transportUpgradeTimerS <= 0) {
+        sideSt.transportLevel = sideSt.upgradingTransportTo;
+        sideSt.upgradingTransportTo = null;
+        sideSt.transportUpgradeTimerS = 0;
+        state.visualRevision++;
+      }
+    }
   }
 
   // 2. Sapling regrowth (Forester speeds up 2x)
@@ -791,18 +817,40 @@ export function stepEconomy(
             return { x: targetB.x, z: targetB.z, reachM: BUILDING_DEFS[targetB.type].radiusM + 1.8 };
           }
           const baseAng = Math.atan2(otherZ - targetB.z, otherX - targetB.x);
-          const stationIdx = ((Math.round((baseAng / (Math.PI * 2)) * 10) + (c.id % 3) - 1) % 10 + 10) % 10;
-          const stAng = (stationIdx / 10) * Math.PI * 2;
-          const stR = BUILDING_DEFS.keep.radiusM + 0.9;
+          const bayCount = KEEP_BAYS.count;
+          const stationIdx = ((Math.round((baseAng / (Math.PI * 2)) * bayCount) + (c.id % 3) - 1) % bayCount + bayCount) % bayCount;
+          const stAng = (stationIdx / bayCount) * Math.PI * 2;
+          const stR = BUILDING_DEFS.keep.radiusM + KEEP_BAYS.outM;
           return {
             x: targetB.x + Math.cos(stAng) * stR,
             z: targetB.z + Math.sin(stAng) * stR,
-            reachM: 1.8,
+            reachM: 1.9,
           };
         };
+        const tLevel = state.sides[c.side].transportLevel ?? 1;
+        let carrierPace = TRANSPORT_LEVELS[tLevel - 1]!.pace;
+        // Cart & wagon road spacing: slow slightly if trailing another carrier closer than barrowGapM/wagonGapM
+        if (tLevel >= 2) {
+          const minGap = tLevel >= 3 ? CART_SPACING.wagonGapM : CART_SPACING.barrowGapM;
+          const fx = Math.sin(c.yawRad);
+          const fz = Math.cos(c.yawRad);
+          for (const other of state.citizens) {
+            if (other.id === c.id || other.side !== c.side || other.role !== 'carrier' || !other.carryJob) continue;
+            const dx = other.x - c.x;
+            const dz = other.z - c.z;
+            const ahead = dx * fx + dz * fz;
+            if (ahead > 0.2 && ahead < minGap) {
+              const lateral = Math.abs(dx * fz - dz * fx);
+              if (lateral < CART_SPACING.laneM) {
+                carrierPace *= 0.45;
+                break;
+              }
+            }
+          }
+        }
         if (!job.pickedUp && fromB) {
           const st = keepStationPos(fromB, toB.x, toB.z);
-          const arrived = moveCitizenToward(c, st.x, st.z, dtS, nav, true, st.reachM);
+          const arrived = moveCitizenToward(c, st.x, st.z, dtS, nav, true, st.reachM, carrierPace);
           if (arrived) {
             c.yawRad = Math.atan2(fromB.x - c.x, fromB.z - c.z);
             job.transferTimerS += dtS;
@@ -816,7 +864,7 @@ export function stepEconomy(
           }
         } else {
           const st = keepStationPos(toB, fromB ? fromB.x : c.x, fromB ? fromB.z : c.z);
-          const arrived = moveCitizenToward(c, st.x, st.z, dtS, nav, true, st.reachM);
+          const arrived = moveCitizenToward(c, st.x, st.z, dtS, nav, true, st.reachM, carrierPace);
           if (arrived) {
             c.yawRad = Math.atan2(toB.x - c.x, toB.z - c.z);
             job.transferTimerS += dtS;

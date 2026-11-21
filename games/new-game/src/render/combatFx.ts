@@ -101,6 +101,7 @@ export interface CombatFxHandles {
     formationGhost: FormationGhostPreview | null,
     placementGhost: PlacementGhostPreview | null,
     paused: boolean,
+    skipProceduralUnits?: boolean,
   ) => void;
   readonly dispose: () => void;
 }
@@ -503,6 +504,7 @@ export function buildCombatFx(scene: Scene): CombatFxHandles {
     formationGhost: FormationGhostPreview | null,
     placementGhost: PlacementGhostPreview | null,
     paused: boolean,
+    skipProceduralUnits = false,
   ): void => {
     if (!paused && dtS > 0) {
       animClockS += dtS;
@@ -519,8 +521,8 @@ export function buildCombatFx(scene: Scene): CombatFxHandles {
       if (alive <= 0) continue;
       const def = UNIT_DEFS[reg.unitType];
 
-      // Sculpted Cavalry Warhorses
-      if (def.unitClass === 'cavalry') {
+      // Sculpted Cavalry Warhorses (skipped when 40-bone marchland warhorses are active)
+      if (!skipProceduralUnits && def.unitClass === 'cavalry') {
         for (const s of reg.soldiers) {
           if (!s.alive || horseCount >= 84) continue;
           const y = heightAt(s.x, s.z);
@@ -541,8 +543,8 @@ export function buildCombatFx(scene: Scene): CombatFxHandles {
         }
       }
 
-      // Field Artillery Guns
-      if (def.unitClass === 'siege') {
+      // Field Artillery Guns (skipped when marchland cannon/mortar models are active)
+      if (!skipProceduralUnits && def.unitClass === 'siege') {
         for (const s of reg.soldiers) {
           if (!s.alive || cannonCount >= 24) continue;
           const y = heightAt(s.x, s.z);

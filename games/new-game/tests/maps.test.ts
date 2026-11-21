@@ -160,5 +160,34 @@ describe('Stage 5 full 560 x 560 m Campaign & Skirmish maps', () => {
       }
     }
   });
+
+  it('seals wall-to-watchtower and wall-to-gate joints tightly on the starting crossing map with zero gaps', () => {
+    const layout = buildMapLayout('crossing');
+    const wallTowers = layout.buildings.filter(
+      (b) => b.kind === 'watchtower_l1' && (Math.abs(b.x - (-16)) < 1.0 || Math.abs(b.x - 78) < 1.0),
+    );
+    const gates = layout.buildings.filter((b) => b.kind === 'gate_l1');
+    expect(wallTowers.length).toBe(4);
+    expect(gates.length).toBe(2);
+
+    // Every wall-line watchtower on crossing must have a wall segment terminating within <= 2.4 m of its center (embedded into masonry!)
+    for (const tw of wallTowers) {
+      let minDist = Infinity;
+      for (const w of layout.walls) {
+        const d = Math.hypot(w.x - tw.x, w.z - tw.z);
+        if (d < minDist) minDist = d;
+      }
+      expect(minDist, `Watchtower at (${tw.x}, ${tw.z}) must connect tightly to wall`).toBeLessThanOrEqual(2.4);
+    }
+
+    // Every gatehouse on crossing must have wall segments flanking both sides within <= 4.2 m of gate center
+    for (const g of gates) {
+      const northWall = layout.walls.some((w) => Math.abs(w.x - g.x) < 1.0 && w.z < g.z && g.z - w.z <= 4.2);
+      const southWall = layout.walls.some((w) => Math.abs(w.x - g.x) < 1.0 && w.z > g.z && w.z - g.z <= 4.2);
+      expect(northWall, `Gate at (${g.x}, ${g.z}) must connect tightly on north side`).toBe(true);
+      expect(southWall, `Gate at (${g.x}, ${g.z}) must connect tightly on south side`).toBe(true);
+    }
+  });
 });
+
 

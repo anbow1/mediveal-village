@@ -23,6 +23,41 @@ export type SoundKind =
 const SPEED_OF_SOUND_MS = 343;
 const STORAGE_KEY_VOLUME = 'marchland.volume.v1';
 
+/** 23 real medieval MP3 sound effects imported from anbow1/FPS (marchland/public/sounds/). */
+const MP3_CLIP_POOLS: Partial<Record<SoundKind, readonly string[]>> = {
+  swordClash: [
+    'assets/marchland/sounds/impact_metal_light_000.mp3',
+    'assets/marchland/sounds/impact_metal_light_001.mp3',
+    'assets/marchland/sounds/impact_metal_medium_000.mp3',
+    'assets/marchland/sounds/impact_metal_medium_001.mp3',
+    'assets/marchland/sounds/impact_metal_medium_002.mp3',
+    'assets/marchland/sounds/impact_plate_medium_000.mp3',
+    'assets/marchland/sounds/impact_plate_medium_001.mp3',
+    'assets/marchland/sounds/impact_plate_heavy_000.mp3',
+    'assets/marchland/sounds/rpg_knife_slice.mp3',
+    'assets/marchland/sounds/rpg_knife_slice_2.mp3',
+  ],
+  impact: [
+    'assets/marchland/sounds/impact_punch_heavy_000.mp3',
+    'assets/marchland/sounds/impact_punch_medium_000.mp3',
+    'assets/marchland/sounds/impact_punch_medium_001.mp3',
+    'assets/marchland/sounds/impact_soft_heavy_000.mp3',
+    'assets/marchland/sounds/impact_soft_heavy_001.mp3',
+    'assets/marchland/sounds/impact_soft_medium_000.mp3',
+    'assets/marchland/sounds/impact_soft_medium_001.mp3',
+  ],
+  hammer: [
+    'assets/marchland/sounds/impact_mining_000.mp3',
+    'assets/marchland/sounds/impact_mining_001.mp3',
+    'assets/marchland/sounds/impact_mining_002.mp3',
+  ],
+  chop: ['assets/marchland/sounds/rpg_chop.mp3'],
+  uiClick: [
+    'assets/marchland/sounds/rpg_metal_click.mp3',
+    'assets/marchland/sounds/rpg_metal_latch.mp3',
+  ],
+};
+
 /** Deterministic small PRNG for reproducible procedural AudioBuffer baking. */
 function makeBufferRng(seed: number): () => number {
   let s = seed | 0;
@@ -150,6 +185,7 @@ export class SoundEngine {
   private masterGain: GainNode | null = null;
   private windGain: GainNode | null = null;
   private buffers = new Map<SoundKind, AudioBuffer>();
+  private clipPools = new Map<SoundKind, AudioBuffer[]>();
   private volume = 0.65;
   private muted = false;
   private paused = false;
@@ -248,6 +284,7 @@ export class SoundEngine {
       for (const k of kinds) {
         this.buffers.set(k, bakeProceduralBuffer(ctx, k));
       }
+      this.loadMp3Pools(ctx);
 
       // Continuous looping filtered meadow wind bed (initialized at gain 0 to avoid pop)
       const windLen = Math.floor(ctx.sampleRate * 3.0);
@@ -286,10 +323,36 @@ export class SoundEngine {
     }
   }
 
+  private loadMp3Pools(ctx: AudioContext): void {
+    for (const [kind, urls] of Object.entries(MP3_CLIP_POOLS) as [SoundKind, readonly string[]][]) {
+      const list: AudioBuffer[] = [];
+      this.clipPools.set(kind, list);
+      for (const url of urls) {
+        void fetch(url)
+          .then((res) => (res.ok ? res.arrayBuffer() : null))
+          .then((buf) => (buf ? ctx.decodeAudioData(buf) : null))
+          .then((decoded) => {
+            if (decoded) list.push(decoded);
+          })
+          .catch(() => {
+            // Keep procedural fallback if offline/missing
+          });
+      }
+    }
+  }
+
+  private pickBuffer(kind: SoundKind): AudioBuffer | undefined {
+    const pool = this.clipPools.get(kind);
+    if (pool && pool.length > 0) {
+      return pool[Math.floor(Math.random() * pool.length)];
+    }
+    return this.buffers.get(kind);
+  }
+
   /** Plays a non-positional UI cue immediately (works even during Active Pause). */
   playUi(kind: 'uiClick' | 'uiError' | 'horn'): void {
     if (!this.ctx || !this.masterGain || this.muted || this.ctx.state !== 'running') return;
-    const buf = this.buffers.get(kind);
+    const buf = this.pickBuffer(kind);
     if (!buf) return;
     const src = this.ctx.createBufferSource();
     src.buffer = buf;
@@ -330,7 +393,7 @@ export class SoundEngine {
     const maxAudibleM = kind === 'cannonFire' || kind === 'mortarFire' || kind === 'horn' ? 320 : 185;
     if (dist > maxAudibleM) return;
 
-    const buf = this.buffers.get(kind);
+    const buf = this.pickBuffer(kind);
     if (!buf) return;
 
     // Physical speed-of-sound propagation delay (dist / 343 s)

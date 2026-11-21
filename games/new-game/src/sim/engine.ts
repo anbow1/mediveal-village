@@ -61,6 +61,9 @@ function createSideState(side: SideId): SideState {
     tributePaid: false,
     equipmentOrders: {},
     savedFormations: [],
+    transportLevel: 1,
+    upgradingTransportTo: null,
+    transportUpgradeTimerS: 0,
   };
 }
 

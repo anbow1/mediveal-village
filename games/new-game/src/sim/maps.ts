@@ -679,8 +679,9 @@ function buildCrossingMap(): MapLayoutSpec {
     { kind: 'watchtower_l1', x: -16, z: 30, yawRad: Math.PI * 0.5, yardRx: 4.5, yardRz: 4.5, team: 0 },
     { kind: 'watchtower_l1', x: -42, z: -36, yawRad: 0.0, yardRx: 4.5, yardRz: 4.5, team: 0 },
   );
-  appendWallRun(walls, -16, -15, -16, 2.2, [], false);
-  appendWallRun(walls, -16, 9.8, -16, 27, [], false);
+  // Extend wall runs right into watchtower (-16,-18 / -16,30) & gatehouse (-16,6) masonry so zero gaps appear
+  appendWallRun(walls, -16, -17.6, -16, 3.0, [], false);
+  appendWallRun(walls, -16, 9.0, -16, 29.6, [], false);
 
   // 2. East Bank Enemy Crimson War Camp (grid-aligned along camp road z = 6, entrances facing the road!)
   buildings.push(
@@ -693,8 +694,8 @@ function buildCrossingMap(): MapLayoutSpec {
     { kind: 'camp_tent_l1', x: 112, z: 18, yawRad: Math.PI, yardRx: 5.5, yardRz: 5.5, team: 1 },
     { kind: 'camp_tent_l1', x: 124, z: 6, yawRad: -Math.PI * 0.5, yardRx: 6.2, yardRz: 6.2, team: 1 },
   );
-  appendWallRun(walls, 78, -11, 78, 2.2, [], true);
-  appendWallRun(walls, 78, 9.8, 78, 23, [], true);
+  appendWallRun(walls, 78, -13.6, 78, 3.0, [], true);
+  appendWallRun(walls, 78, 9.0, 78, 25.6, [], true);
   // Enemy siege cannons & supply crates overlooking the river crossing
   props.push(
     { kind: 'cannon', x: 64, z: -3, yawRad: -Math.PI * 0.5, scale: 1.0 },
@@ -1121,15 +1122,11 @@ function buildFortressMap(): MapLayoutSpec {
   }
   // Main South Gatehouse centered at (fcx, fcz + oz) facing South (+Z toward player siege camp!)
   buildings.push({ kind: 'gate_l1', x: fcx, z: fcz + oz, yawRad: 0.0, yardRx: 6.0, yardRz: 6.0, team: 1 });
-  // Outer curtain walls (all real 2.0 m destructible gameplay wall segments!)
-  appendWallRun(walls, fcx - ox + 2.6, fcz - oz, fcx + ox - 2.6, fcz - oz, [[ox - 4.8, ox + 0.5]], true);
-  appendWallRun(walls, fcx - ox + 2.6, fcz + oz, fcx + ox - 2.6, fcz + oz, [
-    [ox - 20.5, ox - 15.5],
-    [ox - 5.8, ox + 0.8],
-    [ox + 10.5, ox + 15.8],
-  ], false);
-  appendWallRun(walls, fcx - ox, fcz - oz + 2.6, fcx - ox, fcz + oz - 2.6, [[oz - 5.2, oz + 0.4]], false);
-  appendWallRun(walls, fcx + ox, fcz - oz + 2.6, fcx + ox, fcz + oz - 2.6, [[oz - 5.2, oz + 0.4]], true);
+  // Outer curtain walls (embed cleanly into watchtowers, leaving only exact 5.8 m opening for South Gatehouse!)
+  appendWallRun(walls, fcx - ox + 0.8, fcz - oz, fcx + ox - 0.8, fcz - oz, [], true);
+  appendWallRun(walls, fcx - ox + 0.8, fcz + oz, fcx + ox - 0.8, fcz + oz, [[ox - 3.7, ox + 2.1]], false);
+  appendWallRun(walls, fcx - ox, fcz - oz + 0.8, fcx - ox, fcz + oz - 0.8, [], false);
+  appendWallRun(walls, fcx + ox, fcz - oz + 0.8, fcx + ox, fcz + oz - 0.8, [], true);
 
   // 3. INNER WALL RING: 84 x 70 m (halfX = 42, halfZ = 35) — 4 corner watchtowers + Offset West Gate!
   const ix = 42;
@@ -1144,10 +1141,10 @@ function buildFortressMap(): MapLayoutSpec {
   }
   // Offset inner gate in the LEFT/WEST wall (no straight shot from outer south gate!)
   buildings.push({ kind: 'gate_l1', x: fcx - ix, z: fcz + 8, yawRad: -Math.PI * 0.5, yardRx: 5.5, yardRz: 5.5, team: 1 });
-  appendWallRun(walls, fcx - ix + 2.5, fcz - iz, fcx + ix - 2.5, fcz - iz, [], true);
-  appendWallRun(walls, fcx - ix + 2.5, fcz + iz, fcx + ix - 2.5, fcz + iz, [], false);
-  appendWallRun(walls, fcx - ix, fcz - iz + 2.5, fcx - ix, fcz + iz - 2.5, [[iz + 2.2, iz + 8.8]], false);
-  appendWallRun(walls, fcx + ix, fcz - iz + 2.5, fcx + ix, fcz + iz - 2.5, [], true);
+  appendWallRun(walls, fcx - ix + 0.8, fcz - iz, fcx + ix - 0.8, fcz - iz, [], true);
+  appendWallRun(walls, fcx - ix + 0.8, fcz + iz, fcx + ix - 0.8, fcz + iz, [], false);
+  appendWallRun(walls, fcx - ix, fcz - iz + 0.8, fcx - ix, fcz + iz - 0.8, [[iz + 4.3, iz + 10.1]], false);
+  appendWallRun(walls, fcx + ix, fcz - iz + 0.8, fcx + ix, fcz + iz - 0.8, [], true);
 
   // 4. Working Enemy Garrison Town tucked inside the Fortress walls (grid-aligned, entrances facing courtyard lanes!)
   buildings.push(

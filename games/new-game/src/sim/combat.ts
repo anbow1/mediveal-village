@@ -5,6 +5,7 @@ import {
   BUILDING_DEFS,
   COMBAT,
   ECONOMY,
+  STANCES,
   UNIT_DEFS,
   type GoodId,
   type ResourceMap,
@@ -286,9 +287,13 @@ function applyDamageToRegiment(
   const aliveList = defender.soldiers.filter((s) => s.alive);
   if (aliveList.length === 0) return 0;
 
-  // Front-arc shield block for missiles
+  // Front-arc shield block for missiles (Shield Wall doubles arrow block, capped at 0.85)
   if (isMissile && arc === 'front' && def.shieldBlock > 0) {
-    if (nextSimRand(state) < def.shieldBlock) return 0;
+    const effBlock =
+      defender.stance === 'shieldWall'
+        ? Math.min(0.85, def.shieldBlock * STANCES.shieldWall.arrowBlockMul)
+        : def.shieldBlock;
+    if (nextSimRand(state) < effBlock) return 0;
   }
 
   const effArmor = def.armour * (1 - armorPierce);
@@ -298,11 +303,13 @@ function applyDamageToRegiment(
   // Pick a live soldier (weighted toward front ranks)
   const victim = aliveList[Math.floor(nextSimRand(state) * Math.min(aliveList.length, 6))] ?? aliveList[0]!;
   victim.hp -= dmg;
+  victim.hurtAtS = state.timeS;
 
   let killed = 0;
   if (victim.hp <= 0) {
     victim.hp = 0;
     victim.alive = false;
+    victim.deadS = 0;
     killed = 1;
     state.sides[defender.side].totalLosses++;
     if (attacker) {
@@ -1068,20 +1075,34 @@ export function stepCombat(
       const chargeMul =
         (reg.formation === 'wedge' ? 1.3 : 1.0) *
         (elevDiff > COMBAT.elevationHeightThresholdM ? 1 + COMBAT.downhillChargeBonusFrac : 1.0);
-      // Braced pikes/halberds negate frontal cavalry charge bonus (even while advancing at walking pace!)
+      // Braced pikes/halberds negate frontal cavalry charge bonus (Pike Wall always negates frontal charges!)
       const cavBlockedByPikes =
-        def.unitClass === 'cavalry' &&
-        tgtDef.antiCavBonus > 0 &&
-        arc === 'front' &&
-        meleeTarget.currentSpeedMs < 2.2;
+        (def.unitClass === 'cavalry' &&
+          tgtDef.antiCavBonus > 0 &&
+          arc === 'front' &&
+          meleeTarget.currentSpeedMs < 2.2) ||
+        (meleeTarget.stance === 'pikeWall' && arc === 'front');
 
       const chargeAtk = reg.chargeTimerS > 0 && !cavBlockedByPikes ? def.chargeAttackBonus * chargeMul : 0;
-      const antiCavAtk = tgtDef.unitClass === 'cavalry' ? def.antiCavBonus * (reg.formation === 'schiltron' ? 1.35 : 1.0) : 0;
+      const pikeWallCavMul = reg.stance === 'pikeWall' ? STANCES.pikeWall.antiCavMul : 1.0;
+      const antiCavAtk =
+        tgtDef.unitClass === 'cavalry'
+          ? def.antiCavBonus * (reg.formation === 'schiltron' ? 1.35 : 1.0) * pikeWallCavMul
+          : 0;
       const arcAtk = arc === 'rear' ? COMBAT.rearAttackBonus : arc === 'flank' ? COMBAT.flankAttackBonus : 0;
       const capPen = !reg.captainAlive ? COMBAT.missingCaptainAttackPenalty : 0;
       const fatPen = reg.fatigue > 0.7 ? COMBAT.fatigueExhaustedAttackPenalty : 0;
+      const shieldDef = arc === 'front' ? (tgtDef.shieldDefence ?? 0) : 0;
+      const stanceDef =
+        arc === 'front'
+          ? meleeTarget.stance === 'pikeWall'
+            ? STANCES.pikeWall.defenceBonus
+            : meleeTarget.stance === 'shieldWall'
+              ? STANCES.shieldWall.defenceBonus
+              : 0
+          : 0;
       const effAtk = def.attack + reg.veteranTier * COMBAT.vetAttackBonusPerTier + chargeAtk + antiCavAtk + arcAtk - capPen - fatPen - uphillPen;
-      const effDef = tgtDef.defence + meleeTarget.veteranTier * COMBAT.vetDefenceBonusPerTier - (arc === 'rear' ? 4 : arc === 'flank' ? 2 : 0);
+      const effDef = tgtDef.defence + shieldDef + stanceDef + meleeTarget.veteranTier * COMBAT.vetDefenceBonusPerTier - (arc === 'rear' ? 4 : arc === 'flank' ? 2 : 0);
 
       const hitChance = Math.max(
         COMBAT.minHitChance,
@@ -1103,6 +1124,7 @@ export function stepCombat(
           s.meleeCooldownS = COMBAT.meleeSwingIntervalS * (0.88 + nextSimRand(state) * 0.24);
           s.clip = 'attack';
           s.attackAnimTimerS = 0.65;
+          s.sinceAttackS = 0;
           if (nextSimRand(state) < hitChance) {
             const shock = arc === 'rear' ? 2.6 : arc === 'flank' ? 1.5 : 0.25;
             applyDamageToRegiment(state, meleeTarget, reg, def.meleeDamage + antiCavDmgBonus, meleeAp, false, arc, shock);
@@ -1124,6 +1146,7 @@ export function stepCombat(
           s.meleeCooldownS = COMBAT.meleeSwingIntervalS;
           s.clip = 'attack';
           s.attackAnimTimerS = 0.6;
+          s.sinceAttackS = 0;
           const bDmg = Math.max(1.5, def.meleeDamage * 0.45);
           if (siegeTargetBuilding && !siegeTargetBuilding.indestructible) {
             siegeTargetBuilding.hp = Math.max(0, siegeTargetBuilding.hp - bDmg);
@@ -1194,6 +1217,7 @@ export function stepCombat(
             s.rangedCooldownS = rSpec.reloadS * (0.92 + nextSimRand(state) * 0.16);
             s.clip = 'attack';
             s.attackAnimTimerS = 0.7;
+            s.sinceAttackS = 0;
             const sy = terrain.heightAt(s.x, s.z) + 1.45;
             const ty = terrain.heightAt(tgtPos.x, tgtPos.z) + 1.05;
             const spread = rSpec.kind === 'mortar' ? 2.6 : rSpec.kind === 'cannonball' ? 1.8 : 2.8;
@@ -1270,11 +1294,12 @@ function applyChargeImpact(
   const tgtDef = UNIT_DEFS[defender.unitType];
   const arc = classifyAttackArc(attacker.x, attacker.z, defender);
 
-  // Frontal charge into braced pikes/halberds severely punishes cavalry (even while marching at walking pace!)
-  if (def.unitClass === 'cavalry' && tgtDef.antiCavBonus > 0 && arc === 'front' && defender.currentSpeedMs < 2.2) {
-    const counterHits = Math.min(5, Math.ceil(countAliveSoldiers(defender) * 0.42));
+  // Frontal charge into braced pikes/halberds severely punishes cavalry (Pike Wall deals 2x counter-charge!)
+  if (def.unitClass === 'cavalry' && tgtDef.antiCavBonus > 0 && arc === 'front' && (defender.currentSpeedMs < 2.2 || defender.stance === 'pikeWall')) {
+    const pwMul = defender.stance === 'pikeWall' ? STANCES.pikeWall.antiCavMul : 1.0;
+    const counterHits = Math.min(6, Math.ceil(countAliveSoldiers(defender) * 0.42));
     for (let k = 0; k < counterHits; k++) {
-      applyDamageToRegiment(state, attacker, defender, tgtDef.meleeDamage + tgtDef.antiCavBonus * 0.85, 0.48, false, 'front', 7);
+      applyDamageToRegiment(state, attacker, defender, (tgtDef.meleeDamage + tgtDef.antiCavBonus * 0.85) * pwMul, 0.48, false, 'front', 7);
     }
     return;
   }
@@ -1338,10 +1363,16 @@ function moveRegimentAlongPath(
   let formSpeedMul = 1.0;
   if (reg.formation === 'column') formSpeedMul = 1.2;
   else if (reg.formation === 'schiltron') formSpeedMul = 0.5;
+  const stanceSpeedMul =
+    reg.stance === 'shieldWall'
+      ? STANCES.shieldWall.speedMul
+      : reg.stance === 'pikeWall'
+        ? STANCES.pikeWall.speedMul
+        : 1.0;
   const fatigueMul = 1 - reg.fatigue * 0.22;
   const terrainMul = nav.speedMultiplierAt(reg.x, reg.z);
-  const baseSpd = run ? def.runSpeedMs : def.walkSpeedMs;
-  const speed = baseSpd * formSpeedMul * fatigueMul * terrainMul;
+  const baseSpd = run && reg.stance !== 'shieldWall' && reg.stance !== 'pikeWall' ? def.runSpeedMs : def.walkSpeedMs;
+  const speed = baseSpd * formSpeedMul * stanceSpeedMul * fatigueMul * terrainMul;
   const step = speed * dtS;
 
   if (dist <= Math.max(0.55, step)) {
@@ -1407,8 +1438,16 @@ function updateSoldierSlotPositions(
   const rz = -Math.sin(reg.yawRad);
   const maxStep = Math.max(def.runSpeedMs * 1.35, 3.8) * dtS;
 
+  for (const s of reg.soldiers) {
+    if (!s.alive) {
+      s.deadS = (s.deadS ?? 0) + dtS;
+      s.speedMs = 0;
+    }
+  }
+
   for (let idx = 0; idx < totalAlive; idx++) {
     const s = aliveList[idx]!;
+    s.sinceAttackS = (s.sinceAttackS ?? 99) + dtS;
     const off = computeFormationSlotOffset(idx, totalAlive, effWidth, effFormation, def.unitClass);
     let tx = reg.x + rx * off.right + fx * off.forward;
     let tz = reg.z + rz * off.right + fz * off.forward;
@@ -1439,6 +1478,7 @@ function updateSoldierSlotPositions(
         s.z = reg.z;
       }
       s.travelM += move;
+      s.speedMs = dtS > 1e-4 ? move / dtS : 0;
       if (isRouting || dist > 0.6) {
         s.yawRad = Math.atan2(dx, dz);
       } else {
@@ -1447,6 +1487,7 @@ function updateSoldierSlotPositions(
       if (s.attackAnimTimerS <= 0) s.clip = 'walk';
     } else {
       s.yawRad = reg.yawRad;
+      s.speedMs = 0;
       if (s.attackAnimTimerS <= 0) s.clip = 'idle';
     }
   }

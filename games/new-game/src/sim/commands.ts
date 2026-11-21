@@ -10,6 +10,8 @@ import {
   GOOD_TO_WORKSHOP,
   GOOD_VALUE_GOLD,
   isEquipmentWorkshop,
+  REINFORCE,
+  TRANSPORT_LEVELS,
   UNIT_DEFS,
   WORLD,
   type BuildingTypeId,
@@ -17,6 +19,7 @@ import {
   type ResourceMap,
 } from '../config.ts';
 import {
+  computeFormationSlotOffset,
   countAliveSoldiers,
   countSideArmyMen,
   disbandRegimentToTown,
@@ -778,6 +781,16 @@ export function executeCommand(
           reg.order = resolvedOrder;
           reg.orderQueue = [];
           reg.path = [];
+          if (
+            reg.stance === 'pikeWall' &&
+            (resolvedOrder.kind === 'march' ||
+              resolvedOrder.kind === 'run' ||
+              resolvedOrder.kind === 'attack' ||
+              resolvedOrder.kind === 'charge' ||
+              resolvedOrder.kind === 'fallbackKeep')
+          ) {
+            reg.stance = 'guard';
+          }
         }
         issued++;
       }
@@ -935,11 +948,22 @@ export function executeCommand(
     }
 
     case 'setStance': {
+      let updated = 0;
       for (const rId of cmd.regimentIds) {
         const reg = state.regiments.find((r) => r.id === rId && r.side === cmd.side);
-        if (reg) reg.stance = cmd.stance;
+        if (!reg) continue;
+        const def = UNIT_DEFS[reg.unitType];
+        if (cmd.stance === 'shieldWall' && def.shieldBlock < 0.2) continue;
+        if (cmd.stance === 'pikeWall' && (def.antiCavBonus <= 0 || def.unitClass !== 'infantry')) continue;
+        reg.stance = cmd.stance;
+        if (cmd.stance === 'pikeWall') {
+          reg.order = null;
+          reg.orderQueue = [];
+          reg.path = [];
+        }
+        updated++;
       }
-      return { ok: true, reason: 'ok' };
+      return { ok: updated > 0, reason: updated > 0 ? 'ok' : 'notThisUnit' };
     }
 
     case 'setHoldFire': {
@@ -947,6 +971,82 @@ export function executeCommand(
         const reg = state.regiments.find((r) => r.id === rId && r.side === cmd.side);
         if (reg) reg.holdFire = cmd.holdFire;
       }
+      return { ok: true, reason: 'ok' };
+    }
+
+    case 'setGoodPriority': {
+      if (!sideState.goodPriorities) sideState.goodPriorities = {};
+      sideState.goodPriorities[cmd.good] = cmd.priority;
+      return { ok: true, reason: 'ok' };
+    }
+
+    case 'reinforceRegiment': {
+      const check = inspectRegimentReinforce(state, cmd.side, cmd.regimentId);
+      if (!check.canReinforce || check.missingMen <= 0) {
+        return { ok: false, reason: check.reason };
+      }
+      const reg = state.regiments.find((r) => r.id === cmd.regimentId && r.side === cmd.side);
+      if (!reg) return { ok: false, reason: 'notFound' };
+      const def = UNIT_DEFS[reg.unitType];
+
+      // Pull `missingMen` free townsfolk (carriers/builders first)
+      const nonRecruits = state.citizens.filter((c) => c.side === cmd.side && c.role !== 'recruit');
+      if (nonRecruits.length - check.missingMen < ECONOMY.minFreeCarriers) {
+        return { ok: false, reason: 'notEnoughPeople' };
+      }
+      const sorted = [...nonRecruits].sort((a, b) => {
+        const pA = a.role === 'carrier' ? 0 : a.role === 'builder' ? 1 : 2;
+        const pB = b.role === 'carrier' ? 0 : b.role === 'builder' ? 1 : 2;
+        if (pA !== pB) return pA - pB;
+        return Math.hypot(a.x - reg.x, a.z - reg.z) - Math.hypot(b.x - reg.x, b.z - reg.z);
+      });
+      const removeIds = new Set<number>();
+      for (let i = 0; i < check.missingMen && i < sorted.length; i++) {
+        const c = sorted[i]!;
+        if (c.carryJob) {
+          sideState.stock[c.carryJob.good] = (sideState.stock[c.carryJob.good] ?? 0) + c.carryJob.amount;
+          c.carryJob = null;
+        }
+        removeIds.add(c.id);
+      }
+      state.citizens = state.citizens.filter((c) => !removeIds.has(c.id));
+      spendAllResources(sideState.stock, check.cost);
+
+      // Revive fallen soldier slots cleanly into formation while preserving veteranTier & kills!
+      const fx = Math.sin(reg.yawRad);
+      const fz = Math.cos(reg.yawRad);
+      const rx = Math.cos(reg.yawRad);
+      const rz = -Math.sin(reg.yawRad);
+      let restored = 0;
+      for (let i = 0; i < reg.soldiers.length && restored < check.missingMen; i++) {
+        const s = reg.soldiers[i]!;
+        if (s.alive) continue;
+        const off = computeFormationSlotOffset(i, reg.soldiers.length, reg.width, reg.formation, def.unitClass);
+        s.alive = true;
+        s.hp = def.hp;
+        s.maxHp = def.hp;
+        s.x = reg.x + rx * off.right + fx * off.forward;
+        s.z = reg.z + rz * off.right + fz * off.forward;
+        s.yawRad = reg.yawRad;
+        s.clip = 'idle';
+        s.attackAnimTimerS = 0;
+        s.deadS = undefined;
+        s.hurtAtS = undefined;
+        restored++;
+      }
+      reg.captainAlive = true;
+      reg.morale = Math.min(reg.maxMorale, reg.morale + 15);
+      return { ok: true, reason: 'ok' };
+    }
+
+    case 'upgradeTransport': {
+      const check = inspectTransportUpgrade(state, cmd.side);
+      if (!check.canUpgrade || check.targetLevel === null) {
+        return { ok: false, reason: check.reason };
+      }
+      spendAllResources(sideState.stock, check.cost);
+      sideState.upgradingTransportTo = check.targetLevel;
+      sideState.transportUpgradeTimerS = TRANSPORT_LEVELS[check.targetLevel - 1]!.seconds;
       return { ok: true, reason: 'ok' };
     }
 
@@ -966,3 +1066,138 @@ export function executeCommand(
     }
   }
 }
+
+export interface ReinforceInspection {
+  readonly canReinforce: boolean;
+  readonly reason: 'ok' | 'notFound' | 'fullStrength' | 'inCombat' | 'needsNearbyBarracks' | 'notEnoughPeople' | 'insufficientResources';
+  readonly missingMen: number;
+  readonly cost: ResourceMap;
+}
+
+export function inspectRegimentReinforce(
+  state: SimWorldState,
+  side: SideId,
+  regimentId: number,
+): ReinforceInspection {
+  const reg = state.regiments.find((r) => r.id === regimentId && r.side === side);
+  if (!reg) return { canReinforce: false, reason: 'notFound', missingMen: 0, cost: {} };
+  const def = UNIT_DEFS[reg.unitType];
+  if (def.unitClass === 'siege') {
+    return { canReinforce: false, reason: 'fullStrength', missingMen: 0, cost: {} };
+  }
+  const alive = countAliveSoldiers(reg);
+  const missingMen = Math.max(0, reg.maxMen - alive);
+  if (alive <= 0 || missingMen === 0) {
+    return { canReinforce: false, reason: 'fullStrength', missingMen: 0, cost: {} };
+  }
+  if (reg.outOfCombatS < REINFORCE.quietS || reg.routing) {
+    return { canReinforce: false, reason: 'inCombat', missingMen, cost: {} };
+  }
+  const nearTrainer = state.buildings.some((b) => {
+    if (b.side !== side || b.hp <= 0 || b.buildProgress < 1) return false;
+    if (def.barracksLevel === 0) {
+      if (b.type !== 'keep' && b.type !== 'barracks') return false;
+    } else {
+      if (b.type !== 'barracks' || b.level < def.barracksLevel) return false;
+    }
+    return Math.hypot(b.x - reg.x, b.z - reg.z) <= REINFORCE.radiusM + BUILDING_DEFS[b.type].radiusM;
+  });
+  if (!nearTrainer) {
+    return { canReinforce: false, reason: 'needsNearbyBarracks', missingMen, cost: {} };
+  }
+
+  const cost: ResourceMap = {};
+  const goldCost = Math.max(1, Math.round(((def.cost.gold ?? 0) * missingMen) / Math.max(1, def.count)));
+  if (goldCost > 0) cost.gold = goldCost;
+  for (const g of Object.keys(def.equipPerMan) as GoodId[]) {
+    const req = (def.equipPerMan[g] ?? 0) * missingMen;
+    if (req > 0) cost[g] = req;
+  }
+
+  const nonRecruits = state.citizens.filter((c) => c.side === side && c.role !== 'recruit');
+  if (nonRecruits.length - missingMen < ECONOMY.minFreeCarriers) {
+    return { canReinforce: false, reason: 'notEnoughPeople', missingMen, cost };
+  }
+  if (!hasResources(state.sides[side].stock, cost)) {
+    return { canReinforce: false, reason: 'insufficientResources', missingMen, cost };
+  }
+  return { canReinforce: true, reason: 'ok', missingMen, cost };
+}
+
+export interface TransportUpgradeInspection {
+  readonly canUpgrade: boolean;
+  readonly reason: 'ok' | 'maxLevel' | 'alreadyUpgrading' | 'needsKeepUpgrade' | 'insufficientResources';
+  readonly currentLevel: 1 | 2 | 3;
+  readonly targetLevel: (2 | 3) | null;
+  readonly requiredKeepLevel: number | null;
+  readonly cost: ResourceMap;
+  readonly missing: ResourceMap;
+}
+
+export function inspectTransportUpgrade(state: SimWorldState, side: SideId): TransportUpgradeInspection {
+  const s = state.sides[side];
+  const currentLevel: 1 | 2 | 3 = s.transportLevel ?? 1;
+  if (s.upgradingTransportTo !== null && s.upgradingTransportTo !== undefined) {
+    return {
+      canUpgrade: false,
+      reason: 'alreadyUpgrading',
+      currentLevel,
+      targetLevel: s.upgradingTransportTo,
+      requiredKeepLevel: null,
+      cost: {},
+      missing: {},
+    };
+  }
+  if (currentLevel >= 3) {
+    return {
+      canUpgrade: false,
+      reason: 'maxLevel',
+      currentLevel,
+      targetLevel: null,
+      requiredKeepLevel: null,
+      cost: {},
+      missing: {},
+    };
+  }
+  const targetLevel = (currentLevel + 1) as 2 | 3;
+  const def = TRANSPORT_LEVELS[targetLevel - 1]!;
+  const keep = findKeep(state, side);
+  if (!keep || keep.level < def.keepLevel) {
+    return {
+      canUpgrade: false,
+      reason: 'needsKeepUpgrade',
+      currentLevel,
+      targetLevel,
+      requiredKeepLevel: def.keepLevel,
+      cost: def.cost,
+      missing: {},
+    };
+  }
+  const missing: ResourceMap = {};
+  for (const g of Object.keys(def.cost) as GoodId[]) {
+    const req = def.cost[g] ?? 0;
+    const have = Math.floor(s.stock[g] ?? 0);
+    if (req > have) missing[g] = req - have;
+  }
+  if (Object.keys(missing).length > 0) {
+    return {
+      canUpgrade: false,
+      reason: 'insufficientResources',
+      currentLevel,
+      targetLevel,
+      requiredKeepLevel: def.keepLevel,
+      cost: def.cost,
+      missing,
+    };
+  }
+  return {
+    canUpgrade: true,
+    reason: 'ok',
+    currentLevel,
+    targetLevel,
+    requiredKeepLevel: def.keepLevel,
+    cost: def.cost,
+    missing: {},
+  };
+}
+

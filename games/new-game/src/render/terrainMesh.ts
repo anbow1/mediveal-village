@@ -177,47 +177,64 @@ function createTerrainMaterial(
   const cobbleUv = xz.div(2.15);
   const rockUv = xz.div(3.4);
   const litterUv = xz.div(2.6);
+  const farmUv = xz.div(2.5);
 
-  const grassAlbNear = texture(albedoArray, grassUvNear).depth(int(0)).rgb;
-  const grassAlbFar = texture(albedoArray, grassUvFar).depth(int(0)).rgb;
-  const grassAlb = mix(grassAlbNear, grassAlbFar, float(0.36));
-  const grassNor = texture(normalArray, grassUvNear).depth(int(0)).rgb;
-  const grassOrm = texture(ormArray, grassUvNear).depth(int(0));
+  const photo = surfaces.photoTerrain;
+  const gAlbArr = photo ? photo.albedoArray : albedoArray;
+  const gNorArr = photo ? photo.normalArray : normalArray;
+  const gOrmArr = photo ? photo.ormArray : ormArray;
 
-  const dirtAlb = texture(albedoArray, dirtUv).depth(int(1)).rgb;
-  const dirtNor = texture(normalArray, dirtUv).depth(int(1)).rgb;
-  const dirtOrm = texture(ormArray, dirtUv).depth(int(1));
+  // Photogrammetry indices: 0=meadow, 1=pasture, 2=dry_grass, 3=forest_floor, 4=farm_soil, 5=mud, 6=rock
+  const hillDry = smoothstep(float(2.6), float(7.2), wp.y);
+  const meadowAlbNear = texture(gAlbArr, grassUvNear).depth(int(0)).rgb;
+  const pastureAlbFar = texture(gAlbArr, grassUvFar).depth(int(photo ? 1 : 0)).rgb;
+  const dryGrassAlb = texture(gAlbArr, grassUvNear.mul(0.85)).depth(int(photo ? 2 : 0)).rgb;
+  const baseMeadowAlb = mix(meadowAlbNear, pastureAlbFar, float(0.42).mul(macroA.mul(0.6).add(0.4)));
+  const grassAlb = photo
+    ? mix(baseMeadowAlb, dryGrassAlb, hillDry.mul(0.55).add(macroFar.mul(0.18)))
+    : mix(meadowAlbNear, pastureAlbFar, float(0.36));
+  const grassNor = texture(gNorArr, grassUvNear).depth(int(0)).rgb;
+  const grassOrm = texture(gOrmArr, grassUvNear).depth(int(0));
+
+  const dirtAlb = texture(gAlbArr, dirtUv).depth(int(photo ? 5 : 1)).rgb;
+  const dirtNor = texture(gNorArr, dirtUv).depth(int(photo ? 5 : 1)).rgb;
+  const dirtOrm = texture(gOrmArr, dirtUv).depth(int(photo ? 5 : 1));
 
   const cobbleAlb = texture(albedoArray, cobbleUv).depth(int(2)).rgb;
   const cobbleNor = texture(normalArray, cobbleUv).depth(int(2)).rgb;
   const cobbleOrm = texture(ormArray, cobbleUv).depth(int(2));
 
-  const rockAlb = texture(albedoArray, rockUv).depth(int(8)).rgb;
-  const rockNor = texture(normalArray, rockUv).depth(int(8)).rgb;
-  const rockOrm = texture(ormArray, rockUv).depth(int(8));
+  const rockAlb = texture(gAlbArr, rockUv).depth(int(photo ? 6 : 8)).rgb;
+  const rockNor = texture(gNorArr, rockUv).depth(int(photo ? 6 : 8)).rgb;
+  const rockOrm = texture(gOrmArr, rockUv).depth(int(photo ? 6 : 8));
 
-  const litterAlb = texture(albedoArray, litterUv).depth(int(10)).rgb;
-  const litterNor = texture(normalArray, litterUv).depth(int(10)).rgb;
-  const litterOrm = texture(ormArray, litterUv).depth(int(10));
+  const litterAlb = texture(gAlbArr, litterUv).depth(int(photo ? 3 : 10)).rgb;
+  const litterNor = texture(gNorArr, litterUv).depth(int(photo ? 3 : 10)).rgb;
+  const litterOrm = texture(gOrmArr, litterUv).depth(int(photo ? 3 : 10));
 
-  // Lush Central European meadow tint variation (verdant green valley pastures + warm sunlit autumn-gold ridges)
-  const hillDry = smoothstep(float(2.6), float(7.2), wp.y);
-  const meadowTint = mix(
-    mix(vec3(0.58, 0.98, 0.42), vec3(0.84, 1.04, 0.48), macroA),
-    vec3(0.94, 0.92, 0.50),
-    hillDry.mul(0.34).add(macroFar.mul(0.14)),
-  );
+  const farmAlb = photo ? texture(gAlbArr, farmUv).depth(int(4)).rgb : dirtAlb;
+
+  // Lush Central European meadow tint variation (gentle when photo biome textures are already colour-calibrated!)
+  const meadowTint = photo
+    ? mix(vec3(0.92, 1.0, 0.88), vec3(1.04, 1.0, 0.90), macroA)
+    : mix(
+        mix(vec3(0.58, 0.98, 0.42), vec3(0.84, 1.04, 0.48), macroA),
+        vec3(0.94, 0.92, 0.50),
+        hillDry.mul(0.34).add(macroFar.mul(0.14)),
+      );
   const grassCol = grassAlb.mul(meadowTint);
-  // Dry topsoil is muted warm grey-brown (playbook §5.6 #8: never rust!)
-  const dirtCol = dirtAlb.mul(vec3(0.94, 0.86, 0.74)).mul(mix(float(0.86), float(1.10), macroB));
-  // Weathered medieval limestone cobbles stay cool-neutral grey-buff so lanes separate clearly from dirt shoulders
+  const dirtCol = dirtAlb.mul(photo ? vec3(0.98, 0.94, 0.88) : vec3(0.94, 0.86, 0.74)).mul(mix(float(0.88), float(1.08), macroB));
   const cobbleCol = cobbleAlb.mul(vec3(0.92, 0.95, 1.02)).mul(mix(float(0.88), float(1.14), macroB));
   const rockCol = rockAlb.mul(vec3(0.95, 0.93, 0.89));
-  const litterCol = litterAlb.mul(vec3(0.72, 0.64, 0.48));
+  const litterCol = litterAlb.mul(photo ? vec3(0.92, 0.90, 0.85) : vec3(0.72, 0.64, 0.48));
 
   // Ploughed dark-loam agricultural furrows (oriented along farm rows with subtle parallel furrow troughs)
   const furrowWave = sin(xz.x.mul(9.2).add(macroB.mul(0.6))).mul(0.5).add(0.5);
-  const farmCol = dirtAlb.mul(mix(vec3(0.46, 0.39, 0.30), vec3(0.72, 0.61, 0.45), furrowWave));
+  const farmCol = farmAlb.mul(
+    photo
+      ? mix(vec3(0.78, 0.74, 0.68), vec3(1.02, 0.96, 0.88), furrowWave)
+      : mix(vec3(0.46, 0.39, 0.30), vec3(0.72, 0.61, 0.45), furrowWave),
+  );
 
   // Height-blended splat weights (playbook §3 #4: stones/rock/cobbles poke sharply through turf/soil)
   const slope = float(1.0).sub(clamp(normalWorld.y, 0.0, 1.0));

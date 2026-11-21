@@ -104,6 +104,10 @@ export interface Strings {
   readonly ordersLabel: string;
   readonly orderEquipTitle: string;
   readonly clearOrdersBtn: string;
+  readonly transportLabel: string;
+  readonly transportLevels: readonly [string, string, string];
+  readonly transportUpgradeBtn: string;
+  readonly transportUpgrading: (targetName: string, pct: number) => string;
   readonly statusLabels: Record<string, string>;
 
   // Regiment inspector
@@ -122,9 +126,11 @@ export interface Strings {
   readonly savedFormationsLabel: string;
   readonly holdFireLabel: string;
   readonly fallbackBtn: string;
+  readonly reinforceBtn: string;
   readonly refitBtn: string;
   readonly mergeBtn: string;
   readonly disbandBtn: string;
+  readonly priorityHeader: string;
   readonly unitCounterHint: Record<UnitTypeId, string>;
 
   // Dictionaries
@@ -254,6 +260,10 @@ const EN: Strings = {
   upgradeMissing: (list) => `Missing resources: ${list}`,
   upgradeWaitBuild: (pct) => `Finish construction (${pct}%) to upgrade`,
   upgradeInProgress: (lvl, pct) => `Upgrading → L${lvl} (${pct}%)`,
+  transportLabel: 'Transport',
+  transportLevels: ['On Foot (8)', 'Handcarts (14)', 'Horse & Wagon (20, +35%)'],
+  transportUpgradeBtn: 'Upgrade Transport',
+  transportUpgrading: (nextName, pct) => `Upgrading transport → ${nextName} (${pct}%)`,
   sawmillHint: 'Sawmill',
   demolishBtn: 'Demolish (50%)',
   rebuildRuinBtn: 'Rebuild (50%)',
@@ -293,6 +303,8 @@ const EN: Strings = {
     hold: 'Hold',
     guard: 'Guard',
     skirmish: 'Skirmish',
+    shieldWall: 'Shield Wall',
+    pikeWall: 'Pike Wall',
   },
   ranksLabel: 'Ranks',
   setPoseBtn: '⌖ Set Position',
@@ -301,9 +313,11 @@ const EN: Strings = {
   savedFormationsLabel: 'Formations',
   holdFireLabel: 'Hold Fire',
   fallbackBtn: 'Fall Back',
+  reinforceBtn: 'Reinforce',
   refitBtn: 'Refit',
   mergeBtn: 'Merge',
   disbandBtn: 'Disband',
+  priorityHeader: 'Pri.',
   unitCounterHint: {
     militia: 'Cheap home defence (115 m keep limit). Refit at Barracks later.',
     pikemen: 'Counters Light & Heavy Cavalry cleanly; weak to Swordsmen.',
@@ -573,6 +587,10 @@ const PL: Strings = {
   ordersLabel: 'Zamówienia',
   orderEquipTitle: 'Zamów wyposażenie dla jednostki (kliknij ikonę):',
   clearOrdersBtn: 'Zeruj zamówienia',
+  transportLabel: 'Transport',
+  transportLevels: ['Pieszo (8)', 'Taczki (14)', 'Wozy konne (20, +35% pr.)'],
+  transportUpgradeBtn: 'Ulepsz transport',
+  transportUpgrading: (name, pct) => `Ulepszanie transportu → ${name} (${pct}%)`,
   statusLabels: {
     constructing: 'W budowie',
     upgrading: 'Ulepszanie',
@@ -602,6 +620,8 @@ const PL: Strings = {
     hold: 'Stój',
     guard: 'Warta',
     skirmish: 'Harcownik',
+    shieldWall: 'Mur tarcz',
+    pikeWall: 'Ściana pik',
   },
   ranksLabel: 'Szeregi',
   setPoseBtn: '⌖ Ustaw pozycję',
@@ -610,18 +630,20 @@ const PL: Strings = {
   savedFormationsLabel: 'Formacje',
   holdFireLabel: 'Wstrzymaj ogień',
   fallbackBtn: 'Odwrót',
+  reinforceBtn: 'Uzupełnij',
   refitBtn: 'Przezbrój',
   mergeBtn: 'Połącz',
   disbandBtn: 'Rozwiąż',
+  priorityHeader: 'Prio.',
   unitCounterHint: {
-    militia: 'Tania obrona osady (limit 115 m od grodu). Przezbrój później w koszarach.',
-    pikemen: 'Kontruje lekką i ciężką jazdę; słabi przeciw miecznikom.',
-    archers: 'Salwy na 80 m niszczą pospolite ruszenie i nieosłoniętych; słabi na jazdę.',
-    swordsmen: 'Kontrują pikinierów, halabardników i pospolite ruszenie; słabi na ciężką jazdę.',
-    halberdiers: 'Przebijają pancerz i zatrzymują jazdę; brak tarcz (słabi na kuszników).',
-    crossbowmen: 'Bełty przebijają 60% pancerza — kontrują halabardników i rycerzy; słabi na jazdę.',
-    lightCav: 'Szybkie oskrzydlenie łuczników, kuszników i dział; słabi na pikinierów.',
-    heavyCav: 'Miażdżąca szarża w bok mieczników i strzelców; kontrowani przez pikinierów.',
+    militia: 'Milicja z dzidą i tarczą (limit 115 m od grodu). Przezbrój później w koszarach.',
+    pikemen: 'Skórznie, pika i mniejsza tarcza — kontrują lekką i ciężką jazdę.',
+    archers: 'Skórznie i długi łuk — salwy na 80 m niszczą milicję i nieosłoniętych.',
+    swordsmen: 'Pełna zbroja, miecz i tarcza — dominują w walce piechoty; słabi na rycerzy.',
+    halberdiers: 'Lancknechci w pełnej zbroi z długą piką i dużą tarczą — przeciw zbroi i jeździe.',
+    crossbowmen: 'Skórznie i kusza — bełty przebijają 60% pancerza ciężkozbrojnych.',
+    lightCav: 'Skórznie, piki, miecze i tarcze — szybkie oskrzydlenie strzelców i dział.',
+    heavyCav: 'Rycerze ciężkozbrojni z kopią, mieczem i tarczą — miażdżąca szarża.',
     cannon: 'Płaski ogień 120 m burzy mury i baszty; chroń przed jazdą.',
     mortar: 'Stromy ostrzał 150 m ponad murami; minimalny zasięg 40 m.',
   },
@@ -663,14 +685,14 @@ const PL: Strings = {
     campTent: 'Obóz rozbójników',
   },
   units: {
-    militia: 'Pospolite ruszenie',
+    militia: 'Milicja',
     pikemen: 'Pikinierzy',
     archers: 'Łucznicy',
     swordsmen: 'Miecznicy',
     halberdiers: 'Halabardnicy',
     crossbowmen: 'Kusznicy',
     lightCav: 'Lekka jazda',
-    heavyCav: 'Ciężka jazda',
+    heavyCav: 'Rycerze ciężkozbrojni',
     cannon: 'Działo polowe',
     mortar: 'Moździerz',
   },

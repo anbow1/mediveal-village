@@ -100,6 +100,8 @@ import {
   type InstancedUnitSpawn,
   type UnitInstancerHandles,
 } from './unitInstancer.ts';
+import { buildMarchlandUnits, type MarchlandUnitsHandles } from './marchlandUnits.ts';
+import { loadMarchlandBuildingLevels } from './marchlandBuildings.ts';
 
 interface SubMeshPart {
   readonly geometry: BufferGeometry;
@@ -1576,7 +1578,11 @@ export async function buildStage5World(
 
   let simDrivenUnits = false;
 
-  // Stage 6 Pre-warmed Combat VFX & Live Dynamic Sim World Synchronizer (all added BEFORE warmUp!)
+  // Stage 6 Pre-warmed Combat VFX, High-Detail FPS/Marchland Units & Buildings, and Live Dynamic Sim World Synchronizer (all added BEFORE warmUp!)
+  const [marchlandUnits, marchlandBuildingLevels] = await Promise.all([
+    buildMarchlandUnits(scene).catch((): MarchlandUnitsHandles | null => null),
+    loadMarchlandBuildingLevels(loader),
+  ]);
   const combatFx = buildCombatFx(scene);
   const simRenderer = buildSimWorldRenderer({
     scene,
@@ -1585,7 +1591,9 @@ export async function buildStage5World(
     syncGroundWorks: () => terrainHandles.syncGroundWorks(),
     syncDynamicFarms: (blds) => wheat.syncDynamicFarms(blds),
     buildingMaterial: surfaces.buildingMaterial,
+    siteBuildingMaterial: surfaces.siteBuildingMaterial,
     buildingTemplates,
+    marchlandBuildingLevels,
     wallTemplate: wallTpl,
     stumpRoot: stumpGltf.scene,
     saplingRoot: saplingGltf.scene,
@@ -1608,7 +1616,13 @@ export async function buildStage5World(
     simDrivenUnits = true;
     const hAt = (x: number, z: number): number => terrain.heightAt(x, z);
     simRenderer.sync(state, placementGhost);
-    unitInstancer.syncFromSim(state, cameraPos, hAt, state.timeS);
+    if (marchlandUnits) {
+      unitInstancer.setVisible(false);
+      marchlandUnits.syncFromSim(state, hAt, state.timeS);
+    } else {
+      unitInstancer.setVisible(true);
+      unitInstancer.syncFromSim(state, cameraPos, hAt, state.timeS);
+    }
     combatFx.update(
       dtS,
       state,
@@ -1619,6 +1633,7 @@ export async function buildStage5World(
       formationGhost,
       placementGhost,
       paused,
+      marchlandUnits !== null,
     );
     update(dtS, cameraPos, cameraDir, paused);
   };
@@ -1657,6 +1672,7 @@ export async function buildStage5World(
       wheatClusters: wheat.count,
     }),
     dispose() {
+      marchlandUnits?.dispose();
       combatFx.dispose();
       simRenderer.dispose();
       scene.remove(terrainHandles.mesh);

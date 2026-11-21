@@ -5,11 +5,19 @@
 import {
   CompressedArrayTexture,
   DataArrayTexture,
+  LinearFilter,
+  LinearMipmapLinearFilter,
   MeshStandardNodeMaterial,
+  NoColorSpace,
+  RepeatWrapping,
+  RGBAFormat,
+  SRGBColorSpace,
+  UnsignedByteType,
 } from 'three/webgpu';
 import {
   abs,
   clamp,
+  dot,
   float,
   int,
   mix,
@@ -20,6 +28,7 @@ import {
   sin,
   smoothstep,
   texture,
+  uniform,
   uv,
   vec2,
   vec3,
@@ -44,19 +53,107 @@ export const SURFACE_LAYERS = [
 
 export type SurfaceLayerName = (typeof SURFACE_LAYERS)[number];
 
+/** 7 Poly Haven photogrammetry terrain biomes imported from FPS/marchland (`assets/marchland/photo/`). */
+export const PHOTO_TERRAIN_LAYERS = [
+  'meadow',       // 0
+  'pasture',      // 1
+  'dry_grass',    // 2
+  'forest_floor', // 3
+  'farm_soil',    // 4
+  'mud',          // 5
+  'rock',         // 6
+] as const;
+
+export interface PhotoTerrainArrays {
+  readonly albedoArray: DataArrayTexture;
+  readonly normalArray: DataArrayTexture;
+  readonly ormArray: DataArrayTexture;
+  dispose(): void;
+}
+
 export interface SurfaceLibrary {
   readonly albedoArray: CompressedArrayTexture | DataArrayTexture;
   readonly normalArray: CompressedArrayTexture | DataArrayTexture;
   readonly ormArray: CompressedArrayTexture | DataArrayTexture;
+  readonly photoTerrain: PhotoTerrainArrays | null;
   readonly buildingMaterial: MeshStandardNodeMaterial;
+  /** Course-by-course shader-clipped material for buildings under construction (`object.userData.cutY`). */
+  readonly siteBuildingMaterial: MeshStandardNodeMaterial;
   readonly groundMaterial: MeshStandardNodeMaterial;
   dispose(): void;
 }
 
+/** Packs 7 high-res photogrammetry JPEG texture sets into 3 GPU DataArrayTextures (512x512 RGBA8, mipmapped). */
+async function loadPhotoTerrainArrays(anisotropy: number): Promise<PhotoTerrainArrays | null> {
+  if (typeof document === 'undefined' || typeof Image === 'undefined') return null;
+  const size = 512;
+  const depth = PHOTO_TERRAIN_LAYERS.length;
+
+  const loadImage = (url: string): Promise<HTMLImageElement> =>
+    new Promise((resolve, reject) => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error(`Failed to load ${url}`));
+      img.src = url;
+    });
+
+  const buildArray = async (file: 'color.jpg' | 'normal.jpg' | 'orm.jpg', srgb: boolean): Promise<DataArrayTexture> => {
+    const imgs = await Promise.all(
+      PHOTO_TERRAIN_LAYERS.map((name) => loadImage(`assets/marchland/photo/${name}/${file}`)),
+    );
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) throw new Error('2D canvas unavailable');
+    const sliceBytes = size * size * 4;
+    const data = new Uint8Array(sliceBytes * depth);
+    for (let z = 0; z < depth; z++) {
+      ctx.drawImage(imgs[z]!, 0, 0, size, size);
+      const px = ctx.getImageData(0, 0, size, size).data;
+      data.set(px, z * sliceBytes);
+    }
+    const arr = new DataArrayTexture(data, size, size, depth);
+    arr.format = RGBAFormat;
+    arr.type = UnsignedByteType;
+    arr.colorSpace = srgb ? SRGBColorSpace : NoColorSpace;
+    arr.wrapS = RepeatWrapping;
+    arr.wrapT = RepeatWrapping;
+    arr.minFilter = LinearMipmapLinearFilter;
+    arr.magFilter = LinearFilter;
+    arr.generateMipmaps = true;
+    arr.anisotropy = anisotropy;
+    arr.needsUpdate = true;
+    return arr;
+  };
+
+  try {
+    const [albedoArray, normalArray, ormArray] = await Promise.all([
+      buildArray('color.jpg', true),
+      buildArray('normal.jpg', false),
+      buildArray('orm.jpg', false),
+    ]);
+    return {
+      albedoArray,
+      normalArray,
+      ormArray,
+      dispose() {
+        albedoArray.dispose();
+        normalArray.dispose();
+        ormArray.dispose();
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Loads the 12-layer KTX2 surface library into 3 GPU texture arrays and compiles the shared
- * TSL building material (UV0 box-projected, UV1.x = layer/15, 1-UV1.y = iron metal flag, COLOR_0 = Cycles AO)
- * and dual-scale medieval village ground material (grass + yard dirt + cobbled lane).
+ * TSL building material (UV0 box-projected, UV1.x = layer/15, 1-UV1.y = iron metal flag, COLOR_0 = Cycles AO),
+ * course-by-course construction site clipping material, photogrammetry terrain PBR arrays,
+ * and dual-scale medieval village ground material.
  */
 export async function loadSurfaceLibrary(
   loader: AssetLoader,
@@ -67,41 +164,50 @@ export async function loadSurfaceLibrary(
   const normalUrls = SURFACE_LAYERS.map((id) => `assets/surfaces/${id}_normal.ktx2`);
   const ormUrls = SURFACE_LAYERS.map((id) => `assets/surfaces/${id}_orm.ktx2`);
 
-  const [albedoArray, normalArray, ormArray] = await Promise.all([
+  const [albedoArray, normalArray, ormArray, photoTerrain] = await Promise.all([
     loader.loadKtx2Array(albedoUrls, true, anisotropy, tracker),
     loader.loadKtx2Array(normalUrls, false, anisotropy, tracker),
     loader.loadKtx2Array(ormUrls, false, anisotropy, tracker),
+    loadPhotoTerrainArrays(anisotropy),
   ]);
 
-  const buildingMaterial = createBuildingSurfaceMaterial(albedoArray, normalArray, ormArray);
+  const buildingMaterial = createBuildingSurfaceMaterial(albedoArray, normalArray, ormArray, false);
+  const siteBuildingMaterial = createBuildingSurfaceMaterial(albedoArray, normalArray, ormArray, true);
   const groundMaterial = createVillageGroundMaterial(albedoArray, normalArray, ormArray);
 
   return {
     albedoArray,
     normalArray,
     ormArray,
+    photoTerrain,
     buildingMaterial,
+    siteBuildingMaterial,
     groundMaterial,
     dispose() {
       buildingMaterial.dispose();
+      siteBuildingMaterial.dispose();
       groundMaterial.dispose();
       albedoArray.dispose();
       normalArray.dispose();
       ormArray.dispose();
+      photoTerrain?.dispose();
     },
   };
 }
+
+const UNCUT_Y = 1e6;
 
 function createBuildingSurfaceMaterial(
   albedoArray: CompressedArrayTexture | DataArrayTexture,
   normalArray: CompressedArrayTexture | DataArrayTexture,
   ormArray: CompressedArrayTexture | DataArrayTexture,
+  constructionSite: boolean,
 ): MeshStandardNodeMaterial {
   const mat = new MeshStandardNodeMaterial({
     roughness: 1.0,
     metalness: 0.0,
   });
-  mat.name = 'MarchlandBuildingSurfaceMat';
+  mat.name = constructionSite ? 'MarchlandBuildingSiteMat' : 'MarchlandBuildingSurfaceMat';
 
   const uv0 = uv(0);
   const uv1 = uv(1);
@@ -138,7 +244,19 @@ function createBuildingSurfaceMaterial(
   const mossTint = mix(vec3(0.42, 0.40, 0.34), vec3(0.30, 0.36, 0.22), footNoise);
   const weatheredAlb = mix(baseAlb, baseAlb.mul(mossTint), dampMask.mul(0.58));
 
-  mat.colorNode = clamp(weatheredAlb.mul(vcol).mul(microAo), vec3(0.015), vec3(0.82));
+  const finalColor = clamp(weatheredAlb.mul(vcol).mul(microAo), vec3(0.015), vec3(0.82));
+  if (constructionSite) {
+    // Course-by-course construction clipping (FPS/marchland townView.ts): discards geometry above `userData.cutY`
+    // and washes out unbuilt courses slightly grey until the last course is laid!
+    const cutY = uniform(UNCUT_Y).onObjectUpdate(
+      (frame) => (frame.object?.userData['cutY'] as number | undefined) ?? UNCUT_Y,
+    );
+    mat.maskNode = positionWorld.y.lessThan(cutY);
+    const grey = dot(finalColor, vec3(0.299, 0.587, 0.114)).mul(1.08);
+    mat.colorNode = mix(finalColor, vec3(grey), float(0.72));
+  } else {
+    mat.colorNode = finalColor;
+  }
 
   // Normal map detail (slightly damped on forged iron so straps stay cleanly read).
   const normalStrength = mix(float(1.0), float(0.45), ironMask);

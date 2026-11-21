@@ -650,6 +650,41 @@ export function isEquipmentWorkshop(type: BuildingTypeId): boolean {
   );
 }
 
+export interface TransportLevelDef {
+  readonly level: 1 | 2 | 3;
+  readonly capacity: number;
+  readonly pace: number;
+  readonly keepLevel: number;
+  readonly seconds: number;
+  readonly cost: ResourceMap;
+}
+
+/**
+ * Transport upgrade levels (imported from FPS/marchland):
+ *   - L1: On foot (8 goods, 1.0x speed)
+ *   - L2: Handcarts / Taczki (14 goods, 1.0x speed; 120g + 60 timber, 45 s)
+ *   - L3: Horse & Wagon / Wozy konne (20 goods, 1.35x speed; Keep L2, 260g + 100 timber + 6 horses, 60 s)
+ */
+export const TRANSPORT_LEVELS: readonly TransportLevelDef[] = [
+  { level: 1, capacity: ECONOMY.carrierCapacity, pace: 1.0, keepLevel: 1, seconds: 0, cost: {} },
+  { level: 2, capacity: 14, pace: 1.0, keepLevel: 1, seconds: 45, cost: { gold: 120, timber: 60 } },
+  { level: 3, capacity: 20, pace: 1.35, keepLevel: 2, seconds: 60, cost: { gold: 260, timber: 100, horses: 6 } },
+];
+
+/** Tactical stance bonuses imported from FPS/marchland (Shield Wall & Pike Wall). */
+export const STANCES = {
+  shieldWall: { arrowBlockMul: 2.0, speedMul: 0.65, defenceBonus: 1 },
+  pikeWall: { antiCavMul: 2.0, defenceBonus: 3, speedMul: 0.35, negatesFrontalCharge: true },
+} as const;
+
+/** Carrier goods priority weights, cart lane spacing, and Keep loading bays (FPS/marchland). */
+export const CARRIER_PRIORITY = { high: 1500, low: -900 } as const;
+export const CART_SPACING = { wagonGapM: 5.5, barrowGapM: 2.6, laneM: 1.8 } as const;
+export const KEEP_BAYS = { count: 10, outM: 2.5, idleFromM: 9 } as const;
+
+/** Barracks regiment reinforcement rules (FPS/marchland REINFORCE). */
+export const REINFORCE = { radiusM: 36, quietS: 10, minSeconds: 8 } as const;
+
 export type UnitTypeId =
   | 'militia'
   | 'pikemen'
@@ -694,6 +729,8 @@ export interface UnitDef {
   readonly hp: number;
   readonly attack: number;
   readonly defence: number;
+  /** Frontal melee defence bonus from carrying a shield (FPS/marchland shieldDefence). */
+  readonly shieldDefence?: number;
   /** Armour damage mitigation fraction (0..0.45). */
   readonly armour: number;
   readonly meleeDamage: number;
@@ -702,7 +739,7 @@ export interface UnitDef {
   readonly runSpeedMs: number;
   /** Front-arc missile shield block probability (0..0.80). */
   readonly shieldBlock: number;
-  /** Bonus melee attack against cavalry (pikemen +8, halberdiers +5). */
+  /** Bonus melee attack against cavalry (pikemen +8, halberdiers +6). */
   readonly antiCavBonus: number;
   /** Melee weapon reach (m). */
   readonly weaponReachM: number;
@@ -729,15 +766,21 @@ export interface UnitDef {
   readonly valueGold: number;
 }
 
-/** Canonical 10 Marchland regiment types matching docs/UNITS.md §2–§5 exactly. */
+/**
+ * Canonical 10 Marchland regiment types (imported & tuned from FPS/marchland):
+ *   a) Milicja: dzida i tarcza
+ *   b) Jednostki skórzane: pikinierzy (pika i mniejsza tarcza), łucznicy, kusznicy, lekka jazda (piki, miecze i tarcze)
+ *   c) Jednostki ciężkozbrojne: miecznicy (pełna zbroja, miecz i tarcza), halabardnicy/lancknechci (pełna zbroja, długa pika i duża tarcza), rycerze ciężkozbrojni (kopia, miecz i tarcza)
+ *   + Artyleria: działo polowe, moździerz
+ */
 export const UNIT_DEFS: Record<UnitTypeId, UnitDef> = {
   militia: {
     id: 'militia', unitClass: 'infantry', visualArchetype: 'swordsman',
     barracksLevel: 0, gunFoundryLevel: 0, count: 12, crewCount: 12,
     cost: { gold: 30, timber: 12 }, equipPerMan: { timber: 1 },
-    hp: 24, attack: 4, defence: 5, armour: 0.0, meleeDamage: 4, morale: 45,
-    walkSpeedMs: 1.4, runSpeedMs: 3.1, shieldBlock: 0.20, antiCavBonus: 0, weaponReachM: 1.8,
-    chargeAttackBonus: 1, chargeMoraleShock: 2, homeDefenceRadiusM: 115,
+    hp: 24, attack: 4, defence: 5, shieldDefence: 1, armour: 0.0, meleeDamage: 4, morale: 45,
+    walkSpeedMs: 1.4, runSpeedMs: 3.1, shieldBlock: 0.20, antiCavBonus: 0, weaponReachM: 2.0,
+    chargeAttackBonus: 1, chargeMoraleShock: 1, homeDefenceRadiusM: 115,
     refitTargets: ['pikemen', 'archers', 'swordsmen', 'halberdiers', 'crossbowmen'],
     valueGold: 54,
   },
@@ -745,9 +788,9 @@ export const UNIT_DEFS: Record<UnitTypeId, UnitDef> = {
     id: 'pikemen', unitClass: 'infantry', visualArchetype: 'swordsman',
     barracksLevel: 1, gunFoundryLevel: 0, count: 12, crewCount: 12,
     cost: { gold: 50, leatherArmour: 12, weapons: 12 }, equipPerMan: { leatherArmour: 1, weapons: 1 },
-    hp: 30, attack: 6, defence: 7, armour: 0.20, meleeDamage: 5, morale: 60,
+    hp: 30, attack: 6, defence: 7, shieldDefence: 1.5, armour: 0.20, meleeDamage: 5, morale: 60,
     walkSpeedMs: 1.4, runSpeedMs: 2.9, shieldBlock: 0.35, antiCavBonus: 8, weaponReachM: 3.0,
-    chargeAttackBonus: 2, chargeMoraleShock: 3,
+    chargeAttackBonus: 1, chargeMoraleShock: 2,
     refitTargets: ['halberdiers', 'swordsmen'],
     valueGold: 278,
   },
@@ -756,9 +799,9 @@ export const UNIT_DEFS: Record<UnitTypeId, UnitDef> = {
     barracksLevel: 1, gunFoundryLevel: 0, count: 12, crewCount: 12,
     cost: { gold: 50, leatherArmour: 12, bows: 12 }, equipPerMan: { leatherArmour: 1, bows: 1 },
     hp: 24, attack: 3, defence: 3, armour: 0.20, meleeDamage: 3, morale: 50,
-    walkSpeedMs: 1.4, runSpeedMs: 3.1, shieldBlock: 0.0, antiCavBonus: 0, weaponReachM: 1.5,
+    walkSpeedMs: 1.4, runSpeedMs: 3.1, shieldBlock: 0.0, antiCavBonus: 0, weaponReachM: 1.4,
     chargeAttackBonus: 0, chargeMoraleShock: 0,
-    ranged: { minRangeM: 6, maxRangeM: 80, damage: 16, armorPierce: 0.0, reloadS: 6, splashRadiusM: 0, buildingDamage: 1.5, projectileSpeedMs: 38, kind: 'arrow' },
+    ranged: { minRangeM: 6, maxRangeM: 80, damage: 20, armorPierce: 0.0, reloadS: 6, splashRadiusM: 0, buildingDamage: 1.5, projectileSpeedMs: 45, kind: 'arrow' },
     refitTargets: ['crossbowmen'],
     valueGold: 254,
   },
@@ -766,9 +809,9 @@ export const UNIT_DEFS: Record<UnitTypeId, UnitDef> = {
     id: 'swordsmen', unitClass: 'infantry', visualArchetype: 'swordsman',
     barracksLevel: 2, gunFoundryLevel: 0, count: 12, crewCount: 12,
     cost: { gold: 90, weapons: 12, mail: 12 }, equipPerMan: { weapons: 1, mail: 1 },
-    hp: 36, attack: 9, defence: 9, armour: 0.40, meleeDamage: 7, morale: 75,
-    walkSpeedMs: 1.4, runSpeedMs: 2.7, shieldBlock: 0.35, antiCavBonus: 0, weaponReachM: 1.8,
-    chargeAttackBonus: 3, chargeMoraleShock: 4,
+    hp: 36, attack: 10, defence: 9, shieldDefence: 2, armour: 0.40, meleeDamage: 7.5, morale: 75,
+    walkSpeedMs: 1.4, runSpeedMs: 2.7, shieldBlock: 0.35, antiCavBonus: 0, weaponReachM: 1.6,
+    chargeAttackBonus: 2, chargeMoraleShock: 3,
     refitTargets: ['halberdiers'],
     valueGold: 378,
   },
@@ -776,9 +819,9 @@ export const UNIT_DEFS: Record<UnitTypeId, UnitDef> = {
     id: 'halberdiers', unitClass: 'infantry', visualArchetype: 'swordsman',
     barracksLevel: 2, gunFoundryLevel: 0, count: 12, crewCount: 12,
     cost: { gold: 100, weapons: 12, mail: 12 }, equipPerMan: { weapons: 1, mail: 1 },
-    hp: 30, attack: 9, defence: 6, armour: 0.25, meleeDamage: 7.5, morale: 68,
-    walkSpeedMs: 1.4, runSpeedMs: 2.7, shieldBlock: 0.0, antiCavBonus: 6, weaponReachM: 2.0,
-    chargeAttackBonus: 3, chargeMoraleShock: 4,
+    hp: 33, attack: 9, defence: 5, shieldDefence: 1.5, armour: 0.35, meleeDamage: 7.5, morale: 70,
+    walkSpeedMs: 1.4, runSpeedMs: 2.7, shieldBlock: 0.35, antiCavBonus: 8, weaponReachM: 2.8,
+    chargeAttackBonus: 2, chargeMoraleShock: 3,
     refitTargets: ['swordsmen'],
     valueGold: 388,
   },
@@ -787,9 +830,9 @@ export const UNIT_DEFS: Record<UnitTypeId, UnitDef> = {
     barracksLevel: 2, gunFoundryLevel: 0, count: 12, crewCount: 12,
     cost: { gold: 80, timber: 12, leatherArmour: 12, bows: 12 }, equipPerMan: { timber: 1, leatherArmour: 1, bows: 1 },
     hp: 26, attack: 4, defence: 5, armour: 0.20, meleeDamage: 4, morale: 55,
-    walkSpeedMs: 1.4, runSpeedMs: 2.9, shieldBlock: 0.30, antiCavBonus: 0, weaponReachM: 1.5,
+    walkSpeedMs: 1.4, runSpeedMs: 2.9, shieldBlock: 0.30, antiCavBonus: 0, weaponReachM: 1.4,
     chargeAttackBonus: 0, chargeMoraleShock: 0,
-    ranged: { minRangeM: 6, maxRangeM: 70, damage: 30, armorPierce: 0.60, reloadS: 10, splashRadiusM: 0, buildingDamage: 2.0, projectileSpeedMs: 48, kind: 'bolt' },
+    ranged: { minRangeM: 6, maxRangeM: 70, damage: 30, armorPierce: 0.60, reloadS: 10, splashRadiusM: 0, buildingDamage: 2.0, projectileSpeedMs: 60, kind: 'bolt' },
     refitTargets: [],
     valueGold: 308,
   },
@@ -797,8 +840,8 @@ export const UNIT_DEFS: Record<UnitTypeId, UnitDef> = {
     id: 'lightCav', unitClass: 'cavalry', visualArchetype: 'swordsman',
     barracksLevel: 2, gunFoundryLevel: 0, count: 8, crewCount: 8,
     cost: { gold: 100, leatherArmour: 8, weapons: 8, horses: 8 }, equipPerMan: { leatherArmour: 1, weapons: 1, horses: 1 },
-    hp: 40, attack: 7, defence: 5, armour: 0.20, meleeDamage: 6, morale: 65,
-    walkSpeedMs: 3.6, runSpeedMs: 8.5, shieldBlock: 0.15, antiCavBonus: 0, weaponReachM: 2.2,
+    hp: 40, attack: 7, defence: 5, shieldDefence: 1, armour: 0.20, meleeDamage: 6, morale: 65,
+    walkSpeedMs: 3.6, runSpeedMs: 8.5, shieldBlock: 0.20, antiCavBonus: 0, weaponReachM: 2.0,
     chargeAttackBonus: 8, chargeMoraleShock: 9,
     refitTargets: ['heavyCav'],
     valueGold: 380,
@@ -807,9 +850,9 @@ export const UNIT_DEFS: Record<UnitTypeId, UnitDef> = {
     id: 'heavyCav', unitClass: 'cavalry', visualArchetype: 'swordsman',
     barracksLevel: 3, gunFoundryLevel: 0, count: 8, crewCount: 8,
     cost: { gold: 160, weapons: 8, mail: 8, horses: 8 }, equipPerMan: { weapons: 1, mail: 1, horses: 1 },
-    hp: 52, attack: 10, defence: 9, armour: 0.45, meleeDamage: 8, morale: 85,
-    walkSpeedMs: 3.6, runSpeedMs: 7.5, shieldBlock: 0.30, antiCavBonus: 0, weaponReachM: 2.4,
-    chargeAttackBonus: 12, chargeMoraleShock: 15,
+    hp: 52, attack: 10, defence: 9, shieldDefence: 2, armour: 0.45, meleeDamage: 8, morale: 85,
+    walkSpeedMs: 3.6, runSpeedMs: 7.5, shieldBlock: 0.35, antiCavBonus: 0, weaponReachM: 2.2,
+    chargeAttackBonus: 13, chargeMoraleShock: 16,
     refitTargets: [],
     valueGold: 480,
   },

@@ -11,6 +11,7 @@ import {
   GOOD_TO_WORKSHOP,
   GOOD_VALUE_GOLD,
   isEquipmentWorkshop,
+  TRANSPORT_LEVELS,
   UNIT_DEFS,
   WORLD,
   type BuildingBranch,
@@ -24,7 +25,7 @@ import {
 } from '../config.ts';
 import type { PlacementTool } from '../app/input.ts';
 import { countAliveSoldiers, countSideArmyMen, getArmyCap } from '../sim/combat.ts';
-import { inspectBuildingUpgrade } from '../sim/commands.ts';
+import { inspectBuildingUpgrade, inspectRegimentReinforce, inspectTransportUpgrade } from '../sim/commands.ts';
 import { computeProductionRates, countFoodRationsInStock, countPopulation, listBottlenecks } from '../sim/economy.ts';
 import { ALL_MAP_IDS } from '../sim/maps.ts';
 import type { TerrainField, MapLayoutId } from '../sim/terrain.ts';
@@ -1044,18 +1045,45 @@ export class GameHud {
       const yardHeader = this.lang === 'pl' ? 'Podw.' : 'Yards';
       const table = document.createElement('table');
       table.className = 'rts-prod-table';
-      table.innerHTML = `<thead><tr><th>${s.prodHeaderGood}</th><th>${s.prodHeaderStock}</th><th>${yardHeader}</th><th>${s.prodHeaderRate}</th><th>${s.prodHeaderNet}</th></tr></thead>`;
+      table.innerHTML = `<thead><tr><th>${s.prodHeaderGood}</th><th>${s.prodHeaderStock}</th><th>${yardHeader}</th><th>${s.prodHeaderRate}</th><th>${s.prodHeaderNet}</th><th>${s.priorityHeader}</th></tr></thead>`;
       const tb = document.createElement('tbody');
+      const prios = this.latestState.sides[0].goodPriorities ?? {};
       for (const r of rates) {
         const tr = document.createElement('tr');
         const netCls = r.netPerMin > 0.1 ? 'pos' : r.netPerMin < -0.1 ? 'neg' : '';
         const yAmt = Math.floor(yardTotals[r.good] ?? 0);
+        const curPri = (prios[r.good] ?? 0) as -1 | 0 | 1;
         tr.innerHTML =
           `<td>${s.goods[r.good]}</td>` +
           `<td><strong>${Math.floor(r.stock)}</strong></td>` +
           `<td>${yAmt > 0 ? yAmt : '·'}</td>` +
           `<td>+${r.producedPerMin.toFixed(1)}</td>` +
           `<td class="${netCls}">${r.netPerMin >= 0 ? '+' : ''}${r.netPerMin.toFixed(1)}</td>`;
+        const tdPri = document.createElement('td');
+        const priBtn = document.createElement('button');
+        priBtn.className = `insp-btn ${curPri > 0 ? 'active' : ''}`;
+        priBtn.style.padding = '1px 5px';
+        priBtn.style.fontSize = '10px';
+        priBtn.textContent = curPri > 0 ? '▲' : curPri < 0 ? '▼' : '·';
+        priBtn.title =
+          curPri > 0
+            ? this.lang === 'pl'
+              ? 'Priorytet: Wysoki'
+              : 'Priority: High'
+            : curPri < 0
+              ? this.lang === 'pl'
+                ? 'Priorytet: Niski'
+                : 'Priority: Low'
+              : this.lang === 'pl'
+                ? 'Priorytet: Normalny'
+                : 'Priority: Normal';
+        priBtn.addEventListener('click', () => {
+          const nextPri: -1 | 0 | 1 = curPri === 0 ? 1 : curPri === 1 ? -1 : 0;
+          this.cb.onExecute({ type: 'setGoodPriority', side: 0, good: r.good, priority: nextPri });
+          this.rebuildDrawer(true);
+        });
+        tdPri.appendChild(priBtn);
+        tr.appendChild(tdPri);
         tb.appendChild(tr);
       }
       table.appendChild(tb);
@@ -1375,8 +1403,11 @@ export class GameHud {
         actRow.appendChild(rkBtn);
       }
 
-      // Stances
-      for (const st of ['hold', 'guard', 'skirmish'] as StanceKind[]) {
+      // Stances (including Shield Wall & Pike Wall when unit is eligible)
+      const stances: StanceKind[] = ['hold', 'guard', 'skirmish'];
+      if (def.shieldBlock >= 0.2) stances.push('shieldWall');
+      if (def.antiCavBonus > 0 && def.unitClass === 'infantry') stances.push('pikeWall');
+      for (const st of stances) {
         const btn = document.createElement('button');
         btn.className = `insp-btn ${primary.stance === st ? 'active' : ''}`;
         btn.textContent = s.stances[st];
@@ -1405,6 +1436,28 @@ export class GameHud {
         this.cb.onExecute({ type: 'issueOrder', side: 0, regimentIds: ids, order: { kind: 'fallbackKeep', x: 0, z: 0 } }),
       );
       actRow.appendChild(fb);
+
+      // Reinforce thinned regiment at nearby Barracks (preserves veteran rank!)
+      if (regs.length === 1 && this.latestState) {
+        const rfInfo = inspectRegimentReinforce(this.latestState, 0, primary.id);
+        if (rfInfo.missingMen > 0) {
+          const rfBtn = document.createElement('button');
+          rfBtn.className = 'insp-btn';
+          rfBtn.disabled = !rfInfo.canReinforce;
+          rfBtn.textContent = `➕ ${s.reinforceBtn} (+${rfInfo.missingMen})`;
+          const costStr = Object.entries(rfInfo.cost)
+            .map(([g, a]) => `${a} ${s.goods[g as GoodId]}`)
+            .join(', ');
+          rfBtn.title = rfInfo.canReinforce
+            ? `${s.reinforceBtn} (+${rfInfo.missingMen}): ${costStr}`
+            : `${s.reinforceBtn}: ${rfInfo.reason}${costStr ? ` (${costStr})` : ''}`;
+          rfBtn.addEventListener('click', () => {
+            this.cb.onExecute({ type: 'reinforceRegiment', side: 0, regimentId: primary.id });
+            this.refreshInspector(true);
+          });
+          actRow.appendChild(rfBtn);
+        }
+      }
 
       // Refit buttons when single regiment has valid refit targets
       if (regs.length === 1 && def.refitTargets.length > 0) {
@@ -1524,6 +1577,11 @@ export class GameHud {
 
       const isEquipShop = isEquipmentWorkshop(b.type);
       const equipOrdersStr = isEquipShop ? ` · ${s.ordersLabel}: ${b.pendingOrders ?? 0}` : '';
+      const tCheck = b.type === 'keep' ? inspectTransportUpgrade(state, 0) : null;
+      const transportStr =
+        b.type === 'keep'
+          ? ` · 🛞 ${s.transportLabel}: ${s.transportLevels[(state.sides[0].transportLevel ?? 1) - 1]}`
+          : '';
 
       const extra =
         b.type === 'house'
@@ -1534,7 +1592,7 @@ export class GameHud {
               ? ` · → ${s.levelLabel}${b.upgradingToLevel}${matProgressStr()}`
               : (b.type === 'farm' || b.type === 'vineyard') && b.strips.length > 0
                 ? ` · ${this.lang === 'pl' ? 'Pola' : 'Strips'}: ${b.strips.length}/12`
-                : equipOrdersStr;
+                : `${equipOrdersStr}${transportStr}`;
 
       const headHtml =
         `<strong>${s.buildings[b.type]} ${s.levelLabel}${b.level}/${def.maxLevel}</strong>` +
@@ -1578,7 +1636,9 @@ export class GameHud {
                 : 0;
               return `${g}:${sh + (state.sides[0].equipmentOrders?.[g] ?? 0)}`;
             }).join(',')
-          : String(b.pendingOrders ?? 0);
+          : b.type === 'keep'
+            ? `t:${state.sides[0].transportLevel ?? 1}:${state.sides[0].upgradingTransportTo ?? 0}:${Math.floor(state.sides[0].transportUpgradeTimerS ?? 0)}:${tCheck?.canUpgrade}:${tCheck?.reason}`
+            : String(b.pendingOrders ?? 0);
       const bldSig = `b:${b.id}:${b.type}:${b.level}:${b.upgradingToLevel}:${b.paused}:${b.buildProgress < 1}:${uCheck.canUpgrade}:${uCheck.reason}:${missingSig}:${equipSig}:${this.lang}`;
 
       if (!force && bldSig === this.lastInspectorSig) {
@@ -1639,6 +1699,29 @@ export class GameHud {
               this.refreshInspector(true);
             });
             actRow.appendChild(up);
+          }
+
+          if (b.type === 'keep' && tCheck && tCheck.reason !== 'maxLevel') {
+            const tBtn = document.createElement('button');
+            if (tCheck.reason === 'alreadyUpgrading' && tCheck.targetLevel !== null) {
+              const tDef = TRANSPORT_LEVELS[tCheck.targetLevel - 1]!;
+              const pct = Math.min(99, Math.round(((state.sides[0].transportUpgradeTimerS ?? 0) / Math.max(1, tDef.seconds)) * 100));
+              tBtn.className = 'insp-btn disabled';
+              tBtn.disabled = true;
+              tBtn.textContent = `⏳ ${s.transportUpgrading(s.transportLevels[tCheck.targetLevel - 1]!, pct)}`;
+            } else if (tCheck.targetLevel !== null) {
+              const targetName = s.transportLevels[tCheck.targetLevel - 1]!;
+              const tCostStr = formatGoodList(tCheck.cost);
+              tBtn.className = `insp-btn ${tCheck.canUpgrade ? 'btn-primary' : 'disabled'}`;
+              tBtn.disabled = !tCheck.canUpgrade;
+              tBtn.setAttribute('data-upgrade-transport', String(tCheck.targetLevel));
+              tBtn.textContent = `🛞 ${s.transportUpgradeBtn} → ${targetName} (${tCostStr})`;
+              tBtn.addEventListener('click', () => {
+                this.cb.onExecute({ type: 'upgradeTransport', side: 0 });
+                this.refreshInspector(true);
+              });
+            }
+            actRow.appendChild(tBtn);
           }
 
           if (b.buildProgress < 1 && b.type !== 'keep') {

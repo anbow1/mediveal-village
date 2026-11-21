@@ -277,5 +277,84 @@ describe('Stage 6 combat system & 10x10 unit balance matrix', () => {
     expect(sim.execute({ type: 'deleteArmyFormation', side: 0, formationId: saved[0]!.id }).ok).toBe(true);
     expect(sim.state.sides[0].savedFormations).toHaveLength(0);
   });
+
+  it('supports Shield Wall & Pike Wall stances and Barracks Reinforce preserving veteran rank', () => {
+    const sim = new SimEngine({ mapId: 'openField', mode: 'skirmish', disableAi: true, seed: 309 });
+    const keep = sim.state.buildings.find((b) => b.side === 0 && b.type === 'keep')!;
+    const stock = sim.state.sides[0].stock;
+    stock.gold = 2000;
+    stock.timber = 300;
+    stock.stone = 200;
+    stock.weapons = 40;
+    stock.mail = 40;
+
+    // Place a completed L2 Barracks near the Keep
+    const bRes = sim.execute({ type: 'placeBuilding', side: 0, buildingType: 'barracks', x: keep.x + 16, z: keep.z + 10, yawRad: 0 });
+    expect(bRes.ok).toBe(true);
+    const barracks = sim.state.buildings.find((b) => b.id === bRes.createdId)!;
+    barracks.buildProgress = 1;
+    barracks.level = 2;
+
+    // Add extra residents so reinforce leaves >= 4 free townspeople
+    for (let i = 0; i < 6; i++) {
+      sim.state.citizens.push({
+        id: sim.state.nextEntityId++,
+        side: 0,
+        role: 'carrier',
+        x: keep.x + 4,
+        z: keep.z + 4,
+        yawRad: 0,
+        homeBuildingId: keep.id,
+        assignedBuildingId: null,
+        carryJob: null,
+        carryingGood: null,
+        carryingAmount: 0,
+        fleeing: false,
+        fleeClearTimerS: 0,
+        recruitTargetBuildingId: null,
+        recruitOrderId: null,
+        path: [],
+        travelM: 0,
+        workPhase: 'atShop',
+        workTargetX: keep.x + 4,
+        workTargetZ: keep.z + 4,
+        workTargetTreeId: null,
+        workTimerS: 0,
+      });
+    }
+
+    const pikes = spawnRegiment(sim.state, 0, 'pikemen', barracks.x + 6, barracks.z, 0);
+    const swords = spawnRegiment(sim.state, 0, 'swordsmen', barracks.x + 8, barracks.z + 4, 0);
+    const archers = spawnRegiment(sim.state, 0, 'archers', barracks.x + 10, barracks.z, 0);
+
+    // Shield Wall allowed for Swordsmen/Pikemen, rejected for Archers (no shield)
+    expect(sim.execute({ type: 'setStance', side: 0, regimentIds: [swords.id], stance: 'shieldWall' }).ok).toBe(true);
+    expect(swords.stance).toBe('shieldWall');
+    expect(sim.execute({ type: 'setStance', side: 0, regimentIds: [archers.id], stance: 'shieldWall' }).ok).toBe(false);
+
+    // Pike Wall allowed for Pikemen, rejected for Swordsmen; breaks back to guard on march order
+    expect(sim.execute({ type: 'setStance', side: 0, regimentIds: [pikes.id], stance: 'pikeWall' }).ok).toBe(true);
+    expect(pikes.stance).toBe('pikeWall');
+    expect(sim.execute({ type: 'setStance', side: 0, regimentIds: [swords.id], stance: 'pikeWall' }).ok).toBe(false);
+    expect(sim.execute({ type: 'issueOrder', side: 0, regimentIds: [pikes.id], order: { kind: 'march', x: pikes.x + 12, z: pikes.z } }).ok).toBe(true);
+    expect(pikes.stance).toBe('guard');
+
+    // Reinforce thinned veteran Swordsmen regiment at nearby Barracks while preserving veteranTier & kills!
+    swords.veteranTier = 2;
+    swords.kills = 22;
+    swords.outOfCombatS = 15;
+    swords.captainAlive = false;
+    for (let i = 0; i < 4; i++) {
+      swords.soldiers[i]!.alive = false;
+      swords.soldiers[i]!.hp = 0;
+    }
+    expect(countAliveSoldiers(swords)).toBe(8);
+    expect(sim.execute({ type: 'reinforceRegiment', side: 0, regimentId: swords.id }).ok).toBe(true);
+    expect(countAliveSoldiers(swords)).toBe(12);
+    expect(swords.veteranTier).toBe(2);
+    expect(swords.kills).toBe(22);
+    expect(swords.captainAlive).toBe(true);
+  });
 });
+
 

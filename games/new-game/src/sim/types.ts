@@ -16,7 +16,7 @@ export type KeepSlot = 0 | 1 | 2;
 export type CampaignMissionId = 1 | 2 | 3 | 4 | 5;
 
 export type FormationKind = 'line' | 'column' | 'schiltron' | 'wedge' | 'loose';
-export type StanceKind = 'hold' | 'guard' | 'skirmish';
+export type StanceKind = 'hold' | 'guard' | 'skirmish' | 'shieldWall' | 'pikeWall';
 
 export type OrderKind =
   | 'march'
@@ -206,8 +206,16 @@ export interface SoldierEntity {
   yawRad: number;
   /** Total meters walked -> drives foot-locked animation stride (zero foot slide!). */
   travelM: number;
+  /** Instantaneous movement speed (m/s) for walk/run/gallop clip selection. */
+  speedMs?: number;
   clip: 'idle' | 'walk' | 'attack';
   attackAnimTimerS: number;
+  /** Seconds elapsed since last melee strike or shot (drives rigged strike/recoil clips). */
+  sinceAttackS?: number;
+  /** Simulation time when last wounded (drives rigged impact/flinch clip). */
+  hurtAtS?: number;
+  /** Seconds elapsed since death (drives rigged death clip & body sink). */
+  deadS?: number;
   meleeCooldownS: number;
   rangedCooldownS: number;
   tintVar: number;
@@ -384,6 +392,12 @@ export interface SideState {
   totalLosses: number;
   buildingsLost: number;
   tributePaid: boolean;
+  /** Transport logistics level (1 = On Foot, 2 = Handcarts, 3 = Horse & Wagon). */
+  transportLevel: 1 | 2 | 3;
+  upgradingTransportTo: 2 | 3 | null;
+  transportUpgradeTimerS: number;
+  /** Per-good carrier priority (-1 = low, 0 = normal, 1 = high). */
+  goodPriorities?: Partial<Record<GoodId, -1 | 0 | 1>>;
   /** Queued barracks equipment orders waiting for a workshop of that type to be built/assigned. */
   equipmentOrders?: ResourceMap;
   /** Multi-regiment formations saved by the player/side. */
@@ -488,6 +502,7 @@ export type SimCommand =
   | { readonly type: 'orderUnitEquipment'; readonly side: SideId; readonly unitType: UnitTypeId; readonly count?: number }
   | { readonly type: 'setBuildingOrder'; readonly side: SideId; readonly buildingId: number; readonly orders: number }
   | { readonly type: 'refitRegiment'; readonly side: SideId; readonly regimentId: number; readonly targetType: UnitTypeId }
+  | { readonly type: 'reinforceRegiment'; readonly side: SideId; readonly regimentId: number }
   | { readonly type: 'mergeRegiments'; readonly side: SideId; readonly primaryId: number; readonly secondaryId: number }
   | { readonly type: 'disbandRegiment'; readonly side: SideId; readonly regimentId: number }
   | { readonly type: 'issueOrder'; readonly side: SideId; readonly regimentIds: readonly number[]; readonly order: RegimentOrder; readonly queue?: boolean }
@@ -497,6 +512,8 @@ export type SimCommand =
   | { readonly type: 'deleteArmyFormation'; readonly side: SideId; readonly formationId: number }
   | { readonly type: 'setStance'; readonly side: SideId; readonly regimentIds: readonly number[]; readonly stance: StanceKind }
   | { readonly type: 'setHoldFire'; readonly side: SideId; readonly regimentIds: readonly number[]; readonly holdFire: boolean }
+  | { readonly type: 'setGoodPriority'; readonly side: SideId; readonly good: GoodId; readonly priority: -1 | 0 | 1 }
+  | { readonly type: 'upgradeTransport'; readonly side: SideId }
   | { readonly type: 'payTribute'; readonly side: SideId };
 
 export interface CommandResult {

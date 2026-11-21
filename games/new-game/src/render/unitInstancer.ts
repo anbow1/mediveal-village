@@ -99,6 +99,7 @@ export interface UnitInstancerHandles {
   ) => void;
   readonly getLodCounts: () => Record<string, number>;
   readonly getUnitCount: () => number;
+  readonly setVisible: (visible: boolean) => void;
   readonly dispose: () => void;
 }
 
@@ -812,6 +813,12 @@ export async function buildUnitInstancer(
     syncFromSim,
     getLodCounts: () => ({ ...lodCounts }),
     getUnitCount: () => lastLiveCount,
+    setVisible(visible: boolean) {
+      for (const batch of batches) {
+        for (const m of batch.lodMeshes) m.visible = visible;
+        batch.shadowMesh.visible = visible;
+      }
+    },
     dispose() {
       for (const batch of batches) {
         for (const m of batch.lodMeshes) {
