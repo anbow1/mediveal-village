@@ -866,7 +866,7 @@ export async function buildStage5World(
   const tracker = createByteProgressTracker(manifest.totalBytes, onProgress);
 
   // 1. Load 12-layer KTX2 surface library (zero extra textures for all 18 buildings & terrain!)
-  const surfaces = await loadSurfaceLibrary(loader, anisotropy, tracker);
+  const surfaces = await loadSurfaceLibrary(loader, anisotropy, tracker, quality);
 
   // 2. Terrain mesh + unified physical lakes/rivers + 3-ring Roberts R2 Bézier grass
   const terrainHandles: TerrainRenderHandles = buildTerrainMesh(terrain, groundWorks, surfaces);

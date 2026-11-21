@@ -99,9 +99,21 @@ export class AssetLoader {
    * reads live GPU compressed format support (BC7 / ASTC / ETC2).
    * Intentionally does NOT call `setTranscoderPath()` so Vite bundles basis_transcoder once via import.meta.url.
    */
-  constructor(renderer: WebGPURenderer) {
+  constructor(renderer: WebGPURenderer, preferSafeWebGlCompression = false) {
     this.ktx2 = new KTX2Loader();
     this.ktx2.detectSupport(renderer);
+
+    // ARM Mali-T760 / older Android WebGL2 drivers (e.g. Samsung Galaxy Tab S2) decode Basis UASTC->ASTC
+    // alpha blocks as solid hardware magenta (#ff00ff), turning tree impostors & foliage into pink quads.
+    // Preferring ETC2 (mandatory in OpenGL ES 3.0 / WebGL 2) eliminates ASTC hardware errors cleanly!
+    const isWebGpu = 'isWebGPUBackend' in (renderer.backend as object);
+    const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+    const workerCfg = (
+      this.ktx2 as unknown as { workerConfig?: { astcSupported?: boolean; etc2Supported?: boolean } }
+    ).workerConfig;
+    if (!isWebGpu && workerCfg?.astcSupported && (preferSafeWebGlCompression || /Android/i.test(ua))) {
+      workerCfg.astcSupported = false;
+    }
 
     this.gltf = new GLTFLoader();
     this.gltf.setKTX2Loader(this.ktx2);

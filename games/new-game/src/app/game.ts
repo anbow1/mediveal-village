@@ -280,7 +280,7 @@ export class Game {
     markStage('sky-probe');
 
     // Construct AssetLoader strictly AFTER `await renderer.init()` so KTX2Loader detects live GPU block support.
-    const assetLoader = new AssetLoader(stage.renderer);
+    const assetLoader = new AssetLoader(stage.renderer, opts.quality === 'minimal');
     const maxAniso =
       typeof (stage.renderer as unknown as { getMaxAnisotropy?: () => number }).getMaxAnisotropy === 'function'
         ? (stage.renderer as unknown as { getMaxAnisotropy: () => number }).getMaxAnisotropy()

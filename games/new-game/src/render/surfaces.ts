@@ -34,6 +34,7 @@ import {
   vec3,
   vertexColor,
 } from 'three/tsl';
+import type { QualityPreset } from '../config.ts';
 import type { AssetLoader, ByteProgressTracker } from './assetLoader.ts';
 
 export const SURFACE_LAYERS = [
@@ -83,10 +84,9 @@ export interface SurfaceLibrary {
   dispose(): void;
 }
 
-/** Packs 7 high-res photogrammetry JPEG texture sets into 3 GPU DataArrayTextures (512x512 RGBA8, mipmapped). */
-async function loadPhotoTerrainArrays(anisotropy: number): Promise<PhotoTerrainArrays | null> {
+/** Packs 7 photogrammetry JPEG texture sets into 3 GPU DataArrayTextures (512px High, 256px Low; skipped on Minimal). */
+async function loadPhotoTerrainArrays(anisotropy: number, size: number): Promise<PhotoTerrainArrays | null> {
   if (typeof document === 'undefined' || typeof Image === 'undefined') return null;
-  const size = 512;
   const depth = PHOTO_TERRAIN_LAYERS.length;
 
   const loadImage = (url: string): Promise<HTMLImageElement> =>
@@ -159,16 +159,25 @@ export async function loadSurfaceLibrary(
   loader: AssetLoader,
   anisotropy: number,
   tracker?: ByteProgressTracker,
+  quality: QualityPreset = 'high',
 ): Promise<SurfaceLibrary> {
   const albedoUrls = SURFACE_LAYERS.map((id) => `assets/surfaces/${id}_albedo.ktx2`);
   const normalUrls = SURFACE_LAYERS.map((id) => `assets/surfaces/${id}_normal.ktx2`);
   const ormUrls = SURFACE_LAYERS.map((id) => `assets/surfaces/${id}_orm.ktx2`);
 
+  // On `minimal`, skip DataArrayTexture photoTerrain (avoids broken gl.generateMipmap(TEXTURE_2D_ARRAY)
+  // on Android 7 Mali-T760 / Adreno 510 drivers, saves 22 MB VRAM & uses pre-mipmapped KTX2 terrain arrays).
+  // On `low`, pack photoTerrain at 256x256 (5.5 MB VRAM instead of 22 MB) for smooth 3 GB tablet play.
+  const photoPromise =
+    quality === 'minimal'
+      ? Promise.resolve(null)
+      : loadPhotoTerrainArrays(anisotropy, quality === 'low' ? 256 : 512);
+
   const [albedoArray, normalArray, ormArray, photoTerrain] = await Promise.all([
     loader.loadKtx2Array(albedoUrls, true, anisotropy, tracker),
     loader.loadKtx2Array(normalUrls, false, anisotropy, tracker),
     loader.loadKtx2Array(ormUrls, false, anisotropy, tracker),
-    loadPhotoTerrainArrays(anisotropy),
+    photoPromise,
   ]);
 
   const buildingMaterial = createBuildingSurfaceMaterial(albedoArray, normalArray, ormArray, false);

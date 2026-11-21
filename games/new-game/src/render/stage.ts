@@ -196,15 +196,16 @@ export class RenderStage {
   static async create(opts: StageOptions): Promise<RenderStage> {
     installWebGpuCompat();
 
-    const isMinimal = opts.quality === 'minimal';
+    const qCfg = QUALITY_PRESETS[opts.quality];
+    const usePostPipeline = qCfg.traaEnabled;
     const renderer = new WebGPURenderer({
       antialias: false,
-      trackTimestamp: !isMinimal,
-      reversedDepthBuffer: !isMinimal,
+      trackTimestamp: usePostPipeline,
+      reversedDepthBuffer: usePostPipeline,
     });
     renderer.toneMapping = NoToneMapping;
     renderer.toneMappingExposure = 1.0;
-    renderer.shadowMap.enabled = !isMinimal;
+    renderer.shadowMap.enabled = qCfg.shadowCascades > 0;
 
     const passTimer = new PassTimer();
     renderer.inspector = passTimer;
@@ -214,7 +215,11 @@ export class RenderStage {
     const scene = new Scene();
     const width = Math.max(1, opts.container.clientWidth || window.innerWidth);
     const height = Math.max(1, opts.container.clientHeight || window.innerHeight);
-    const camera = new PerspectiveCamera(CAMERA.fovDeg, width / height, CAMERA.nearM, CAMERA.farM);
+    // Without reversed depth (Low & Minimal presets), lift near plane from 0.25 m to 1.5 m
+    // so 16/24-bit mobile depth buffers keep crisp precision with zero foreground Z-fighting.
+    const camNear = usePostPipeline ? CAMERA.nearM : 1.5;
+    const camFar = usePostPipeline ? CAMERA.farM : 1200;
+    const camera = new PerspectiveCamera(CAMERA.fovDeg, width / height, camNear, camFar);
 
     passTimer.mainScene = scene;
     passTimer.mainCamera = camera;
