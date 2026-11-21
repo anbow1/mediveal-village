@@ -15,7 +15,7 @@ import {
   type Object3D,
 } from 'three/webgpu';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import type { BuildingTypeId } from '../config.ts';
+import type { BuildingTypeId, QualityPreset } from '../config.ts';
 import type { AssetLoader } from './assetLoader.ts';
 
 /** Maps mediveal-village BuildingTypeId -> marchland/buildings/ filename prefix. */
@@ -215,36 +215,47 @@ function convertMarchlandGlbToBuildingGeometry(root: Object3D): BufferGeometry |
 export type MarchlandBuildingLevelKey = `${BuildingTypeId}_${1 | 2 | 3}`;
 
 /**
- * Loads all L1, L2, and L3 high-detail architectural GLB meshes from `assets/marchland/buildings/`
- * in parallel and converts them into single-draw-call `BufferGeometry` entries compatible with
- * `surfaces.buildingMaterial`.
+ * Loads L1/L2/L3 high-detail architectural GLB meshes from `assets/marchland/buildings/`
+ * with bounded concurrency (avoids Safari/WebKit connection starvation on iPad/mobile)
+ * and skips the optional 15 MB override pack on `minimal` preset to keep 3 GB tablets well under RAM limits.
  */
 export async function loadMarchlandBuildingLevels(
   loader: AssetLoader,
+  quality: QualityPreset = 'high',
+  onProgress?: (done: number, total: number) => void,
 ): Promise<Map<MarchlandBuildingLevelKey, BufferGeometry>> {
   const result = new Map<MarchlandBuildingLevelKey, BufferGeometry>();
-  const tasks: Promise<void>[] = [];
+  if (quality === 'minimal') return result;
 
+  const jobs: { key: MarchlandBuildingLevelKey; url: string }[] = [];
   for (const [bType, prefix] of Object.entries(MARCHLAND_BUILDING_PREFIX) as [BuildingTypeId, string][]) {
     for (const level of [1, 2, 3] as const) {
-      const key: MarchlandBuildingLevelKey = `${bType}_${level}`;
-      const url = `assets/marchland/buildings/${prefix}_${level}.glb`;
-      tasks.push(
-        loader
-          .loadGlb(url)
-          .then((gltf) => {
-            const geo = convertMarchlandGlbToBuildingGeometry(gltf.scene);
-            if (geo) {
-              result.set(key, geo);
-            }
-          })
-          .catch(() => {
-            // Gracefully fall back to base mediveal-village L1 template if any GLB is absent
-          }),
-      );
+      jobs.push({
+        key: `${bType}_${level}`,
+        url: `assets/marchland/buildings/${prefix}_${level}.glb`,
+      });
     }
   }
 
-  await Promise.all(tasks);
+  let cursor = 0;
+  let done = 0;
+  const total = jobs.length;
+  const concurrency = quality === 'low' ? 4 : 6;
+  const worker = async (): Promise<void> => {
+    while (cursor < jobs.length) {
+      const job = jobs[cursor++]!;
+      try {
+        const gltf = await loader.loadGlb(job.url);
+        const geo = convertMarchlandGlbToBuildingGeometry(gltf.scene);
+        if (geo) result.set(job.key, geo);
+      } catch {
+        // Gracefully fall back to base mediveal-village L1 template if any GLB is absent
+      }
+      done++;
+      onProgress?.(done, total);
+    }
+  };
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, jobs.length) }, () => worker()));
   return result;
 }

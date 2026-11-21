@@ -298,6 +298,9 @@ export class Game {
       (loadedBytes, totalBytes) => {
         ui.setLoadingProgress(loadedBytes, totalBytes);
       },
+      (stageLabel, frac01) => {
+        ui.setLoadingStage(stageLabel, frac01);
+      },
     );
     markStage('assets');
 

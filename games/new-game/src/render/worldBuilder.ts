@@ -841,6 +841,7 @@ export async function buildStage5World(
   skyUniforms: PhysicalSkyUniforms,
   mapId: MapLayoutId,
   onProgress: (loadedBytes: number, totalBytes: number) => void,
+  onStage?: (label: string, frac01: number) => void,
 ): Promise<WorldHandles> {
   const layout = buildMapLayout(mapId);
   const terrain = new TerrainField(layout.terrainConfig);
@@ -968,12 +969,16 @@ export async function buildStage5World(
   ];
   const usedBuildingKinds = Array.from(new Set([...layout.buildings.map((b) => b.kind), ...ALWAYS_BUILDABLE_KINDS]));
   const buildingTemplates = new Map<BuildingKind, LodTemplate>();
-  await Promise.all(
-    usedBuildingKinds.map(async (kind) => {
+  // Bounded concurrency (3 templates = up to 12 GLB fetches at once) prevents Safari/iPadOS connection stalls
+  let bldCursor = 0;
+  const bldWorker = async (): Promise<void> => {
+    while (bldCursor < usedBuildingKinds.length) {
+      const kind = usedBuildingKinds[bldCursor++]!;
       const tpl = await loadLodTemplate(`assets/buildings/${kind}`, { overrideMat: surfaces.buildingMaterial });
       buildingTemplates.set(kind, tpl);
-    }),
-  );
+    }
+  };
+  await Promise.all(Array.from({ length: 3 }, () => bldWorker()));
 
   // Load wall_segment (always available for dynamic wall construction), 3 tree species, rocks, fern, cannon, and props in parallel!
   const hasCannons = layout.props.some((p) => p.kind === 'cannon');
@@ -1579,10 +1584,19 @@ export async function buildStage5World(
   let simDrivenUnits = false;
 
   // Stage 6 Pre-warmed Combat VFX, High-Detail FPS/Marchland Units & Buildings, and Live Dynamic Sim World Synchronizer (all added BEFORE warmUp!)
-  const [marchlandUnits, marchlandBuildingLevels] = await Promise.all([
-    buildMarchlandUnits(scene).catch((): MarchlandUnitsHandles | null => null),
-    loadMarchlandBuildingLevels(loader),
-  ]);
+  // Run sequentially with live stage progress so mobile/iPadOS Safari never stalls or exceeds peak RAM.
+  onStage?.('units & troops…', 0.80);
+  const marchlandUnits = await buildMarchlandUnits(scene, quality, (done, total) => {
+    onStage?.(`units ${done}/${total}`, 0.80 + (done / Math.max(1, total)) * 0.08);
+  }).catch((): MarchlandUnitsHandles | null => null);
+
+  if (quality !== 'minimal') {
+    onStage?.('buildings…', 0.88);
+  }
+  const marchlandBuildingLevels = await loadMarchlandBuildingLevels(loader, quality, (done, total) => {
+    onStage?.(`buildings ${done}/${total}`, 0.88 + (done / Math.max(1, total)) * 0.06);
+  });
+  onStage?.('preparing world…', 0.94);
   const combatFx = buildCombatFx(scene);
   const simRenderer = buildSimWorldRenderer({
     scene,

@@ -58,7 +58,7 @@ export class RenderStage {
   readonly scene: Scene;
   readonly camera: PerspectiveCamera;
   readonly passTimer: PassTimer;
-  readonly pipeline: RenderPipeline;
+  readonly pipeline: RenderPipeline | null;
   readonly quality: QualityPreset;
   readonly toneMapping: ToneMappingChoice;
 
@@ -99,15 +99,13 @@ export class RenderStage {
     const tmEnum = toneMapping === 'agx' ? AgXToneMapping : ACESFilmicToneMapping;
 
     if (!qCfg.traaEnabled) {
-      // Minimal preset for low-end mobile/tablet GPUs (e.g. Adreno 510): single-pass render
-      // without velocity MRT, TRAA, sun shafts, bloom, or CAS sharpen.
-      const scenePass = pass(scene, camera, { type: HalfFloatType });
-      const sceneColor = scenePass.getTextureNode('output');
-      const hdrMinimal = vec4(sceneColor.rgb.mul(this.uRelativeExposure), float(1.0));
-      const toneMapped = renderOutput(hdrMinimal, tmEnum, SRGBColorSpace);
+      // Minimal preset for low-end / 3 GB mobile & tablet GPUs (iPad 7, Tab S2 / Adreno 510):
+      // render directly to the canvas framebuffer with built-in tone mapping — zero HalfFloatType FBO,
+      // zero MRT, zero post-processing passes (halves VRAM & works on older WebGL2 drivers).
+      renderer.toneMapping = tmEnum;
+      renderer.toneMappingExposure = 1.0;
       this.bloomNode = null;
-      this.pipeline = new RenderPipeline(renderer, toneMapped);
-      this.pipeline.outputColorTransform = false;
+      this.pipeline = null;
       return;
     }
 
@@ -198,14 +196,15 @@ export class RenderStage {
   static async create(opts: StageOptions): Promise<RenderStage> {
     installWebGpuCompat();
 
+    const isMinimal = opts.quality === 'minimal';
     const renderer = new WebGPURenderer({
       antialias: false,
-      trackTimestamp: true,
-      reversedDepthBuffer: true,
+      trackTimestamp: !isMinimal,
+      reversedDepthBuffer: !isMinimal,
     });
     renderer.toneMapping = NoToneMapping;
     renderer.toneMappingExposure = 1.0;
-    renderer.shadowMap.enabled = opts.quality !== 'minimal';
+    renderer.shadowMap.enabled = !isMinimal;
 
     const passTimer = new PassTimer();
     renderer.inspector = passTimer;
@@ -244,7 +243,11 @@ export class RenderStage {
     // Playbook §11: wait for a real animation frame so PassNode renders and builds every pipeline.
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     warmAllPipelines(this.scene, () => {
-      this.pipeline.render();
+      if (this.pipeline) {
+        this.pipeline.render();
+      } else {
+        this.renderer.render(this.scene, this.camera);
+      }
     });
     return { sharedInstances };
   }
@@ -264,7 +267,11 @@ export class RenderStage {
 
   /** Relative exposure offset (stops from preset anchor EV100). 0.0 = exact preset anchor EV100. */
   setExposureOffsetStops(stops: number): void {
-    this.uRelativeExposure.value = Math.pow(2, stops);
+    const gain = Math.pow(2, stops);
+    this.uRelativeExposure.value = gain;
+    if (!this.pipeline) {
+      this.renderer.toneMappingExposure = gain;
+    }
   }
 
   /** Projects sun world direction to screen UV and scales sun shaft weight by view alignment. */
@@ -312,12 +319,16 @@ export class RenderStage {
   }
 
   render(): void {
-    this.pipeline.render();
+    if (this.pipeline) {
+      this.pipeline.render();
+    } else {
+      this.renderer.render(this.scene, this.camera);
+    }
     this.passTimer.poll(this.renderer);
   }
 
   dispose(): void {
-    this.pipeline.dispose();
+    this.pipeline?.dispose();
     this.renderer.dispose();
   }
 }

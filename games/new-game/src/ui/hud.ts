@@ -595,9 +595,10 @@ export class GameHud {
   setLoadingProgress(loadedBytes: number, totalBytes: number): void {
     const frac = Math.max(0, Math.min(1, loadedBytes / Math.max(1, totalBytes)));
     const pct = Math.round(frac * 100);
+    const barPct = Math.round(8 + frac * 70);
     const loadedMb = (loadedBytes / (1024 * 1024)).toFixed(1);
     const totalMb = (totalBytes / (1024 * 1024)).toFixed(1);
-    this.loadingBarFillEl.style.width = `${pct}%`;
+    this.loadingBarFillEl.style.width = `${barPct}%`;
     this.loadingStageEl.textContent = `assets ${pct}% · ${loadedMb} / ${totalMb} MB`;
   }
 

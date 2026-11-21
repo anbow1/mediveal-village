@@ -1,4 +1,4 @@
-const CACHE_NAME = 'marchland-mv-v1';
+const CACHE_NAME = 'marchland-mv-v2';
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();
@@ -20,6 +20,11 @@ self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
   const url = new URL(event.request.url);
   if (url.origin !== self.location.origin) return;
+
+  // Never intercept or clone large binary/JSON game assets (/assets/):
+  // Safari iPadOS standalone PWAs enforce a ~50 MB Cache Storage cap and can stall streaming
+  // ReadableStream responses when response.clone() + cache.put() runs across dozens of fetches.
+  if (url.pathname.includes('/assets/')) return;
 
   event.respondWith(
     fetch(event.request)

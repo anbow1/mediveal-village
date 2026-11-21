@@ -30,7 +30,7 @@ import {
   type Scene,
 } from 'three/webgpu';
 import { abs, attribute, cos, Fn, int, ivec2, mix, normalLocal, sin, textureLoad, vec3, vec4 } from 'three/tsl';
-import { UNIT_DEFS, type BuildingTypeId, type UnitTypeId } from '../config.ts';
+import { UNIT_DEFS, type BuildingTypeId, type QualityPreset, type UnitTypeId } from '../config.ts';
 import type { RegimentEntity, SimWorldState, SoldierEntity } from '../sim/types.ts';
 
 interface ClipSpec {
@@ -1148,93 +1148,118 @@ async function fetchJson<T>(url: string): Promise<T | null> {
   }
 }
 
-export async function buildMarchlandUnits(scene: Scene): Promise<MarchlandUnitsHandles | null> {
+export async function buildMarchlandUnits(
+  scene: Scene,
+  quality: QualityPreset = 'high',
+  onProgress?: (done: number, total: number) => void,
+): Promise<MarchlandUnitsHandles | null> {
   const base = 'assets/marchland';
-  const [
-    militiaM,
-    pikemanM,
-    archerM,
-    crossbowM,
-    swordsmanM,
-    halberdierM,
-    riderM,
-    warhorseM,
-    cannonM,
-    mortarM,
-    handcartM,
-    wagonM,
-    pigM,
-    townsman0,
-    townsman1,
-    townsman2,
-    townsman3,
-    townswoman0,
-    townswoman1,
-    townswoman2,
-  ] = await Promise.all([
-    fetchJson<RiggedModel>(`${base}/soldiers/militia.json`),
-    fetchJson<RiggedModel>(`${base}/soldiers/pikeman.json`),
-    fetchJson<RiggedModel>(`${base}/soldiers/archer.json`),
-    fetchJson<RiggedModel>(`${base}/soldiers/crossbowman.json`),
-    fetchJson<RiggedModel>(`${base}/soldiers/swordsman.json`),
-    fetchJson<RiggedModel>(`${base}/soldiers/halberdier.json`),
-    fetchJson<BodyModel>(`${base}/soldiers/rider.json`),
-    fetchJson<RiggedModel>(`${base}/soldiers/warhorse.json`),
-    fetchJson<PropModel>(`${base}/props/cannon.json`),
-    fetchJson<PropModel>(`${base}/props/mortar.json`),
-    fetchJson<PropModel>(`${base}/props/handcart.json`),
-    fetchJson<PropModel>(`${base}/props/wagon.json`),
-    fetchJson<PropModel>(`${base}/props/pig.json`),
-    fetchJson<RiggedModel>(`${base}/people/townsman.json`),
-    fetchJson<RiggedModel>(`${base}/people/townsman-wool.json`),
-    fetchJson<RiggedModel>(`${base}/people/townsman-beard.json`),
-    fetchJson<RiggedModel>(`${base}/people/townsman-linen.json`),
-    fetchJson<RiggedModel>(`${base}/people/townswoman.json`),
-    fetchJson<RiggedModel>(`${base}/people/townswoman-dress.json`),
-    fetchJson<RiggedModel>(`${base}/people/townswoman-worker.json`),
-  ]);
-
-  if (!swordsmanM || !warhorseM || !townsman0) {
-    console.warn('[marchlandUnits] Missing rigged models under assets/marchland; falling back.');
-    return null;
-  }
-
   const unitPools = new Map<UnitTypeId, SkinnedUnitPool>();
-  const addFoot = (kind: UnitTypeId, m: RiggedModel | null, largeShield = false) => {
-    if (!m) return;
-    const pool = buildRiggedFootPool(scene, `ML_Unit_${kind}`, m, largeShield);
-    if (pool) unitPools.set(kind, pool);
-  };
-  addFoot('militia', militiaM);
-  addFoot('pikemen', pikemanM);
-  addFoot('archers', archerM);
-  addFoot('crossbowmen', crossbowM);
-  addFoot('swordsmen', swordsmanM);
-  // Halberdiers (Lancknechci): full plate + long polearm + large heraldic shield!
-  addFoot('halberdiers', halberdierM, true);
+  const engines = new Map<'cannon' | 'mortar', EnginePool>();
+  const folkPools: FolkPool[] = [];
+  let handcartMesh: InstancedMesh | null = null;
+  let wagonMesh: InstancedMesh | null = null;
+  let pigMesh: InstancedMesh | null = null;
+  let draftHorsePool: SkinnedUnitPool | null = null;
 
+  // On `minimal` (3 GB tablets like iPad 7 / Tab S2), load 2 diverse villagers (male + female)
+  // instead of 7 x 2 MB JSON models to save ~10 MB download + ~80 MB peak RAM + 5 Float32 bone textures.
+  const folkFiles =
+    quality === 'minimal'
+      ? ['townsman.json', 'townswoman.json']
+      : [
+          'townsman.json',
+          'townsman-wool.json',
+          'townsman-beard.json',
+          'townsman-linen.json',
+          'townswoman.json',
+          'townswoman-dress.json',
+          'townswoman-worker.json',
+        ];
+
+  const totalSteps = 6 + 2 + 5 + folkFiles.length;
+  let doneSteps = 0;
+  const stepDone = () => {
+    doneSteps++;
+    onProgress?.(doneSteps, totalSteps);
+  };
+
+  // Load each rigged JSON one batch at a time (concurrency 2) and immediately convert it into compact
+  // GPU buffers/DataTexture so the multi-MB JS JSON object can be garbage-collected right away!
+  const runLimited = async <T,>(items: readonly T[], limit: number, fn: (item: T, idx: number) => Promise<void>): Promise<void> => {
+    let cursor = 0;
+    const worker = async (): Promise<void> => {
+      while (cursor < items.length) {
+        const i = cursor++;
+        await fn(items[i]!, i);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => worker()));
+  };
+
+  const footSpecs: readonly [UnitTypeId, string, boolean][] = [
+    ['militia', 'militia.json', false],
+    ['pikemen', 'pikeman.json', false],
+    ['archers', 'archer.json', false],
+    ['crossbowmen', 'crossbowman.json', false],
+    ['swordsmen', 'swordsman.json', false],
+    // Halberdiers (Lancknechci): full plate + long polearm + large heraldic shield!
+    ['halberdiers', 'halberdier.json', true],
+  ];
+
+  await runLimited(footSpecs, 2, async ([kind, file, largeShield]) => {
+    const m = await fetchJson<RiggedModel>(`${base}/soldiers/${file}`);
+    if (m) {
+      const pool = buildRiggedFootPool(scene, `ML_Unit_${kind}`, m, largeShield);
+      if (pool) unitPools.set(kind, pool);
+    }
+    stepDone();
+  });
+
+  // Mounted units + draft horse share warhorse.json & rider.json
+  const [riderM, warhorseM] = await Promise.all([
+    fetchJson<BodyModel>(`${base}/soldiers/rider.json`).finally(stepDone),
+    fetchJson<RiggedModel>(`${base}/soldiers/warhorse.json`).finally(stepDone),
+  ]);
   if (riderM && warhorseM) {
     const lc = buildMountedPool(scene, 'ML_Unit_lightCav', false, warhorseM, riderM);
     if (lc) unitPools.set('lightCav', lc);
     const hc = buildMountedPool(scene, 'ML_Unit_heavyCav', true, warhorseM, riderM);
     if (hc) unitPools.set('heavyCav', hc);
   }
+  if (warhorseM) {
+    draftHorsePool = buildDraftHorsePool(scene, warhorseM);
+  }
 
-  const engines = new Map<'cannon' | 'mortar', EnginePool>();
+  // Small prop JSONs (cannons, mortars, handcarts, wagons, livestock pigs)
+  const [cannonM, mortarM, handcartM, wagonM, pigM] = await Promise.all([
+    fetchJson<PropModel>(`${base}/props/cannon.json`).finally(stepDone),
+    fetchJson<PropModel>(`${base}/props/mortar.json`).finally(stepDone),
+    fetchJson<PropModel>(`${base}/props/handcart.json`).finally(stepDone),
+    fetchJson<PropModel>(`${base}/props/wagon.json`).finally(stepDone),
+    fetchJson<PropModel>(`${base}/props/pig.json`).finally(stepDone),
+  ]);
   if (cannonM) engines.set('cannon', buildEnginePool(scene, 'ML_Engine_cannon', cannonM));
   if (mortarM) engines.set('mortar', buildEnginePool(scene, 'ML_Engine_mortar', mortarM));
+  if (handcartM) handcartMesh = buildPropMesh(scene, 'ML_Handcarts', handcartM, 0, 0, 0, 1.2, true);
+  if (wagonM) wagonMesh = buildPropMesh(scene, 'ML_Wagons', wagonM, 1.0, 0, -0.3, 1.0, false);
+  if (pigM) pigMesh = buildPropMesh(scene, 'ML_LivestockPigs', pigM, 0, 0, 0, 1.0, false);
 
-  const folkPools: FolkPool[] = [];
-  for (const [idx, fm] of [townsman0, townsman1, townsman2, townsman3, townswoman0, townswoman1, townswoman2].entries()) {
-    if (!fm) continue;
-    const fp = buildFolkPool(scene, `ML_Folk_${idx}`, fm);
+  // Townsfolk models (2 MB each): load 2 at a time so peak JS heap stays tiny on 3 GB iPads
+  const builtFolks: (FolkPool | null)[] = new Array(folkFiles.length).fill(null);
+  await runLimited(folkFiles, 2, async (file, idx) => {
+    const fm = await fetchJson<RiggedModel>(`${base}/people/${file}`);
+    if (fm) builtFolks[idx] = buildFolkPool(scene, `ML_Folk_${idx}`, fm);
+    stepDone();
+  });
+  for (const fp of builtFolks) {
     if (fp) folkPools.push(fp);
   }
 
-  const handcartMesh = handcartM ? buildPropMesh(scene, 'ML_Handcarts', handcartM, 0, 0, 0, 1.2, true) : null;
-  const wagonMesh = wagonM ? buildPropMesh(scene, 'ML_Wagons', wagonM, 1.0, 0, -0.3, 1.0, false) : null;
-  const pigMesh = pigM ? buildPropMesh(scene, 'ML_LivestockPigs', pigM, 0, 0, 0, 1.0, false) : null;
-  const draftHorsePool = warhorseM ? buildDraftHorsePool(scene, warhorseM) : null;
+  if (!unitPools.has('swordsmen') || folkPools.length === 0) {
+    console.warn('[marchlandUnits] Missing rigged models under assets/marchland; falling back.');
+    return null;
+  }
 
   // Per-entity visual motion trackers eliminate walk/idle flicker on soldiers & artillery crews AND prevent any worker sliding!
   interface MotionTracker {

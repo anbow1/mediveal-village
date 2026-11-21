@@ -76,7 +76,7 @@ Game.boot({
   debug: params.has('debug'),
   autoBench: params.has('bench'),
   fastBench: params.has('fast'),
-  quality: parseQuality(params.get('q')),
+  quality: parseQuality(params.get('q') ?? params.get('quality')),
   lighting: parseLighting(params.get('light') ?? params.get('time')),
   toneMapping: parseToneMapping(params.get('tm')),
   lang: parseLang(params.get('lang')),
