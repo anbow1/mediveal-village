@@ -7,14 +7,21 @@
 
 import {
   BoxGeometry,
+  BufferAttribute,
   BufferGeometry,
+  CanvasTexture,
+  Color,
+  DoubleSide,
   Float32BufferAttribute,
+  IcosahedronGeometry,
   InstancedMesh,
+  LinearMipmapLinearFilter,
   Matrix4,
   Mesh,
   MeshStandardNodeMaterial,
   Object3D,
   Quaternion,
+  SRGBColorSpace,
   Vector3,
   type Material,
   type Scene,
@@ -110,17 +117,69 @@ function extractPartsFromRoot(root: Object3D, overrideMat?: Material): Extracted
   return parts;
 }
 
-/** Builds a vertex-colored 3D grapevine trellis strip (2 parallel 10 m staked vine rows with green foliage & purple grape clusters). */
-function buildVineyardStripGeometry(): BufferGeometry {
+/** Deterministic lightweight RNG for organic vineyard leaf card placement. */
+function makeVineRng(seed: number): () => number {
+  let s = seed >>> 0 || 1;
+  return () => {
+    s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
+    return s / 4294967296;
+  };
+}
+
+/** Paints a 256×256 alpha-cutout vine leaf spray card (ported from FPS/marchland foliage.ts). */
+function createVineLeafTexture(): CanvasTexture {
+  const size = 256;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  if (ctx) {
+    const rand = makeVineRng(41);
+    const count = 280;
+    for (let i = 0; i < count; i++) {
+      const a = rand() * Math.PI * 2;
+      const r = Math.sqrt(rand()) * size * 0.45;
+      const x = size * 0.5 + Math.cos(a) * r;
+      const y = size * 0.5 + Math.sin(a) * r;
+      const depth = i / count;
+      const light = 0.48 + depth * 0.48 + (rand() - 0.5) * 0.14;
+      const hue = (rand() - 0.5) * 0.08;
+      const cr = Math.round(255 * Math.min(1, light * (1 + hue)));
+      const cg = Math.round(255 * Math.min(1, light));
+      const cb = Math.round(255 * Math.min(1, light * (1 - hue)));
+      ctx.fillStyle = `rgb(${cr},${cg},${cb})`;
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(rand() * Math.PI * 2);
+      // Palmate grapevine leaf silhouette (3 overlapping soft lobes)
+      const rx = 6.5 + rand() * 5.5;
+      const ry = 4.2 + rand() * 3.2;
+      ctx.beginPath();
+      ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2);
+      ctx.ellipse(rx * 0.35, -ry * 0.4, rx * 0.55, ry * 0.55, 0.5, 0, Math.PI * 2);
+      ctx.ellipse(-rx * 0.35, -ry * 0.4, rx * 0.55, ry * 0.55, -0.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+  const tex = new CanvasTexture(canvas);
+  tex.colorSpace = SRGBColorSpace;
+  tex.minFilter = LinearMipmapLinearFilter;
+  tex.anisotropy = 4;
+  return tex;
+}
+
+/** Layer 1: Oak trellis posts, training wires, and gnarled woody vine trunks for 2 parallel 9.6 m vineyard rows. */
+function buildVineTrellisPostsGeometry(): BufferGeometry {
   const geos: BufferGeometry[] = [];
-  const pushColoredBox = (w: number, h: number, d: number, x: number, y: number, z: number, r: number, g: number, b: number) => {
+  const pushBox = (w: number, h: number, d: number, x: number, y: number, z: number, r: number, g: number, b: number) => {
     const raw = new BoxGeometry(w, h, d);
     raw.translate(x, y, z);
     const box = raw.index ? raw.toNonIndexed() : raw;
     const cnt = box.getAttribute('position').count;
     const cols = new Float32Array(cnt * 3);
     for (let i = 0; i < cnt; i++) {
-      cols[i * 3 + 0] = r;
+      cols[i * 3] = r;
       cols[i * 3 + 1] = g;
       cols[i * 3 + 2] = b;
     }
@@ -128,23 +187,105 @@ function buildVineyardStripGeometry(): BufferGeometry {
     geos.push(box);
   };
 
-  for (const rz of [-0.68, 0.68]) {
-    // 5 oak trellis posts along the 10.2 m strip row
-    for (const px of [-4.4, -2.2, 0.0, 2.2, 4.4]) {
-      pushColoredBox(0.14, 1.48, 0.14, px, 0.72, rz, 0.42, 0.30, 0.19);
+  for (const rz of [-0.75, 0.75]) {
+    // 5 slim oak trellis stakes along the 9.6 m row
+    for (const px of [-4.6, -2.3, 0.0, 2.3, 4.6]) {
+      pushBox(0.09, 1.42, 0.09, px, 0.71, rz, 0.37, 0.28, 0.21);
     }
-    // Horizontal timber trellis rail
-    pushColoredBox(9.2, 0.09, 0.09, 0.0, 1.18, rz, 0.46, 0.34, 0.22);
-    // Lush green grapevine leaf hedge along the trellis wire
-    for (const vx of [-3.3, -1.1, 1.1, 3.3]) {
-      pushColoredBox(2.05, 0.72, 0.44, vx, 1.05, rz, 0.22, 0.52, 0.16);
-      pushColoredBox(1.65, 0.45, 0.54, vx, 1.24, rz, 0.28, 0.62, 0.20);
-      // Hanging purple grape clusters beneath the vine canopy
-      pushColoredBox(0.24, 0.30, 0.24, vx - 0.45, 0.68, rz, 0.36, 0.12, 0.44);
-      pushColoredBox(0.24, 0.30, 0.24, vx + 0.45, 0.66, rz, 0.36, 0.12, 0.44);
+    // Two horizontal training wires
+    pushBox(9.3, 0.025, 0.025, 0.0, 1.15, rz, 0.32, 0.27, 0.22);
+    pushBox(9.3, 0.022, 0.022, 0.0, 0.72, rz, 0.32, 0.27, 0.22);
+    // Woody vine trunks rising between stakes
+    for (const vx of [-3.45, -1.15, 1.15, 3.45]) {
+      pushBox(0.11, 0.56, 0.11, vx, 0.28, rz, 0.33, 0.23, 0.16);
+      pushBox(0.07, 0.32, 0.07, vx - 0.14, 0.62, rz + 0.03, 0.35, 0.25, 0.17);
+      pushBox(0.07, 0.32, 0.07, vx + 0.14, 0.62, rz - 0.03, 0.35, 0.25, 0.17);
     }
   }
   const merged = mergeGeometries(geos, false) ?? new BoxGeometry(1, 1, 1);
+  for (const g of geos) g.dispose();
+  return merged;
+}
+
+/** Layer 2: Organic tilted vine leaf cards trained along the 2 trellis wires (ported from FPS/marchland vineRowGeometry). */
+function buildVineLeafRowGeometry(): BufferGeometry {
+  const rand = makeVineRng(137);
+  const pos: number[] = [];
+  const nor: number[] = [];
+  const uv: number[] = [];
+  const col: number[] = [];
+  const index: number[] = [];
+  const lengthM = 9.2;
+  const steps = 18;
+  for (const rz of [-0.75, 0.75]) {
+    for (let i = 0; i < steps; i++) {
+      const x = -lengthM * 0.5 + (i + 0.5) * (lengthM / steps) + (rand() - 0.5) * 0.18;
+      for (const side of [-1, 1, 0]) {
+        const y = side === 0 ? 1.12 + (rand() - 0.5) * 0.08 : 0.62 + rand() * 0.38;
+        const s = side === 0 ? 0.78 : 0.92;
+        const nx = (rand() - 0.5) * 0.55;
+        const ny = side === 0 ? 1 : 0.52;
+        const nz = side === 0 ? 0 : side;
+        const nl = Math.hypot(nx, ny, nz) || 1;
+        const base = pos.length / 3;
+        const ax: readonly [number, number, number] = [1, 0, 0];
+        const bx: readonly [number, number, number] = side === 0 ? [0, 0, 1] : [0, 1, -side * 0.45];
+        const cz = rz + side * 0.19;
+        for (const [a, b] of [
+          [-1, -1],
+          [1, -1],
+          [1, 1],
+          [-1, 1],
+        ] as const) {
+          pos.push(
+            x + (ax[0] * a + bx[0] * b) * s * 0.5,
+            y + (ax[1] * a + bx[1] * b) * s * 0.5,
+            cz + (ax[2] * a + bx[2] * b) * s * 0.5,
+          );
+          nor.push(nx / nl, ny / nl, nz / nl);
+          uv.push((a + 1) * 0.5, (b + 1) * 0.5);
+          const shade = 0.52 + 0.45 * Math.min(1, y / 1.15);
+          col.push(shade, shade, shade);
+        }
+        index.push(base, base + 1, base + 2, base, base + 2, base + 3);
+      }
+    }
+  }
+  const g = new BufferGeometry();
+  g.setAttribute('position', new BufferAttribute(new Float32Array(pos), 3));
+  g.setAttribute('normal', new BufferAttribute(new Float32Array(nor), 3));
+  g.setAttribute('uv', new BufferAttribute(new Float32Array(uv), 2));
+  g.setAttribute('color', new BufferAttribute(new Float32Array(col), 3));
+  g.setIndex(index);
+  g.computeBoundingSphere();
+  return g;
+}
+
+/** Layer 3: Sculpted hanging grape bunches under the foliage canopy (tinted per-instance from young green to deep purple). */
+function buildVineGrapeClustersGeometry(): BufferGeometry {
+  const geos: BufferGeometry[] = [];
+  for (const rz of [-0.75, 0.75]) {
+    for (let i = 0; i < 12; i++) {
+      const gx = -4.2 + i * 0.76;
+      const side = i % 2 === 0 ? 1 : -1;
+      const gz = rz + side * 0.22;
+      // 3 tapered berry-cluster lobules forming a recognizable hanging conical grape bunch!
+      const parts: readonly (readonly [number, number, number, number])[] = [
+        [0, 0.66, 0, 0.085],
+        [-0.045, 0.61, 0.025, 0.072],
+        [0.045, 0.60, -0.02, 0.07],
+        [0, 0.52, 0.01, 0.06],
+      ];
+      for (const [ox, oy, oz, rad] of parts) {
+        const sph = new IcosahedronGeometry(rad, 0);
+        sph.scale(0.95, 1.25, 0.95);
+        sph.translate(gx + ox, oy, gz + oz);
+        const nonIdx = sph.index ? sph.toNonIndexed() : sph;
+        geos.push(nonIdx);
+      }
+    }
+  }
+  const merged = mergeGeometries(geos, false) ?? new BoxGeometry(0.1, 0.1, 0.1);
   for (const g of geos) g.dispose();
   return merged;
 }
@@ -395,26 +536,61 @@ export function buildSimWorldRenderer(opts: {
   scene.add(dynScafMesh);
   allMeshes.push(dynScafMesh);
 
-  // 4. Pre-warmed 3D Vineyard Grapevine Trellis Rows (staked oak trellises + green vines + purple grape bunches!)
-  const vineGeo = buildVineyardStripGeometry();
-  disposableGeos.push(vineGeo);
-  const vineMat = new MeshStandardNodeMaterial({
+  // 4. Pre-warmed 3-Layer Realistic Vineyards (ported from FPS/marchland vinesView.ts: oak trellises, alpha leaf cards & ripening grape bunches!)
+  const vinePostGeo = buildVineTrellisPostsGeometry();
+  const vineLeafGeo = buildVineLeafRowGeometry();
+  const vineGrapeGeo = buildVineGrapeClustersGeometry();
+  disposableGeos.push(vinePostGeo, vineLeafGeo, vineGrapeGeo);
+
+  const vinePostMat = new MeshStandardNodeMaterial({
+    vertexColors: true,
+    roughness: 0.9,
+    metalness: 0.0,
+  });
+  vinePostMat.name = 'MarchlandVinePostsMat';
+
+  const vineLeafTex = createVineLeafTexture();
+  const vineLeafMat = new MeshStandardNodeMaterial({
+    name: 'MarchlandVineLeavesMat',
+    map: vineLeafTex,
+    alphaTest: 0.42,
+    side: DoubleSide,
     vertexColors: true,
     roughness: 0.85,
     metalness: 0.0,
   });
-  vineMat.name = 'MarchlandVineyardTrellisMat';
-  const dynVineMesh = new InstancedMesh(vineGeo, vineMat, 128);
-  dynVineMesh.name = 'DynVineyardRows';
-  dynVineMesh.castShadow = false;
-  dynVineMesh.receiveShadow = true;
-  dynVineMesh.frustumCulled = false;
-  markStaticInstances(dynVineMesh);
-  dynVineMesh.setMatrixAt(0, ZERO_MAT);
-  dynVineMesh.count = 1;
-  dynVineMesh.instanceMatrix.needsUpdate = true;
-  scene.add(dynVineMesh);
-  allMeshes.push(dynVineMesh);
+
+  const vineGrapeMat = new MeshStandardNodeMaterial({
+    name: 'MarchlandVineGrapesMat',
+    color: 0xffffff,
+    roughness: 0.42,
+    metalness: 0.04,
+  });
+
+  const VINE_CAP = 128;
+  const dynVinePostMesh = new InstancedMesh(vinePostGeo, vinePostMat, VINE_CAP);
+  dynVinePostMesh.name = 'DynVineyardPosts';
+  const dynVineLeafMesh = new InstancedMesh(vineLeafGeo, vineLeafMat, VINE_CAP);
+  dynVineLeafMesh.name = 'DynVineyardLeaves';
+  const dynVineGrapeMesh = new InstancedMesh(vineGrapeGeo, vineGrapeMat, VINE_CAP);
+  dynVineGrapeMesh.name = 'DynVineyardGrapes';
+
+  const vineTint = new Color();
+  const leafGreen = new Color(0x4b7d26);
+  const leafAutumn = new Color(0xa59234);
+  for (const vm of [dynVinePostMesh, dynVineLeafMesh, dynVineGrapeMesh]) {
+    vm.castShadow = false;
+    vm.receiveShadow = true;
+    vm.frustumCulled = false;
+    markStaticInstances(vm);
+    vm.setMatrixAt(0, ZERO_MAT);
+    vm.setColorAt(0, vineTint.setRGB(1, 1, 1));
+    vm.count = 1;
+    vm.instanceMatrix.needsUpdate = true;
+    if (vm.instanceColor) vm.instanceColor.needsUpdate = true;
+    scene.add(vm);
+    allMeshes.push(vm);
+  }
 
   const treeHookBySpecies = new Map<string, TreeBatchHook>();
   for (const th of treeHooks) treeHookBySpecies.set(th.species, th);
@@ -544,7 +720,9 @@ export function buildSimWorldRenderer(opts: {
     const marchlandCounts = new Map<MarchlandBuildingLevelKey, number>();
     for (const k of marchlandLevelPools.keys()) marchlandCounts.set(k, 0);
     let scafCount = 0;
-    let vineCount = 0;
+    let vinePostCount = 0;
+    let vineLeafCount = 0;
+    let vineGrapeCount = 0;
     let plinthCount = 0;
     let siteSlotIdx = 0;
 
@@ -578,23 +756,43 @@ export function buildSimWorldRenderer(opts: {
         }
       }
 
-      // Render 3D staked grapevine trellises behind every completed Vineyard!
+      // Render 3-layer realistic staked grapevine trellises, ripening leaf canopy cards & hanging grape bunches!
       if (b.type === 'vineyard' && b.buildProgress >= 1) {
-        for (let si = 0; si < b.strips.length && vineCount < 128; si++) {
+        for (let si = 0; si < b.strips.length && vinePostCount < VINE_CAP; si++) {
           const st = b.strips[si]!;
           const tr = computeBuildingStripTransform(b, si);
           const vy = terrain.heightAt(tr.cx, tr.cz);
-          const growH =
-            st.phase === 'ready'
-              ? 1.05
-              : st.phase === 'growing'
-                ? 0.42 + 0.63 * st.growth01
-                : 0.35;
+          const ripe = st.phase === 'ready';
+          const growth = ripe ? 1 : st.phase === 'growing' ? st.growth01 : st.phase === 'sowing' ? 0.15 : 0.05;
+          const canopyH = 0.52 + 0.50 * Math.min(1, growth * 1.45);
+          const bunch = ripe ? 1 : Math.max(0, (growth - 0.3) / 0.7);
+
           TEMP_POS.set(tr.cx, vy, tr.cz);
           TEMP_QUAT.setFromAxisAngle(UP, b.yawRad);
-          TEMP_SCALE.set(1.0, growH, 1.0);
+          TEMP_SCALE.set(1.0, 1.0, 1.0);
           TEMP_MAT.compose(TEMP_POS, TEMP_QUAT, TEMP_SCALE);
-          dynVineMesh.setMatrixAt(vineCount++, TEMP_MAT);
+          dynVinePostMesh.setMatrixAt(vinePostCount, TEMP_MAT);
+          dynVinePostMesh.setColorAt(vinePostCount, vineTint.setRGB(1, 1, 1));
+          vinePostCount++;
+
+          TEMP_SCALE.set(1.0, canopyH, 1.0);
+          TEMP_MAT.compose(TEMP_POS, TEMP_QUAT, TEMP_SCALE);
+          dynVineLeafMesh.setMatrixAt(vineLeafCount, TEMP_MAT);
+          dynVineLeafMesh.setColorAt(vineLeafCount, vineTint.copy(leafGreen).lerp(leafAutumn, bunch * 0.28));
+          vineLeafCount++;
+
+          if (bunch > 0.05 && vineGrapeCount < VINE_CAP) {
+            const gScale = 0.45 + 0.65 * bunch;
+            TEMP_SCALE.set(1.0, gScale * canopyH, gScale);
+            TEMP_MAT.compose(TEMP_POS, TEMP_QUAT, TEMP_SCALE);
+            dynVineGrapeMesh.setMatrixAt(vineGrapeCount, TEMP_MAT);
+            // Green young berries darken cleanly into deep vintage purple!
+            dynVineGrapeMesh.setColorAt(
+              vineGrapeCount,
+              vineTint.setRGB(0.35 - 0.18 * bunch, 0.45 - 0.37 * bunch, 0.12 + 0.19 * bunch),
+            );
+            vineGrapeCount++;
+          }
         }
       }
 
@@ -734,7 +932,12 @@ export function buildSimWorldRenderer(opts: {
     }
     commitPool([dynPlinthMesh], plinthCount);
     commitPool([dynScafMesh], scafCount);
-    commitPool([dynVineMesh], vineCount);
+    commitPool([dynVinePostMesh], vinePostCount);
+    commitPool([dynVineLeafMesh], vineLeafCount);
+    commitPool([dynVineGrapeMesh], vineGrapeCount);
+    if (dynVinePostMesh.instanceColor) dynVinePostMesh.instanceColor.needsUpdate = true;
+    if (dynVineLeafMesh.instanceColor) dynVineLeafMesh.instanceColor.needsUpdate = true;
+    if (dynVineGrapeMesh.instanceColor) dynVineGrapeMesh.instanceColor.needsUpdate = true;
 
     // Sync swaying 3D golden wheat stalks on all player/AI Farm strips!
     if (syncDynamicFarms) {
@@ -799,7 +1002,10 @@ export function buildSimWorldRenderer(opts: {
       for (const sm of siteSlots) scene.remove(sm);
       for (const g of disposableGeos) g.dispose();
       scafMat.dispose();
-      vineMat.dispose();
+      vinePostMat.dispose();
+      vineLeafMat.dispose();
+      vineGrapeMat.dispose();
+      vineLeafTex.dispose();
     },
   };
 }

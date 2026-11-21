@@ -191,6 +191,9 @@ export class Game {
       },
       onPlacementHover: (reason, sx, sy) => this.ui.setPlacementHover(reason, sx, sy),
     });
+    // FPS/marchland controls: when troops are selected, right-drag rotates target formation instead of orbiting camera!
+    this.camCtrl.canRightDragRotate = () =>
+      this.inputCtrl.selectedRegimentIds.size === 0 && this.inputCtrl.placementTool === null;
 
     this.governor = new FrameGovernor(GOVERNOR_STEPS[opts.quality], (step) => {
       this.stage.applyGovernorStep(step);
@@ -644,8 +647,21 @@ export class Game {
       this.stage.resize(this.opts.container.clientWidth || window.innerWidth, this.opts.container.clientHeight || window.innerHeight);
       this.lighting.onCameraResize();
     });
-    window.addEventListener('blur', () => this.bindings.clearHeld());
+    let ctrlSoloDown = false;
+    window.addEventListener('blur', () => {
+      ctrlSoloDown = false;
+      this.bindings.clearHeld();
+    });
+    window.addEventListener('mousedown', () => {
+      ctrlSoloDown = false;
+    });
     window.addEventListener('keydown', (e) => {
+      if (e.key === 'Control') {
+        if (!e.repeat && !e.shiftKey && !e.altKey && !e.metaKey) ctrlSoloDown = true;
+      } else if (ctrlSoloDown) {
+        ctrlSoloDown = false;
+      }
+
       const action = this.bindings.onKeyDown(e);
       if (!action) return;
 
@@ -728,6 +744,18 @@ export class Game {
       }
     });
     window.addEventListener('keyup', (e) => {
+      if (
+        e.key === 'Control' &&
+        ctrlSoloDown &&
+        this.playing &&
+        !this.ui.isPauseMenuOpen() &&
+        this.inputCtrl.selectedRegimentIds.size > 0
+      ) {
+        const isPose = this.inputCtrl.placementTool?.kind === 'regimentPose';
+        this.inputCtrl.setPlacementTool(isPose ? null : { kind: 'regimentPose' });
+        this.sound.playUi('uiClick');
+      }
+      if (e.key === 'Control') ctrlSoloDown = false;
       this.bindings.onKeyUp(e);
     });
   }

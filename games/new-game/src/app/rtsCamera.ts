@@ -53,6 +53,9 @@ export class RtsCameraController {
   private prevPinchMidX = 0;
   private prevPinchMidY = 0;
 
+  /** When false, right-drag is reserved for tactical regiment facing/placement (FPS/marchland controls). */
+  canRightDragRotate: () => boolean = () => true;
+
   private readonly cleanupFns: (() => void)[] = [];
 
   constructor(
@@ -77,7 +80,7 @@ export class RtsCameraController {
         this.lastPointerX = e.clientX;
         this.lastPointerY = e.clientY;
         e.preventDefault();
-      } else if (e.button === 2 && !e.ctrlKey) {
+      } else if (e.button === 2 && !e.ctrlKey && this.canRightDragRotate()) {
         this.dragMode = 'rotate';
         this.freePose = null;
         this.lastPointerX = e.clientX;

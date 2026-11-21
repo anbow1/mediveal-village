@@ -12,6 +12,7 @@ import {
   BufferGeometry,
   Color,
   DataTexture,
+  DoubleSide,
   DynamicDrawUsage,
   Float32BufferAttribute,
   FloatType,
@@ -213,8 +214,31 @@ function createBoneTexture(model: RiggedModel): DataTexture {
   return tex;
 }
 
+function sanitizeNormals(normals: number[]): number[] {
+  const out = normals.slice();
+  for (let i = 0; i + 2 < out.length; i += 3) {
+    const nx = out[i]!;
+    const ny = out[i + 1]!;
+    const nz = out[i + 2]!;
+    const len = Math.hypot(nx, ny, nz);
+    if (!Number.isFinite(len) || len < 1e-4) {
+      out[i] = 0;
+      out[i + 1] = 1;
+      out[i + 2] = 0;
+    } else if (Math.abs(len - 1) > 1e-3) {
+      out[i] = nx / len;
+      out[i + 1] = ny / len;
+      out[i + 2] = nz / len;
+    }
+  }
+  return out;
+}
+
 function createSkinnedMaterial(bones: DataTexture, mounted = false): MeshStandardNodeMaterial {
-  const m = new MeshStandardNodeMaterial({ name: mounted ? 'MarchlandSkinnedHorseman' : 'MarchlandSkinnedFootman' });
+  const m = new MeshStandardNodeMaterial({
+    name: mounted ? 'MarchlandSkinnedHorseman' : 'MarchlandSkinnedFootman',
+    side: DoubleSide,
+  });
   const skin = attribute('aSkin', 'vec4');
   const weight = attribute('aWeight', 'vec4');
   const part = attribute('aPart', 'vec4');
@@ -256,7 +280,8 @@ function createSkinnedMaterial(bones: DataTexture, mounted = false): MeshStandar
     const rz = p.z.sub(part.y);
     const bob = abs(sin(anim.x)).mul(anim.y).mul(0.05);
     const swung = vec3(p.x, part.x.add(ry.mul(c)).add(rz.mul(s)).add(bob), part.y.sub(ry.mul(s)).add(rz.mul(c)));
-    normalLocal.assign(pose(skinned(vec3(attribute('normal', 'vec3')), 0).normalize()));
+    const sn = skinned(vec3(attribute('normal', 'vec3')), 0).add(vec3(0, 1e-5, 0)).normalize();
+    normalLocal.assign(pose(sn));
     return pose(swung).add(place.xyz);
   })();
   m.colorNode = mix(
@@ -270,7 +295,7 @@ function createSkinnedMaterial(bones: DataTexture, mounted = false): MeshStandar
 }
 
 function createStaticUnitMaterial(): MeshStandardNodeMaterial {
-  const m = new MeshStandardNodeMaterial({ name: 'MarchlandEngineMat' });
+  const m = new MeshStandardNodeMaterial({ name: 'MarchlandEngineMat', side: DoubleSide });
   const surface = attribute('aSurface', 'vec3');
   const place = attribute('aPlace', 'vec4');
   const side = attribute('aSide', 'float');
@@ -284,7 +309,7 @@ function createStaticUnitMaterial(): MeshStandardNodeMaterial {
   };
 
   m.positionNode = Fn(() => {
-    normalLocal.assign(turn(vec3(attribute('normal', 'vec3'))));
+    normalLocal.assign(turn(vec3(attribute('normal', 'vec3')).add(vec3(0, 1e-5, 0)).normalize()));
     return turn(vec3(attribute('position', 'vec3'))).add(place.xyz);
   })();
   m.colorNode = mix(
@@ -777,7 +802,7 @@ function buildRiggedFootPool(
   const part = new Float32Array(total * 4);
 
   pos.set(model.positions, 0);
-  nor.set(model.normals, 0);
+  nor.set(sanitizeNormals(model.normals), 0);
   col.set(model.colours, 0);
   surf.set(model.surface, 0);
   skin.set(model.skin, 0);
@@ -946,7 +971,7 @@ function buildFolkPool(scene: Scene, name: string, model: RiggedModel): FolkPool
   const g = new BufferGeometry();
   interleave(g, [
     ['position', 3, model.positions],
-    ['normal', 3, model.normals],
+    ['normal', 3, sanitizeNormals(model.normals)],
     ['color', 3, model.colours],
     ['aSurface', 3, model.surface],
   ]);
@@ -988,6 +1013,7 @@ function buildPropMesh(scene: Scene, name: string, model: PropModel, dx: number,
   const pos = new Float32Array(n * 3);
   const nor = new Float32Array(n * 3);
   const col = new Float32Array(n * 3);
+  const cleanNormals = sanitizeNormals(model.normals);
 
   // Tip handcart so handles rise into carrier's hands (from FPS/marchland peopleView.ts)
   const cosA = tipBarrow ? Math.cos(-0.42) : 1;
@@ -998,8 +1024,8 @@ function buildPropMesh(scene: Scene, name: string, model: PropModel, dx: number,
     const px = model.positions[v * 3]! * scale;
     let py = model.positions[v * 3 + 1]! * scale;
     let pz = model.positions[v * 3 + 2]! * scale;
-    let ny = model.normals[v * 3 + 1]!;
-    let nz = model.normals[v * 3 + 2]!;
+    let ny = cleanNormals[v * 3 + 1]!;
+    let nz = cleanNormals[v * 3 + 2]!;
     if (tipBarrow) {
       const ry = py - 0.18 * scale;
       const rz = pz - 0.59 * scale;
@@ -1013,7 +1039,7 @@ function buildPropMesh(scene: Scene, name: string, model: PropModel, dx: number,
     pos[k * 3] = px + dx;
     pos[k * 3 + 1] = py + dy;
     pos[k * 3 + 2] = pz + dz;
-    nor[k * 3] = model.normals[v * 3]!;
+    nor[k * 3] = cleanNormals[v * 3]!;
     nor[k * 3 + 1] = ny;
     nor[k * 3 + 2] = nz;
     col[k * 3] = model.colours[v * 3]!;
@@ -1027,7 +1053,7 @@ function buildPropMesh(scene: Scene, name: string, model: PropModel, dx: number,
   g.setAttribute('color', new Float32BufferAttribute(col, 3));
   g.computeBoundingSphere();
 
-  const mat = new MeshStandardNodeMaterial({ vertexColors: true, roughness: 0.85, metalness: 0.05 });
+  const mat = new MeshStandardNodeMaterial({ vertexColors: true, roughness: 0.85, metalness: 0.05, side: DoubleSide });
   mat.name = `${name}_Mat`;
   const mesh = new InstancedMesh(g, mat, CART_CAP);
   mesh.name = name;
@@ -1140,7 +1166,11 @@ export async function buildMarchlandUnits(scene: Scene): Promise<MarchlandUnitsH
     pigM,
     townsman0,
     townsman1,
+    townsman2,
+    townsman3,
     townswoman0,
+    townswoman1,
+    townswoman2,
   ] = await Promise.all([
     fetchJson<RiggedModel>(`${base}/soldiers/militia.json`),
     fetchJson<RiggedModel>(`${base}/soldiers/pikeman.json`),
@@ -1157,7 +1187,11 @@ export async function buildMarchlandUnits(scene: Scene): Promise<MarchlandUnitsH
     fetchJson<PropModel>(`${base}/props/pig.json`),
     fetchJson<RiggedModel>(`${base}/people/townsman.json`),
     fetchJson<RiggedModel>(`${base}/people/townsman-wool.json`),
+    fetchJson<RiggedModel>(`${base}/people/townsman-beard.json`),
+    fetchJson<RiggedModel>(`${base}/people/townsman-linen.json`),
     fetchJson<RiggedModel>(`${base}/people/townswoman.json`),
+    fetchJson<RiggedModel>(`${base}/people/townswoman-dress.json`),
+    fetchJson<RiggedModel>(`${base}/people/townswoman-worker.json`),
   ]);
 
   if (!swordsmanM || !warhorseM || !townsman0) {
@@ -1191,7 +1225,7 @@ export async function buildMarchlandUnits(scene: Scene): Promise<MarchlandUnitsH
   if (mortarM) engines.set('mortar', buildEnginePool(scene, 'ML_Engine_mortar', mortarM));
 
   const folkPools: FolkPool[] = [];
-  for (const [idx, fm] of [townsman0, townsman1, townswoman0].entries()) {
+  for (const [idx, fm] of [townsman0, townsman1, townsman2, townsman3, townswoman0, townswoman1, townswoman2].entries()) {
     if (!fm) continue;
     const fp = buildFolkPool(scene, `ML_Folk_${idx}`, fm);
     if (fp) folkPools.push(fp);
@@ -1202,6 +1236,60 @@ export async function buildMarchlandUnits(scene: Scene): Promise<MarchlandUnitsH
   const pigMesh = pigM ? buildPropMesh(scene, 'ML_LivestockPigs', pigM, 0, 0, 0, 1.0, false) : null;
   const draftHorsePool = warhorseM ? buildDraftHorsePool(scene, warhorseM) : null;
 
+  // Per-entity visual motion trackers eliminate walk/idle flicker on soldiers & artillery crews AND prevent any worker sliding!
+  interface MotionTracker {
+    prevX: number;
+    prevZ: number;
+    smoothSpeed: number;
+    strideM: number;
+    moving: boolean;
+    lastClockS: number;
+  }
+  const soldierMotion = new Map<number, MotionTracker>();
+  const citizenMotion = new Map<number, MotionTracker>();
+  let lastSyncClockS = -1;
+
+  const updateTracker = (
+    map: Map<number, MotionTracker>,
+    key: number,
+    x: number,
+    z: number,
+    simSpeedHint: number,
+    clockS: number,
+    enterSpeed: number,
+    exitSpeed: number,
+  ): MotionTracker => {
+    let tr = map.get(key);
+    if (!tr) {
+      tr = { prevX: x, prevZ: z, smoothSpeed: simSpeedHint, strideM: 0, moving: simSpeedHint > enterSpeed, lastClockS: clockS };
+      map.set(key, tr);
+      return tr;
+    }
+    const dt = clockS - tr.lastClockS;
+    if (dt > 1e-4) {
+      const dx = x - tr.prevX;
+      const dz = z - tr.prevZ;
+      const moved = Math.hypot(dx, dz);
+      // Ignore teleports > 8 m in a single step
+      const instSpeed = moved < 8 ? moved / dt : 0;
+      const targetSpeed = Math.max(instSpeed, simSpeedHint);
+      const alpha = Math.min(1, dt * 7.5);
+      tr.smoothSpeed += (targetSpeed - tr.smoothSpeed) * alpha;
+      if (moved < 8) {
+        tr.strideM += moved;
+      }
+      if (tr.moving) {
+        if (tr.smoothSpeed < exitSpeed) tr.moving = false;
+      } else if (tr.smoothSpeed > enterSpeed) {
+        tr.moving = true;
+      }
+      tr.prevX = x;
+      tr.prevZ = z;
+      tr.lastClockS = clockS;
+    }
+    return tr;
+  };
+
   const at = (c: Clip, t: number, fps: number): number => c.start + Math.min(c.frames - 1, Math.max(0, Math.floor(t * fps)));
   const cycle = (c: Clip, phase: number): number => c.start + (Math.floor((((phase % 1) + 1) % 1) * c.frames) % c.frames);
 
@@ -1210,14 +1298,16 @@ export async function buildMarchlandUnits(scene: Scene): Promise<MarchlandUnitsH
     reg: RegimentEntity,
     s: SoldierEntity,
     speed: number,
+    isMoving: boolean,
+    strideM: number,
     simClockS: number,
   ): number => {
     if (pool.horse) {
       const h = pool.horse;
       const loop = (c: Clip): number => cycle(c, simClockS / (c.frames / pool.fps) + s.slotIndex * 0.37);
       if (!s.alive) return pool.deaths[0] ? at(pool.deaths[0], s.deadS ?? 0, pool.fps) : h.idle.start;
-      if (speed > GALLOP_FROM_MS) return cycle(h.gallop, s.travelM / GALLOP_CYCLE_M);
-      if (speed > 0.25) return cycle(h.walk, s.travelM / Math.max(0.5, h.walk.travelM ?? 1));
+      if (speed > GALLOP_FROM_MS) return cycle(h.gallop, strideM / GALLOP_CYCLE_M);
+      if (isMoving) return cycle(h.walk, strideM / Math.max(0.5, h.walk.travelM ?? 1));
       const hurtS = simClockS - (s.hurtAtS ?? -1e9);
       const atEase = reg.outOfCombatS > AT_EASE_AFTER_S && (s.sinceAttackS ?? 99) > AT_EASE_AFTER_S && hurtS > AT_EASE_AFTER_S;
       return atEase && h.graze && s.slotIndex % 3 === 0 ? loop(h.graze) : loop(h.idle);
@@ -1248,12 +1338,12 @@ export async function buildMarchlandUnits(scene: Scene): Promise<MarchlandUnitsH
     }
 
     const def = UNIT_DEFS[reg.unitType];
-    if (speed > 0.22) {
+    if (isMoving) {
       if (pool.run && speed > (def.walkSpeedMs + def.runSpeedMs) * 0.5) {
-        return cycle(pool.run, s.travelM / RUN_CYCLE_M);
+        return cycle(pool.run, strideM / RUN_CYCLE_M);
       }
       if (pool.walk) {
-        return cycle(pool.walk, s.travelM / ((pool.walk.travelM ?? 0) > 0.5 ? pool.walk.travelM! : WALK_CYCLE_M));
+        return cycle(pool.walk, strideM / ((pool.walk.travelM ?? 0) > 0.5 ? pool.walk.travelM! : WALK_CYCLE_M));
       }
     }
 
@@ -1276,6 +1366,13 @@ export async function buildMarchlandUnits(scene: Scene): Promise<MarchlandUnitsH
   };
 
   const syncFromSim = (state: SimWorldState, heightAt: (x: number, z: number) => number, simClockS: number): void => {
+    // Reset motion trackers cleanly if a new match/snapshot loaded (clock jumped backwards)
+    if (simClockS < lastSyncClockS - 0.5) {
+      soldierMotion.clear();
+      citizenMotion.clear();
+    }
+    lastSyncClockS = simClockS;
+
     // 1. Soldiers & Cavalry
     const unitCounts = new Map<UnitTypeId, number>();
     for (const k of unitPools.keys()) unitCounts.set(k, 0);
@@ -1297,6 +1394,8 @@ export async function buildMarchlandUnits(scene: Scene): Promise<MarchlandUnitsH
           if (!s.alive) continue;
           const idx = engineCounts[reg.unitType];
           if (idx >= 48) break;
+          const trKey = reg.id * 64 + s.slotIndex;
+          updateTracker(soldierMotion, trKey, s.x, s.z, reg.currentSpeedMs, simClockS, 0.14, 0.06);
           const sinceAtk = s.sinceAttackS ?? 99;
           let back = 0;
           if (sinceAtk < RECOIL_S) {
@@ -1335,7 +1434,12 @@ export async function buildMarchlandUnits(scene: Scene): Promise<MarchlandUnitsH
           y -= Math.max(0, deadS - (BODY_SECONDS - SINK_S)) * 0.45;
         }
 
-        const speed = s.alive ? (s.speedMs ?? (s.clip === 'walk' ? def.walkSpeedMs : 0)) : 0;
+        const trKey = reg.id * 64 + s.slotIndex;
+        const simHint = s.alive ? Math.max(s.speedMs ?? 0, reg.currentSpeedMs * 0.85) : 0;
+        const tr = updateTracker(soldierMotion, trKey, s.x, s.z, simHint, simClockS, 0.18, 0.08);
+        const speed = s.alive ? tr.smoothSpeed : 0;
+        const isMoving = s.alive && tr.moving;
+        const strideM = Math.max(s.travelM, tr.strideM);
         const sinceAtk = s.sinceAttackS ?? 99;
         const strikeAmt = s.alive && sinceAtk < STRIKE_S ? Math.sin((sinceAtk / STRIKE_S) * Math.PI) : 0;
 
@@ -1345,14 +1449,78 @@ export async function buildMarchlandUnits(scene: Scene): Promise<MarchlandUnitsH
         // FPS/marchland soldier models face -Z; heading yawRad looks along (+sin, +cos)
         pArr[idx * 4 + 3] = s.yawRad + Math.PI;
 
-        aArr[idx * 4] = ((s.travelM / (pool.mounted ? 3.2 : 1.5)) % 1) * Math.PI * 2;
+        aArr[idx * 4] = ((strideM / (pool.mounted ? 3.2 : 1.5)) % 1) * Math.PI * 2;
         aArr[idx * 4 + 1] = pool.walk ? 0 : Math.min(1, speed / Math.max(0.5, def.walkSpeedMs * 0.9));
         aArr[idx * 4 + 2] = strikeAmt * STRIKE_RAD;
         aArr[idx * 4 + 3] = fall;
 
         sArr[idx] = reg.side;
-        fArr[idx] = pickSoldierFrame(pool, reg, s, speed, simClockS);
+        fArr[idx] = pickSoldierFrame(pool, reg, s, speed, isMoving, strideM, simClockS);
         unitCounts.set(reg.unitType, idx + 1);
+      }
+    }
+
+    // 1b. Render garrisoned Archers / Crossbowmen visibly standing on Watchtower battlements (FPS/marchland writeGarrisons)!
+    const enemyKeepBySide = new Map<number, { x: number; z: number }>();
+    for (const b of state.buildings) {
+      if (b.type === 'keep' && b.hp > 0) enemyKeepBySide.set(b.side === 0 ? 1 : 0, { x: b.x, z: b.z });
+    }
+    for (const b of state.buildings) {
+      if (b.type !== 'watchtower' || b.hp <= 0 || b.buildProgress < 1) continue;
+      if (b.garrisonCount <= 0 || !b.garrisonType) continue;
+      const pool = unitPools.get(b.garrisonType);
+      if (!pool) continue;
+      const uDef = UNIT_DEFS[b.garrisonType];
+      const reloadS = uDef.ranged?.reloadS ?? 6;
+      const topY = heightAt(b.x, b.z) + 9.0;
+
+      // Aim toward nearest enemy regiment in range, else toward enemy Keep
+      let lookX = enemyKeepBySide.get(b.side)?.x ?? b.x + (b.side === 0 ? 50 : -50);
+      let lookZ = enemyKeepBySide.get(b.side)?.z ?? b.z;
+      let nearestD = (uDef.ranged?.maxRangeM ?? 80) + 25;
+      for (const reg of state.regiments) {
+        if (reg.side === b.side || reg.garrisonedInBuildingId !== null) continue;
+        if (!reg.soldiers.some((s) => s.alive)) continue;
+        const d = Math.hypot(reg.x - b.x, reg.z - b.z);
+        if (d < nearestD) {
+          nearestD = d;
+          lookX = reg.x;
+          lookZ = reg.z;
+        }
+      }
+      const lookYaw = Math.atan2(lookX - b.x, lookZ - b.z);
+      const cb = Math.cos(b.yawRad);
+      const sb = Math.sin(b.yawRad);
+      const pArr = pool.place.array as Float32Array;
+      const aArr = pool.anim.array as Float32Array;
+      const sArr = pool.side.array as Float32Array;
+      const fArr = pool.frame.array as Float32Array;
+      const slots = Math.min(4, b.garrisonCount);
+
+      for (let m = 0; m < slots; m++) {
+        const idx = unitCounts.get(b.garrisonType) ?? 0;
+        if (idx >= UNIT_CAP) break;
+        const ax = (m % 2 === 0 ? -1 : 1) * 1.25;
+        const az = (m < 2 ? -1 : 1) * 1.25;
+        pArr[idx * 4] = b.x + ax * cb + az * sb;
+        pArr[idx * 4 + 1] = topY;
+        pArr[idx * 4 + 2] = b.z - ax * sb + az * cb;
+        pArr[idx * 4 + 3] = lookYaw + Math.PI;
+        aArr[idx * 4] = 0;
+        aArr[idx * 4 + 1] = 0;
+        aArr[idx * 4 + 2] = 0;
+        aArr[idx * 4 + 3] = 0;
+        sArr[idx] = b.side;
+        if (pool.draw && b.fireCooldownS > 0 && b.fireCooldownS < reloadS * 0.5) {
+          const drawS = pool.draw.frames / pool.fps;
+          const phase = Math.max(0, Math.min(drawS, drawS * (1 - b.fireCooldownS / (reloadS * 0.5))));
+          fArr[idx] = at(pool.draw, phase, pool.fps);
+        } else {
+          fArr[idx] = pool.idle
+            ? cycle(pool.idle, simClockS / (pool.idle.frames / pool.fps) + (b.id + m) * 0.37)
+            : pool.guard;
+        }
+        unitCounts.set(b.garrisonType, idx + 1);
       }
     }
 
@@ -1415,11 +1583,17 @@ export async function buildMarchlandUnits(scene: Scene): Promise<MarchlandUnitsH
       const tLvl = state.sides[c.side].transportLevel ?? 1;
       const isCarrier = c.role === 'carrier';
       const carrying = isCarrier && c.carryingGood !== null;
-      const moving = c.path.length > 0 || (isCarrier && c.carryJob !== null && c.carryJob.transferTimerS <= 0);
+      const pathHint = c.path.length > 0 ? 1.0 : 0;
+      const ctr = updateTracker(citizenMotion, c.id, c.x, c.z, pathHint, simClockS, 0.12, 0.05);
+      const moving = ctr.moving;
+      const strideM = Math.max(c.travelM, ctr.strideM);
       const bType = c.assignedBuildingId !== null ? bldById.get(c.assignedBuildingId) : undefined;
 
       let frameVal: number;
-      if (c.role === 'builder' && c.workPhase === 'working') {
+      if (moving) {
+        const wClip = carrying && tLvl === 1 ? clips.boxwalk : clips.walk;
+        frameVal = cycle(wClip, strideM / Math.max(0.6, wClip.travelM ?? WALK_CYCLE_M));
+      } else if (c.role === 'builder' && c.workPhase === 'working') {
         frameVal = cycle(clips.swing, simClockS / (clips.swing.frames / clips.swing.fps) + c.id * 0.23);
       } else if (c.role === 'worker' && c.workPhase === 'working') {
         if (bType === 'woodcutter' || bType === 'forester') {
@@ -1433,9 +1607,6 @@ export async function buildMarchlandUnits(scene: Scene): Promise<MarchlandUnitsH
         } else {
           frameVal = cycle(clips.pickup, simClockS / (clips.pickup.frames / clips.pickup.fps) + c.id * 0.13);
         }
-      } else if (moving) {
-        const wClip = carrying && tLvl === 1 ? clips.boxwalk : clips.walk;
-        frameVal = cycle(wClip, c.travelM / Math.max(0.6, wClip.travelM ?? WALK_CYCLE_M));
       } else {
         const iClip = carrying && tLvl === 1 ? clips.boxidle : clips.idle;
         frameVal = cycle(iClip, simClockS / (iClip.frames / iClip.fps) + c.id * 0.37);
@@ -1473,7 +1644,7 @@ export async function buildMarchlandUnits(scene: Scene): Promise<MarchlandUnitsH
             dS[draftHorseCount] = c.side;
             const hClips = draftHorsePool.horse!;
             dF[draftHorseCount] = moving
-              ? cycle(hClips.walk, c.travelM / Math.max(0.6, hClips.walk.travelM ?? 1.2))
+              ? cycle(hClips.walk, strideM / Math.max(0.6, hClips.walk.travelM ?? 1.2))
               : cycle(hClips.idle, simClockS / (hClips.idle.frames / draftHorsePool.fps) + c.id * 0.37);
             draftHorseCount++;
           }
@@ -1481,26 +1652,32 @@ export async function buildMarchlandUnits(scene: Scene): Promise<MarchlandUnitsH
       }
     }
 
-    // Also render animated gun crewmen beside active cannons/mortars using folkPools[0]
+    // 3. Animated gun crewmen beside active cannons/mortars (FPS/marchland writeCrews: face forward & march smoothly while moving, load after firing!)
     if (folkPools.length > 0) {
       const fp = folkPools[0]!;
       const pArr = fp.place.array as Float32Array;
       const sArr = fp.side.array as Float32Array;
       const fArr = fp.frame.array as Float32Array;
+      const { idle, walk, pickup, putdown } = fp.clips;
       for (const reg of state.regiments) {
         if (reg.unitType !== 'cannon' && reg.unitType !== 'mortar') continue;
+        const reloadS = UNIT_DEFS[reg.unitType].ranged?.reloadS ?? 10;
         const spots: readonly (readonly [number, number, number])[] =
           reg.unitType === 'cannon'
             ? [
-                [1.15, 0.5, 0.3],
-                [-1.15, 0.2, -0.3],
+                [1.15, 0.5, 0.35],
+                [-1.15, 0.2, -0.35],
               ]
             : [
                 [1.3, 0.8, 0.4],
-                [-1.3, 0.5, -0.5],
+                [-1.3, 0.5, -0.45],
               ];
         for (const s of reg.soldiers) {
           if (!s.alive) continue;
+          const tr = soldierMotion.get(reg.id * 64 + s.slotIndex);
+          const gunMoving = tr ? tr.moving : reg.currentSpeedMs > 0.14;
+          const gunStrideM = tr ? Math.max(s.travelM, tr.strideM) : s.travelM;
+          const sinceAtk = s.sinceAttackS ?? 99;
           const w = s.yawRad + Math.PI;
           const cosW = Math.cos(w);
           const sinW = Math.sin(w);
@@ -1512,13 +1689,22 @@ export async function buildMarchlandUnits(scene: Scene): Promise<MarchlandUnitsH
             pArr[idx * 4] = wx;
             pArr[idx * 4 + 1] = heightAt(wx, wz);
             pArr[idx * 4 + 2] = wz;
-            pArr[idx * 4 + 3] = w + sp[2];
+            // Face straight ahead along march direction when pushing/walking; turn inward toward the gun when stationary!
+            pArr[idx * 4 + 3] = gunMoving ? w : w + sp[2];
             sArr[idx] = reg.side;
-            const speed = s.speedMs ?? 0;
-            fArr[idx] =
-              speed > 0.2
-                ? cycle(fp.clips.walk, s.travelM / WALK_CYCLE_M)
-                : cycle(fp.clips.idle, simClockS / (fp.clips.idle.frames / fp.clips.idle.fps) + k * 0.5);
+            const offset = s.slotIndex * 1.9 + k * 0.7;
+            if (gunMoving) {
+              fArr[idx] = cycle(walk, gunStrideM / Math.max(0.5, walk.travelM ?? WALK_CYCLE_M));
+            } else if (sinceAtk < reloadS * 0.8) {
+              const pickS = pickup.frames / pickup.fps;
+              const t = (sinceAtk + offset) % (pickS + putdown.frames / putdown.fps);
+              fArr[idx] =
+                t < pickS
+                  ? pickup.start + Math.floor(t * pickup.fps)
+                  : putdown.start + Math.min(putdown.frames - 1, Math.floor((t - pickS) * putdown.fps));
+            } else {
+              fArr[idx] = cycle(idle, (simClockS + offset) / (idle.frames / idle.fps));
+            }
           }
         }
       }

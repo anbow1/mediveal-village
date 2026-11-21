@@ -450,7 +450,7 @@ export function executeCommand(
     case 'placeRoad': {
       const dist = Math.hypot(cmd.x1 - cmd.x0, cmd.z1 - cmd.z0);
       if (dist < 1.5) return { ok: false, reason: 'tooShort' };
-      const stoneCost = Math.max(1, Math.ceil((dist / 10) * ECONOMY.roadStonePer10M));
+      const stoneCost = 1;
       if (sideState.stock.stone < stoneCost) return { ok: false, reason: 'insufficientResources' };
       sideState.stock.stone -= stoneCost;
       state.roads.push({ x0: cmd.x0, z0: cmd.z0, x1: cmd.x1, z1: cmd.z1, widthM: 4.0 });

@@ -920,20 +920,39 @@ export class GameHud {
       }
       this.drawerBodyEl.appendChild(brRow);
 
+      // Count built + under-construction player buildings of each type for upper-right badges
+      const bldCounts = new Map<string, number>();
+      if (this.latestState) {
+        for (const b of this.latestState.buildings) {
+          if (b.side === 0 && b.hp > 0) {
+            bldCounts.set(b.type, (bldCounts.get(b.type) ?? 0) + 1);
+          }
+        }
+        let gateCnt = 0;
+        for (const g of this.latestState.gates) {
+          if (g.side === 0 && !g.destroyed && g.hp > 0) gateCnt++;
+        }
+        bldCounts.set('gate', gateCnt);
+      }
+
       // Quick Road / Wall / Gate strip
       const infraRow = document.createElement('div');
       infraRow.className = 'rts-infra-row';
-      const infraItems: readonly { label: string; cost: string; tool: PlacementTool }[] = [
-        { label: s.toolRoad, cost: '2s/10m', tool: { kind: 'road' } },
+      const infraItems: readonly { label: string; cost: string; tool: PlacementTool; countKey?: string }[] = [
+        { label: s.toolRoad, cost: '1s', tool: { kind: 'road' } },
         { label: s.toolWall, cost: '15s/10m', tool: { kind: 'wall' } },
-        { label: s.toolGate, cost: '20t 12s', tool: { kind: 'gate' } },
+        { label: s.toolGate, cost: '20t 12s', tool: { kind: 'gate' }, countKey: 'gate' },
       ];
       for (const it of infraItems) {
         const btn = document.createElement('button');
         const isSel = this.activeTool?.kind === it.tool?.kind;
         btn.className = `rts-item-btn rts-item-sm ${isSel ? 'active' : ''}`;
         if (it.tool) btn.setAttribute('data-tool', it.tool.kind);
-        btn.innerHTML = `<span>${it.label}</span><small>${it.cost}</small>`;
+        const cntHtml =
+          it.countKey !== undefined
+            ? `<span class="rts-bld-count ${(bldCounts.get(it.countKey) ?? 0) === 0 ? 'zero' : ''}" data-count-for="${it.countKey}">${bldCounts.get(it.countKey) ?? 0}</span>`
+            : '';
+        btn.innerHTML = `${cntHtml}<span>${it.label}</span><small>${it.cost}</small>`;
         btn.addEventListener('click', () => this.cb.onSelectTool(isSel ? null : it.tool));
         infraRow.appendChild(btn);
       }
@@ -948,12 +967,15 @@ export class GameHud {
       );
       for (const bId of blds) {
         const def = BUILDING_DEFS[bId];
+        const cnt = bldCounts.get(bId) ?? 0;
         const canAffordGold = !stock || stock.gold >= (def.cost.gold ?? 0);
         const isSel = this.activeTool?.kind === 'building' && this.activeTool.buildingType === bId;
         const btn = document.createElement('button');
         btn.className = `rts-item-btn ${isSel ? 'active' : ''} ${canAffordGold ? '' : 'dim'}`;
         btn.setAttribute('data-build', bId);
-        btn.innerHTML = `<span>${s.buildings[bId]}</span><small>${formatCostShort(def.cost)}</small>`;
+        btn.innerHTML =
+          `<span class="rts-bld-count ${cnt === 0 ? 'zero' : ''}" data-count-for="${bId}">${cnt}</span>` +
+          `<span>${s.buildings[bId]}</span><small>${formatCostShort(def.cost)}</small>`;
         btn.title = `${s.buildings[bId]} (${formatCostShort(def.cost)})`;
         btn.addEventListener('click', () => {
           this.cb.onSelectTool(isSel ? null : { kind: 'building', buildingType: bId });
@@ -1232,6 +1254,25 @@ export class GameHud {
       this.objStripEl.appendChild(w);
     }
 
+    // Keep Build menu upper-right building count badges updated live in-place without interrupting hover clicks!
+    if (this.activeTab === 'build') {
+      const liveCounts = new Map<string, number>();
+      for (const b of state.buildings) {
+        if (b.side === 0 && b.hp > 0) liveCounts.set(b.type, (liveCounts.get(b.type) ?? 0) + 1);
+      }
+      let gateCnt = 0;
+      for (const g of state.gates) {
+        if (g.side === 0 && !g.destroyed && g.hp > 0) gateCnt++;
+      }
+      liveCounts.set('gate', gateCnt);
+      this.drawerBodyEl.querySelectorAll<HTMLElement>('.rts-bld-count[data-count-for]').forEach((el) => {
+        const key = el.getAttribute('data-count-for') ?? '';
+        const cnt = liveCounts.get(key) ?? 0;
+        if (el.textContent !== String(cnt)) el.textContent = String(cnt);
+        el.classList.toggle('zero', cnt === 0);
+      });
+    }
+
     // Refresh Production / Buildings body at a calm 900 ms cadence without touching tab buttons or interrupting hover clicks!
     if (
       (this.activeTab === 'production' || this.activeTab === 'buildings') &&
@@ -1270,10 +1311,11 @@ export class GameHud {
           break;
         }
       }
+      const garrTag = r.garrisonedInBuildingId !== null ? ' 🏰' : '';
       const card = document.createElement('button');
       card.className = `rts-reg-card ${selectedRegimentIds.has(r.id) ? 'selected' : ''} ${r.routing ? 'routing' : ''}`;
       card.innerHTML =
-        `<div class="rc-top"><span>${unitAbbr(r.unitType)}</span><span>${alive}/${r.maxMen}</span></div>` +
+        `<div class="rc-top"><span>${unitAbbr(r.unitType)}${garrTag}</span><span>${alive}/${r.maxMen}</span></div>` +
         `<div class="rc-bar"><div class="rc-hp" style="width:${hpPct}%"></div></div>` +
         `<div class="rc-bar"><div class="rc-mor" style="width:${morPct}%"></div></div>` +
         (grpTag ? `<span class="rc-grp">${grpTag}</span>` : '') +
@@ -1582,6 +1624,12 @@ export class GameHud {
         b.type === 'keep'
           ? ` · 🛞 ${s.transportLabel}: ${s.transportLevels[(state.sides[0].transportLevel ?? 1) - 1]}`
           : '';
+      const garrisonStr =
+        b.type === 'watchtower' && b.buildProgress >= 1
+          ? b.garrisonCount > 0 && b.garrisonType
+            ? ` · 🏰 ${this.lang === 'pl' ? 'Obsada' : 'Garrison'}: ${b.garrisonCount}/${ECONOMY.watchtowerGarrisonCap} (${s.units[b.garrisonType]})`
+            : ` · 🏰 ${this.lang === 'pl' ? 'Obsada: 0/4 (pusta — PPM Łucznikami/Kusznikami)' : 'Garrison: 0/4 (empty — RMB with Archers/Crossbows)'}`
+          : '';
 
       const extra =
         b.type === 'house'
@@ -1592,7 +1640,7 @@ export class GameHud {
               ? ` · → ${s.levelLabel}${b.upgradingToLevel}${matProgressStr()}`
               : (b.type === 'farm' || b.type === 'vineyard') && b.strips.length > 0
                 ? ` · ${this.lang === 'pl' ? 'Pola' : 'Strips'}: ${b.strips.length}/12`
-                : `${equipOrdersStr}${transportStr}`;
+                : `${equipOrdersStr}${transportStr}${garrisonStr}`;
 
       const headHtml =
         `<strong>${s.buildings[b.type]} ${s.levelLabel}${b.level}/${def.maxLevel}</strong>` +
@@ -1638,7 +1686,9 @@ export class GameHud {
             }).join(',')
           : b.type === 'keep'
             ? `t:${state.sides[0].transportLevel ?? 1}:${state.sides[0].upgradingTransportTo ?? 0}:${Math.floor(state.sides[0].transportUpgradeTimerS ?? 0)}:${tCheck?.canUpgrade}:${tCheck?.reason}`
-            : String(b.pendingOrders ?? 0);
+            : b.type === 'watchtower'
+              ? `g:${b.garrisonCount}:${b.garrisonType ?? ''}:${b.garrisonRegimentIds.join(',')}`
+              : String(b.pendingOrders ?? 0);
       const bldSig = `b:${b.id}:${b.type}:${b.level}:${b.upgradingToLevel}:${b.paused}:${b.buildProgress < 1}:${uCheck.canUpgrade}:${uCheck.reason}:${missingSig}:${equipSig}:${this.lang}`;
 
       if (!force && bldSig === this.lastInspectorSig) {
@@ -1699,6 +1749,25 @@ export class GameHud {
               this.refreshInspector(true);
             });
             actRow.appendChild(up);
+          }
+
+          if (b.type === 'watchtower' && b.garrisonCount > 0 && b.garrisonRegimentIds.length > 0) {
+            const unBtn = document.createElement('button');
+            unBtn.className = 'insp-btn btn-primary';
+            unBtn.setAttribute('data-ungarrison', String(b.id));
+            unBtn.textContent = this.lang === 'pl' ? '⬇ Wyjdź z baszty' : '⬇ Ungarrison';
+            unBtn.addEventListener('click', () => {
+              const outX = b.x + Math.sin(b.yawRad) * 6.5;
+              const outZ = b.z + Math.cos(b.yawRad) * 6.5;
+              this.cb.onExecute({
+                type: 'issueOrder',
+                side: 0,
+                regimentIds: [...b.garrisonRegimentIds],
+                order: { kind: 'march', x: outX, z: outZ },
+              });
+              this.refreshInspector(true);
+            });
+            actRow.appendChild(unBtn);
           }
 
           if (b.type === 'keep' && tCheck && tCheck.reason !== 'maxLevel') {

@@ -1110,10 +1110,12 @@ export function stepCombat(
       );
 
       const antiCavDmgBonus = tgtDef.unitClass === 'cavalry' && def.antiCavBonus > 0 ? def.antiCavBonus * 0.55 : 0;
-      const meleeAp = tgtDef.unitClass === 'cavalry' && def.antiCavBonus > 0 ? 0.48 : reg.unitType === 'halberdiers' ? 0.25 : 0;
+      const meleeAp = tgtDef.unitClass === 'cavalry' && def.antiCavBonus > 0 ? 0.48 : 0;
+      const chargeDmgMul = reg.chargeTimerS > 0 && !cavBlockedByPikes ? 1.5 : 1.0;
+      const swingIntervalS = reg.unitType === 'swordsmen' ? 1.28 : reg.unitType === 'halberdiers' ? 1.54 : COMBAT.meleeSwingIntervalS;
 
-      // Front-rank fighting limit (~7 men fight simultaneously, longer reach pikes bring 2nd rank in!)
-      const activeFighters = Math.min(aliveMen, def.weaponReachM >= 2.2 ? 10 : 7);
+      // Front-rank fighting limit (~7 men fight simultaneously; 3 m pikes bring 2nd rank in!)
+      const activeFighters = Math.min(aliveMen, def.weaponReachM >= 2.8 ? 10 : 7);
       let fightersProcessed = 0;
       for (const s of reg.soldiers) {
         if (!s.alive) continue;
@@ -1121,13 +1123,22 @@ export function stepCombat(
         if (fightersProcessed > activeFighters) break;
         s.meleeCooldownS -= dtS;
         if (s.meleeCooldownS <= 0) {
-          s.meleeCooldownS = COMBAT.meleeSwingIntervalS * (0.88 + nextSimRand(state) * 0.24);
+          s.meleeCooldownS = swingIntervalS * (0.88 + nextSimRand(state) * 0.24);
           s.clip = 'attack';
           s.attackAnimTimerS = 0.65;
           s.sinceAttackS = 0;
           if (nextSimRand(state) < hitChance) {
             const shock = arc === 'rear' ? 2.6 : arc === 'flank' ? 1.5 : 0.25;
-            applyDamageToRegiment(state, meleeTarget, reg, def.meleeDamage + antiCavDmgBonus, meleeAp, false, arc, shock);
+            applyDamageToRegiment(
+              state,
+              meleeTarget,
+              reg,
+              (def.meleeDamage + antiCavDmgBonus) * chargeDmgMul,
+              meleeAp,
+              false,
+              arc,
+              shock,
+            );
             if (nextSimRand(state) < 0.22) {
               state.fxEvents.push({ kind: 'swordClash', x: meleeTarget.x, y: terrain.heightAt(meleeTarget.x, meleeTarget.z) + 1.2, z: meleeTarget.z, intensity: 0.7 });
             }
@@ -1316,7 +1327,7 @@ function applyChargeImpact(
       state,
       defender,
       attacker,
-      (def.meleeDamage + def.chargeAttackBonus * 0.65) * wedgeMul * downhillMul,
+      (def.meleeDamage * 1.5 + def.chargeAttackBonus * 0.75) * wedgeMul * downhillMul,
       def.unitClass === 'cavalry' ? 0.25 : 0.0,
       false,
       arc,
@@ -1436,7 +1447,11 @@ function updateSoldierSlotPositions(
   const fz = Math.cos(reg.yawRad);
   const rx = Math.cos(reg.yawRad);
   const rz = -Math.sin(reg.yawRad);
-  const maxStep = Math.max(def.runSpeedMs * 1.35, 3.8) * dtS;
+  const regMoving = reg.currentSpeedMs > 0.12;
+  const baseCatchUp = regMoving
+    ? Math.max(reg.currentSpeedMs * 1.3, def.walkSpeedMs * 1.05)
+    : def.walkSpeedMs * 1.15;
+  const maxCatchUp = Math.max(def.runSpeedMs * 1.3, def.walkSpeedMs * 1.3);
 
   for (const s of reg.soldiers) {
     if (!s.alive) {
@@ -1466,7 +1481,12 @@ function updateSoldierSlotPositions(
       s.attackAnimTimerS = Math.max(0, s.attackAnimTimerS - dtS);
     }
 
-    if (dist > 0.08) {
+    // Smooth FPS/marchland catch-up: match regiment gait cleanly instead of overshooting & snapping to 0 every other tick!
+    const desiredSpeed = dist > 1.2 ? maxCatchUp : baseCatchUp;
+    const maxStep = desiredSpeed * dtS;
+    const moveThreshold = regMoving ? 0.015 : 0.06;
+
+    if (dist > moveThreshold) {
       const move = Math.min(dist, maxStep);
       const nx = s.x + (dx / dist) * move;
       const nz = s.z + (dz / dist) * move;
@@ -1478,17 +1498,38 @@ function updateSoldierSlotPositions(
         s.z = reg.z;
       }
       s.travelM += move;
-      s.speedMs = dtS > 1e-4 ? move / dtS : 0;
-      if (isRouting || dist > 0.6) {
-        s.yawRad = Math.atan2(dx, dz);
+      const instSpeed = dtS > 1e-4 ? move / dtS : reg.currentSpeedMs;
+      const targetSpeed = regMoving ? Math.max(instSpeed, reg.currentSpeedMs * 0.9) : instSpeed;
+      const prevSpeed = s.speedMs ?? targetSpeed;
+      s.speedMs = prevSpeed + (targetSpeed - prevSpeed) * Math.min(1, dtS * 8);
+      if (isRouting || dist > 0.7) {
+        const targetYaw = Math.atan2(dx, dz);
+        let diff = targetYaw - s.yawRad;
+        while (diff > Math.PI) diff -= Math.PI * 2;
+        while (diff < -Math.PI) diff += Math.PI * 2;
+        s.yawRad += diff * Math.min(1, dtS * 8);
       } else {
-        s.yawRad = reg.yawRad;
+        let diff = reg.yawRad - s.yawRad;
+        while (diff > Math.PI) diff -= Math.PI * 2;
+        while (diff < -Math.PI) diff += Math.PI * 2;
+        s.yawRad += diff * Math.min(1, dtS * 10);
       }
       if (s.attackAnimTimerS <= 0) s.clip = 'walk';
     } else {
-      s.yawRad = reg.yawRad;
-      s.speedMs = 0;
-      if (s.attackAnimTimerS <= 0) s.clip = 'idle';
+      let diff = reg.yawRad - s.yawRad;
+      while (diff > Math.PI) diff -= Math.PI * 2;
+      while (diff < -Math.PI) diff += Math.PI * 2;
+      s.yawRad += diff * Math.min(1, dtS * 10);
+      const prevSpeed = s.speedMs ?? 0;
+      const targetSpeed = regMoving ? reg.currentSpeedMs : 0;
+      s.speedMs = prevSpeed + (targetSpeed - prevSpeed) * Math.min(1, dtS * 8);
+      if (regMoving) {
+        s.travelM += reg.currentSpeedMs * dtS;
+        if (s.attackAnimTimerS <= 0) s.clip = 'walk';
+      } else {
+        if (s.speedMs < 0.05) s.speedMs = 0;
+        if (s.attackAnimTimerS <= 0) s.clip = 'idle';
+      }
     }
   }
 }

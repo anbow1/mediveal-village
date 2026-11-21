@@ -683,8 +683,7 @@ export class RtsInputController {
       const start = this.lineDragStart ?? pt;
       const dist = Math.hypot(pt.x - start.x, pt.z - start.z);
       const isWall = this.placementTool.kind === 'wall';
-      const stonePer10 = isWall ? 15 : 1.7;
-      const stoneCost = dist >= 1.5 ? Math.max(1, Math.ceil((dist / 10) * stonePer10)) : 1;
+      const stoneCost = isWall ? (dist >= 1.5 ? Math.max(1, Math.ceil((dist / 10) * 15)) : 1) : 1;
       const hasStone = sim.state.sides[0].stock.stone >= stoneCost;
       let terrainOk = sim.terrain.waterDepthAt(pt.x, pt.z) <= 0.1 && !sim.terrain.isImpassable(pt.x, pt.z);
       if (terrainOk && dist >= 1.8) {
@@ -719,10 +718,46 @@ export class RtsInputController {
   private attachEvents(): void {
     const el = this.canvas;
 
+    const buildPoseGhost = (anchorX: number, anchorZ: number, yawRad: number): FormationGhostPreview | null => {
+      const targets = this.computePoseTargets(anchorX, anchorZ, yawRad);
+      const first = targets[0];
+      if (!first) return null;
+      const units: FormationGhostUnitPreview[] = targets.map((t) => ({
+        x: t.x,
+        z: t.z,
+        yawRad: t.yawRad,
+        width: t.width,
+        ranks: t.ranks,
+        count: countAliveSoldiers(t.regiment),
+        unitClass: UNIT_DEFS[t.regiment.unitType].unitClass,
+        formation: t.formation,
+      }));
+      return {
+        active: true,
+        x: anchorX,
+        z: anchorZ,
+        yawRad,
+        width: first.width,
+        ranks: first.ranks,
+        count: countAliveSoldiers(first.regiment),
+        unitClass: UNIT_DEFS[first.regiment.unitType].unitClass,
+        formation: first.formation,
+        units,
+      };
+    };
+
     const onMouseDown = (e: MouseEvent): void => {
       if (!this.cb.isPlaying()) return;
       if (e.button === 0) {
         const pt = this.screenToGround(e.clientX, e.clientY);
+        // Holding Ctrl + Left-click press-hold-drag activates Set Position immediately when troops are selected!
+        if (!this.placementTool && e.ctrlKey && this.selectedRegimentIds.size > 0 && pt) {
+          this.setPlacementTool({ kind: 'regimentPose' });
+          this.poseAnchor = pt;
+          this.poseJustAnchored = true;
+          this.updatePlacementPreview(e.clientX, e.clientY);
+          return;
+        }
         if (this.placementTool) {
           if (pt) {
             if (this.placementTool.kind === 'regimentPose') {
@@ -783,7 +818,8 @@ export class RtsInputController {
         this.rightStartX = e.clientX;
         this.rightStartY = e.clientY;
         this.rightStartWorld = this.screenToGround(e.clientX, e.clientY);
-        this.rightFormationDrag = e.ctrlKey && this.selectedRegimentIds.size > 0 && this.rightStartWorld !== null;
+        // FPS/marchland controls: with troops selected, pressing & holding RMB at the target spot + dragging mouse rotates facing live!
+        this.rightFormationDrag = this.selectedRegimentIds.size > 0 && this.rightStartWorld !== null;
       }
     };
 
@@ -809,27 +845,16 @@ export class RtsInputController {
       }
 
       if (this.rightDown && this.rightFormationDrag && this.rightStartWorld) {
-        const cur = this.screenToGround(e.clientX, e.clientY);
-        if (cur) {
-          const dx = cur.x - this.rightStartWorld.x;
-          const dz = cur.z - this.rightStartWorld.z;
-          const len = Math.hypot(dx, dz);
-          const cx = (this.rightStartWorld.x + cur.x) * 0.5;
-          const cz = (this.rightStartWorld.z + cur.z) * 0.5;
-          // Facing perpendicular-left of drag vector (docs/GAMEPLAY.md §1)!
-          const yawRad = len > 1.0 ? Math.atan2(-dz, dx) : 0;
-          const width = Math.max(4, Math.min(12, Math.round(len / 1.65)));
-          const sim = this.cb.getSim();
-          const firstReg = sim.state.regiments.find((r) => this.selectedRegimentIds.has(r.id));
-          this.formationGhost = {
-            active: true,
-            x: cx,
-            z: cz,
-            yawRad,
-            width,
-            count: firstReg ? countAliveSoldiers(firstReg) : 12,
-            unitClass: firstReg ? UNIT_DEFS[firstReg.unitType].unitClass : 'infantry',
-          };
+        const dragPx = Math.hypot(e.clientX - this.rightStartX, e.clientY - this.rightStartY);
+        if (dragPx > 10) {
+          const cur = this.screenToGround(e.clientX, e.clientY);
+          if (cur) {
+            const dx = cur.x - this.rightStartWorld.x;
+            const dz = cur.z - this.rightStartWorld.z;
+            const yawRad = Math.hypot(dx, dz) > 0.5 ? Math.atan2(dx, dz) : this.poseYawRad;
+            this.poseYawRad = yawRad;
+            this.formationGhost = buildPoseGhost(this.rightStartWorld.x, this.rightStartWorld.z, yawRad);
+          }
         }
       }
     };
@@ -838,7 +863,7 @@ export class RtsInputController {
       if (!this.cb.isPlaying()) return;
       if (e.button === 0) {
         // Regiment Target Position & Mouse Rotation tool (`regimentPose`):
-        // 1st click anchors position `(x, z)`, mouse movement rotates direction `yawRad`, 2nd click (or drag release) confirms!
+        // Press & hold + drag to rotate & release to confirm, OR click -> move mouse -> click to confirm!
         if (this.placementTool && this.placementTool.kind === 'regimentPose' && this.poseAnchor) {
           const endPt = this.screenToGround(e.clientX, e.clientY) ?? this.hoverWorld;
           const dist = endPt ? Math.hypot(endPt.x - this.poseAnchor.x, endPt.z - this.poseAnchor.z) : 0;
@@ -963,19 +988,21 @@ export class RtsInputController {
         this.rightDown = false;
         const dragDist = Math.hypot(e.clientX - this.rightStartX, e.clientY - this.rightStartY);
 
-        if (this.rightFormationDrag && this.formationGhost) {
-          const g = this.formationGhost;
-          const ids = [...this.selectedRegimentIds];
-          const rx = Math.cos(g.yawRad);
-          const rz = -Math.sin(g.yawRad);
-          const spacing = Math.max(9, g.width * 1.55);
-          for (let i = 0; i < ids.length; i++) {
-            const off = (i - (ids.length - 1) * 0.5) * spacing;
+        if (this.rightFormationDrag && dragDist > 10 && this.rightStartWorld && this.formationGhost) {
+          const targets = this.computePoseTargets(this.rightStartWorld.x, this.rightStartWorld.z, this.poseYawRad);
+          for (const t of targets) {
             this.cb.onExecute({
               type: 'issueOrder',
               side: 0,
-              regimentIds: [ids[i]!],
-              order: { kind: 'march', x: g.x + rx * off, z: g.z + rz * off, facingYawRad: g.yawRad, width: g.width },
+              regimentIds: [t.regiment.id],
+              order: {
+                kind: 'march',
+                x: t.x,
+                z: t.z,
+                facingYawRad: t.yawRad,
+                width: t.width,
+                ranks: t.ranks,
+              },
               queue: e.shiftKey,
             });
           }
@@ -988,7 +1015,7 @@ export class RtsInputController {
         this.rightFormationDrag = false;
 
         // Short right-click (< 10 px drag -> not a camera orbit!) issues tactical context order
-        if (dragDist < 10 && this.selectedRegimentIds.size > 0) {
+        if (dragDist <= 10 && this.selectedRegimentIds.size > 0) {
           const pt = this.screenToGround(e.clientX, e.clientY);
           if (pt) {
             const now = performance.now();
