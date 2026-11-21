@@ -355,6 +355,70 @@ describe('Stage 6 combat system & 10x10 unit balance matrix', () => {
     expect(swords.kills).toBe(22);
     expect(swords.captainAlive).toBe(true);
   });
+
+  it('garrisons watchtowers like FPS/marchland (up to 4 enter, remainder stays outside, ungarrison returns them)', () => {
+    const sim = new SimEngine({ mapId: 'openField', mode: 'skirmish', disableAi: true, seed: 919 });
+    const keep = sim.state.buildings.find((b) => b.side === 0 && b.type === 'keep')!;
+    sim.state.sides[0].stock.gold = 1000;
+    sim.state.sides[0].stock.timber = 400;
+    sim.state.sides[0].stock.stone = 400;
+
+    const t1Res = sim.execute({ type: 'placeBuilding', side: 0, buildingType: 'watchtower', x: keep.x + 22, z: keep.z - 12, yawRad: 0 });
+    const t2Res = sim.execute({ type: 'placeBuilding', side: 0, buildingType: 'watchtower', x: keep.x + 22, z: keep.z + 12, yawRad: 0 });
+    expect(t1Res.ok).toBe(true);
+    expect(t2Res.ok).toBe(true);
+    const t1 = sim.state.buildings.find((b) => b.id === t1Res.createdId)!;
+    const t2 = sim.state.buildings.find((b) => b.id === t2Res.createdId)!;
+    t1.buildProgress = 1;
+    t2.buildProgress = 1;
+
+    // 12 crossbowmen sent to watchtower 1 -> 4 enter tower, 8 stay outside as an active regiment!
+    const xbows = spawnRegiment(sim.state, 0, 'crossbowmen', t1.x - 4, t1.z, 0);
+    expect(countAliveSoldiers(xbows)).toBe(12);
+    expect(
+      sim.execute({
+        type: 'issueOrder',
+        side: 0,
+        regimentIds: [xbows.id],
+        order: { kind: 'garrison', x: t1.x, z: t1.z, targetBuildingId: t1.id },
+      }).ok,
+    ).toBe(true);
+    sim.step(0.2);
+
+    expect(t1.garrisonCount).toBe(4);
+    expect(t1.garrisonType).toBe('crossbowmen');
+    expect(countAliveSoldiers(xbows)).toBe(8);
+    expect(xbows.garrisonedInBuildingId).toBeNull();
+
+    // Send the remaining 8 to watchtower 2 -> 4 enter tower 2, 4 remain outside!
+    expect(
+      sim.execute({
+        type: 'issueOrder',
+        side: 0,
+        regimentIds: [xbows.id],
+        order: { kind: 'garrison', x: t2.x, z: t2.z, targetBuildingId: t2.id },
+      }).ok,
+    ).toBe(true);
+    for (let i = 0; i < 160; i++) {
+      sim.step(0.2);
+      if (t2.garrisonCount === 4) break;
+    }
+    expect(t2.garrisonCount).toBe(4);
+    expect(countAliveSoldiers(xbows)).toBe(4);
+
+    // Ungarrisoning tower 2 folds those 4 back into the nearby regiment (4 + 4 = 8); ungarrisoning tower 1 spawns a 4-man regiment!
+    expect(sim.execute({ type: 'ungarrisonWatchtower', side: 0, buildingId: t2.id }).ok).toBe(true);
+    expect(t2.garrisonCount).toBe(0);
+    expect(t2.garrisonType).toBeNull();
+    expect(countAliveSoldiers(xbows)).toBe(8);
+
+    const un1 = sim.execute({ type: 'ungarrisonWatchtower', side: 0, buildingId: t1.id });
+    expect(un1.ok).toBe(true);
+    expect(t1.garrisonCount).toBe(0);
+    const spawned = sim.state.regiments.find((r) => r.id === un1.createdId)!;
+    expect(spawned).toBeDefined();
+    expect(countAliveSoldiers(spawned)).toBe(4);
+  });
 });
 
 

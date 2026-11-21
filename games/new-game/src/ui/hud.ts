@@ -1751,19 +1751,16 @@ export class GameHud {
             actRow.appendChild(up);
           }
 
-          if (b.type === 'watchtower' && b.garrisonCount > 0 && b.garrisonRegimentIds.length > 0) {
+          if (b.type === 'watchtower' && b.garrisonCount > 0 && b.garrisonType !== null) {
             const unBtn = document.createElement('button');
             unBtn.className = 'insp-btn btn-primary';
             unBtn.setAttribute('data-ungarrison', String(b.id));
             unBtn.textContent = this.lang === 'pl' ? '⬇ Wyjdź z baszty' : '⬇ Ungarrison';
             unBtn.addEventListener('click', () => {
-              const outX = b.x + Math.sin(b.yawRad) * 6.5;
-              const outZ = b.z + Math.cos(b.yawRad) * 6.5;
               this.cb.onExecute({
-                type: 'issueOrder',
+                type: 'ungarrisonWatchtower',
                 side: 0,
-                regimentIds: [...b.garrisonRegimentIds],
-                order: { kind: 'march', x: outX, z: outZ },
+                buildingId: b.id,
               });
               this.refreshInspector(true);
             });

@@ -58,6 +58,12 @@ export function countSideArmyMen(state: SimWorldState, side: SideId): number {
     if (alive <= 0) continue;
     n += def.unitClass === 'siege' ? Math.ceil((alive / def.count) * def.crewCount) : alive;
   }
+  // Garrisoned archers/crossbowmen on watchtowers count toward the army limit (FPS/marchland menAlive)
+  for (const b of state.buildings) {
+    if (b.side === side && b.hp > 0 && b.type === 'watchtower' && b.garrisonCount > 0) {
+      n += b.garrisonCount;
+    }
+  }
   return n;
 }
 
@@ -383,6 +389,13 @@ function stepArmyLogistics(state: SimWorldState, dtS: number): void {
       const def = UNIT_DEFS[reg.unitType];
       payingMen += def.unitClass === 'siege' ? Math.ceil((alive / def.count) * def.crewCount) : alive;
     }
+    if (side === 0 || state.scenario.mode !== 'campaign') {
+      for (const b of state.buildings) {
+        if (b.side === side && b.hp > 0 && b.type === 'watchtower' && b.garrisonCount > 0) {
+          payingMen += b.garrisonCount;
+        }
+      }
+    }
 
     if (payingMen === 0) {
       s.armyStarving = false;
@@ -466,10 +479,11 @@ function stepFortifications(state: SimWorldState, dtS: number, terrain: TerrainF
       const uDef = UNIT_DEFS[b.garrisonType];
       if (!uDef.ranged) continue;
       rangeM = uDef.ranged.maxRangeM + ECONOMY.watchtowerRangeBonusM;
-      reloadS = uDef.ranged.reloadS;
+      // FPS/marchland stepTowers: garrisoned men fire one after another from the battlements
+      reloadS = uDef.ranged.reloadS / Math.max(1, b.garrisonCount);
       dmg = uDef.ranged.damage;
       ap = uDef.ranged.armorPierce;
-      shots = b.garrisonCount;
+      shots = 1;
       kind = b.garrisonType === 'crossbowmen' ? 'bolt' : 'arrow';
     } else {
       continue;
@@ -910,17 +924,33 @@ export function stepCombat(
           reg.order = null;
         } else if (Math.hypot(tb.x - reg.x, tb.z - reg.z) <= 8.5) {
           if (tb.type === 'watchtower' && (reg.unitType === 'archers' || reg.unitType === 'crossbowmen')) {
-            const room = ECONOMY.watchtowerGarrisonCap - tb.garrisonCount;
+            let room = ECONOMY.watchtowerGarrisonCap - tb.garrisonCount;
             if (room > 0 && (tb.garrisonType === null || tb.garrisonType === reg.unitType)) {
-              tb.garrisonType = reg.unitType;
-              tb.garrisonCount += Math.min(room, aliveMen);
-              tb.garrisonRegimentIds.push(reg.id);
-              reg.garrisonedInBuildingId = tb.id;
-              reg.order = null;
-              continue;
+              // FPS/marchland stepGarrisoning: transfer up to `room` (max 4) soldiers into the tower; the rest stay outside!
+              // Take from the rear ranks first so slot 0 (Captain) remains with the remaining soldiers outside if any stay.
+              let entered = 0;
+              for (let si = reg.soldiers.length - 1; si >= 0 && room > 0; si--) {
+                const sol = reg.soldiers[si]!;
+                if (!sol.alive) continue;
+                sol.alive = false;
+                sol.deadS = 999; // Gone inside the tower — no corpse left on the ground
+                tb.garrisonCount += 1;
+                room -= 1;
+                entered += 1;
+              }
+              if (entered > 0) {
+                tb.garrisonType = reg.unitType;
+                state.visualRevision++;
+              }
             }
           }
           reg.order = null;
+          reg.path = [];
+          reg.currentSpeedMs = 0;
+          if (countAliveSoldiers(reg) === 0) {
+            reg.captainAlive = false;
+            continue;
+          }
         } else {
           moveRegimentAlongPath(reg, tb.x, tb.z, false, dtS, nav);
         }

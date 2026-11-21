@@ -514,6 +514,7 @@ export type SimCommand =
   | { readonly type: 'setHoldFire'; readonly side: SideId; readonly regimentIds: readonly number[]; readonly holdFire: boolean }
   | { readonly type: 'setGoodPriority'; readonly side: SideId; readonly good: GoodId; readonly priority: -1 | 0 | 1 }
   | { readonly type: 'upgradeTransport'; readonly side: SideId }
+  | { readonly type: 'ungarrisonWatchtower'; readonly side: SideId; readonly buildingId: number }
   | { readonly type: 'payTribute'; readonly side: SideId };
 
 export interface CommandResult {

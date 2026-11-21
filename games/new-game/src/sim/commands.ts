@@ -27,6 +27,7 @@ import {
   normalizeAngle,
   pushAlert,
   refreshRegimentStats,
+  spawnRegiment,
 } from './combat.ts';
 import { distributeQueuedEquipmentOrders, findKeep } from './economy.ts';
 import type { NavGrid } from './pathing.ts';
@@ -1048,6 +1049,76 @@ export function executeCommand(
       sideState.upgradingTransportTo = check.targetLevel;
       sideState.transportUpgradeTimerS = TRANSPORT_LEVELS[check.targetLevel - 1]!.seconds;
       return { ok: true, reason: 'ok' };
+    }
+
+    case 'ungarrisonWatchtower': {
+      const tb = state.buildings.find(
+        (b) => b.id === cmd.buildingId && b.side === cmd.side && b.type === 'watchtower' && b.hp > 0,
+      );
+      if (!tb || tb.garrisonCount <= 0 || !tb.garrisonType) {
+        return { ok: false, reason: 'noGarrison' };
+      }
+      const gType = tb.garrisonType;
+      const gCount = tb.garrisonCount;
+      let outX = tb.x + Math.sin(tb.yawRad) * 6.5;
+      let outZ = tb.z + Math.cos(tb.yawRad) * 6.5;
+      const isClear = (x: number, z: number): boolean =>
+        terrain.waterDepthAt(x, z) <= 0.1 && !terrain.isImpassable(x, z);
+      if (!isClear(outX, outZ)) {
+        for (let k = 0; k < 8; k++) {
+          const ang = tb.yawRad + (k * Math.PI) / 4;
+          const cx = tb.x + Math.sin(ang) * 7.0;
+          const cz = tb.z + Math.cos(ang) * 7.0;
+          if (isClear(cx, cz)) {
+            outX = cx;
+            outZ = cz;
+            break;
+          }
+        }
+      }
+
+      // If an incomplete friendly regiment of the same type is waiting right outside (<= 14 m), fold them back in!
+      const nearby = state.regiments.find(
+        (r) =>
+          r.side === cmd.side &&
+          r.unitType === gType &&
+          !r.routing &&
+          r.garrisonedInBuildingId === null &&
+          countAliveSoldiers(r) > 0 &&
+          countAliveSoldiers(r) + gCount <= r.maxMen &&
+          Math.hypot(r.x - tb.x, r.z - tb.z) <= 14,
+      );
+
+      let targetRegId: number;
+      if (nearby) {
+        let toAdd = gCount;
+        const hp = UNIT_DEFS[gType].hp;
+        for (const sol of nearby.soldiers) {
+          if (toAdd <= 0) break;
+          if (!sol.alive) {
+            sol.alive = true;
+            sol.hp = hp;
+            sol.maxHp = hp;
+            sol.x = outX;
+            sol.z = outZ;
+            sol.yawRad = nearby.yawRad;
+            sol.deadS = 0;
+            sol.speedMs = 0;
+            sol.clip = 'idle';
+            toAdd--;
+          }
+        }
+        targetRegId = nearby.id;
+      } else {
+        const spawned = spawnRegiment(state, cmd.side, gType, outX, outZ, tb.yawRad, { count: gCount });
+        targetRegId = spawned.id;
+      }
+
+      tb.garrisonCount = 0;
+      tb.garrisonType = null;
+      tb.garrisonRegimentIds = [];
+      state.visualRevision++;
+      return { ok: true, reason: 'ok', createdId: targetRegId };
     }
 
     case 'payTribute': {
