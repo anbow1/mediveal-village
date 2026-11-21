@@ -1162,20 +1162,22 @@ export async function buildMarchlandUnits(
   let pigMesh: InstancedMesh | null = null;
   let draftHorsePool: SkinnedUnitPool | null = null;
 
-  // On `minimal` (3 GB tablets like iPad 7 / Tab S2), load 2 diverse villagers (male + female)
-  // instead of 7 x 2 MB JSON models to save ~10 MB download + ~80 MB peak RAM + 5 Float32 bone textures.
+  // Tier villager variety by preset so 3 GB tablets (iPad 7 / Tab S2) never hit WebKit OOM:
+  // minimal: 2 (male+female), low: 4 (2 men + 2 women), high: all 7 variants.
   const folkFiles =
     quality === 'minimal'
       ? ['townsman.json', 'townswoman.json']
-      : [
-          'townsman.json',
-          'townsman-wool.json',
-          'townsman-beard.json',
-          'townsman-linen.json',
-          'townswoman.json',
-          'townswoman-dress.json',
-          'townswoman-worker.json',
-        ];
+      : quality === 'low'
+        ? ['townsman.json', 'townsman-beard.json', 'townswoman.json', 'townswoman-dress.json']
+        : [
+            'townsman.json',
+            'townsman-wool.json',
+            'townsman-beard.json',
+            'townsman-linen.json',
+            'townswoman.json',
+            'townswoman-dress.json',
+            'townswoman-worker.json',
+          ];
 
   const totalSteps = 6 + 2 + 5 + folkFiles.length;
   let doneSteps = 0;

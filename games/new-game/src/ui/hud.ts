@@ -281,7 +281,7 @@ export class GameHud {
     this.loadingBarFillEl = document.createElement('div');
     this.loadingBarFillEl.className = 'loading-bar-fill';
     barTrack.appendChild(this.loadingBarFillEl);
-    this.loadingEl.innerHTML = `<div class="panel"><h1>${this.str.title}</h1><p class="subtitle">${this.str.loading}</p></div>`;
+    this.loadingEl.innerHTML = `<div class="panel"><h1>${this.str.title}</h1><p class="subtitle">${this.str.loading} (${this.str.qualityLabel}: ${qualityLabel(this.str, this.quality)})</p></div>`;
     this.loadingEl.querySelector('.panel')?.append(barTrack, this.loadingStageEl);
     parent.appendChild(this.loadingEl);
 
@@ -2025,16 +2025,29 @@ export class GameHud {
       langBtn.textContent = `${s.langLabel}: ${this.lang === 'pl' ? 'Polski' : 'English'}`;
       langBtn.addEventListener('click', () => this.cb.onChangeLang(this.lang === 'pl' ? 'en' : 'pl'));
 
-      const qualBtn = document.createElement('button');
-      qualBtn.className = 'btn';
-      qualBtn.textContent = `${s.qualityLabel}: ${qualityLabel(s, this.quality)}`;
-      qualBtn.addEventListener('click', () => {
-        const order: QualityPreset[] = ['high', 'low', 'minimal'];
-        const next = order[(order.indexOf(this.quality) + 1) % order.length]!;
-        this.cb.onChangeQuality(next);
-      });
+      const buildQualityPicker = (): HTMLDivElement => {
+        const wrap = document.createElement('div');
+        wrap.className = 'btn-row';
+        wrap.style.gap = '6px';
+        for (const preset of ['minimal', 'low', 'high'] as const) {
+          const b = document.createElement('button');
+          b.className = `btn ${this.quality === preset ? 'btn-primary' : ''}`;
+          b.style.flex = '1';
+          b.textContent = qualityLabel(s, preset);
+          b.addEventListener('click', () => {
+            if (this.quality !== preset) this.cb.onChangeQuality(preset);
+          });
+          wrap.appendChild(b);
+        }
+        return wrap;
+      };
 
-      startPanel.append(playQuick, campBtn, skirBtn, tutBtn, langBtn, qualBtn);
+      const qualHead = document.createElement('div');
+      qualHead.className = 'rts-sec-title';
+      qualHead.style.marginTop = '4px';
+      qualHead.textContent = `${s.qualityLabel}:`;
+
+      startPanel.append(playQuick, campBtn, skirBtn, tutBtn, langBtn, qualHead, buildQualityPicker());
     } else if (this.menuView === 'campaign') {
       const prog = loadCampaignProgress();
       startPanel.innerHTML = `<h2>${s.startCampaignBtn}</h2>`;
@@ -2203,14 +2216,22 @@ export class GameHud {
       this.cb.onChangeLighting(next);
     });
 
-    const pQualBtn = document.createElement('button');
-    pQualBtn.className = 'btn';
-    pQualBtn.textContent = `${s.qualityLabel}: ${qualityLabel(s, this.quality)}`;
-    pQualBtn.addEventListener('click', () => {
-      const order: QualityPreset[] = ['high', 'low', 'minimal'];
-      const next = order[(order.indexOf(this.quality) + 1) % order.length]!;
-      this.cb.onChangeQuality(next);
-    });
+    const pQualHead = document.createElement('div');
+    pQualHead.className = 'rts-sec-title';
+    pQualHead.textContent = `${s.qualityLabel}:`;
+    const pQualRow = document.createElement('div');
+    pQualRow.className = 'btn-row';
+    pQualRow.style.gap = '6px';
+    for (const preset of ['minimal', 'low', 'high'] as const) {
+      const b = document.createElement('button');
+      b.className = `btn ${this.quality === preset ? 'btn-primary' : ''}`;
+      b.style.flex = '1';
+      b.textContent = qualityLabel(s, preset);
+      b.addEventListener('click', () => {
+        if (this.quality !== preset) this.cb.onChangeQuality(preset);
+      });
+      pQualRow.appendChild(b);
+    }
 
     const govBtn = document.createElement('button');
     govBtn.className = 'btn';
@@ -2227,7 +2248,7 @@ export class GameHud {
     mainBtn.textContent = s.returnMenuBtn;
     mainBtn.addEventListener('click', () => this.showStartMenu());
 
-    leftCol.append(resumeBtn, restartBtn, volWrap, lightBtn, pQualBtn, govBtn, benchBtn, mainBtn);
+    leftCol.append(resumeBtn, restartBtn, volWrap, lightBtn, pQualHead, pQualRow, govBtn, benchBtn, mainBtn);
 
     // Right column: Save / Load 3 Slots + JSON Export/Import
     const rightCol = document.createElement('div');

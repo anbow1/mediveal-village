@@ -227,9 +227,12 @@ export async function loadMarchlandBuildingLevels(
   const result = new Map<MarchlandBuildingLevelKey, BufferGeometry>();
   if (quality === 'minimal') return result;
 
+  // On `low` (tablets / 3 GB RAM), load L1 architectural overrides (20 GLBs instead of 60)
+  // to save ~10 MB download and ~40 MB geometry RAM while keeping detailed L1 town architecture.
+  const levels: readonly (1 | 2 | 3)[] = quality === 'low' ? [1] : [1, 2, 3];
   const jobs: { key: MarchlandBuildingLevelKey; url: string }[] = [];
   for (const [bType, prefix] of Object.entries(MARCHLAND_BUILDING_PREFIX) as [BuildingTypeId, string][]) {
-    for (const level of [1, 2, 3] as const) {
+    for (const level of levels) {
       jobs.push({
         key: `${bType}_${level}`,
         url: `assets/marchland/buildings/${prefix}_${level}.glb`,
@@ -240,16 +243,28 @@ export async function loadMarchlandBuildingLevels(
   let cursor = 0;
   let done = 0;
   const total = jobs.length;
-  const concurrency = quality === 'low' ? 4 : 6;
+  const concurrency = quality === 'low' ? 3 : 6;
+  const withTimeout = <T,>(p: Promise<T>, ms: number): Promise<T> =>
+    Promise.race([
+      p,
+      new Promise<T>((_, rej) => {
+        setTimeout(() => rej(new Error('timeout')), ms);
+      }),
+    ]);
+
   const worker = async (): Promise<void> => {
     while (cursor < jobs.length) {
       const job = jobs[cursor++]!;
       try {
-        const gltf = await loader.loadGlb(job.url);
+        const gltf = await withTimeout(loader.loadGlb(job.url), 15000);
         const geo = convertMarchlandGlbToBuildingGeometry(gltf.scene);
         if (geo) result.set(job.key, geo);
+        // Free raw GLB geometries immediately so peak memory stays low on 3 GB tablets
+        gltf.scene.traverse((o) => {
+          if (o instanceof Mesh) (o.geometry as BufferGeometry).dispose();
+        });
       } catch {
-        // Gracefully fall back to base mediveal-village L1 template if any GLB is absent
+        // Gracefully fall back to base mediveal-village L1 template if any GLB is absent or times out
       }
       done++;
       onProgress?.(done, total);
