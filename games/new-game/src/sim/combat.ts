@@ -557,6 +557,22 @@ function stepCapturePoints(state: SimWorldState, dtS: number): void {
       }
     }
 
+    const transferCapturedStructures = (newOwner: SideId): void => {
+      for (const b of state.buildings) {
+        if (b.hp <= 0 || b.type === 'keep' || b.side === newOwner) continue;
+        const dSq = (b.x - cp.x) * (b.x - cp.x) + (b.z - cp.z) * (b.z - cp.z);
+        if (dSq <= radSq) {
+          b.side = newOwner;
+          if (b.type === 'watchtower') {
+            b.garrisonCount = 0;
+            b.garrisonType = null;
+            b.garrisonRegimentIds = [];
+          }
+          state.visualRevision++;
+        }
+      }
+    };
+
     if (has0 && !has1) {
       if (cp.owner !== 0) {
         if (cp.capturingSide !== 0) {
@@ -568,6 +584,7 @@ function stepCapturePoints(state: SimWorldState, dtS: number): void {
           cp.owner = 0;
           cp.capturingSide = null;
           cp.captureProgressS = 0;
+          transferCapturedStructures(0);
           pushAlert(state, 0, 'pointCaptured', cp.x, cp.z, cp.label);
         }
       }
@@ -582,6 +599,7 @@ function stepCapturePoints(state: SimWorldState, dtS: number): void {
           cp.owner = 1;
           cp.capturingSide = null;
           cp.captureProgressS = 0;
+          transferCapturedStructures(1);
           pushAlert(state, 1, 'pointCaptured', cp.x, cp.z, cp.label);
         }
       }

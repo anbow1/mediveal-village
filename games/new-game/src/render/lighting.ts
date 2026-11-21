@@ -63,7 +63,7 @@ export interface ShadowConfigSummary {
 
 export class LightingRig {
   readonly sun: DirectionalLight;
-  readonly csm: CSMShadowNode;
+  readonly csm: CSMShadowNode | null;
   readonly hemi: HemisphereLight;
   readonly skyDome: Mesh;
   readonly skyUniforms: PhysicalSkyUniforms;
@@ -81,33 +81,38 @@ export class LightingRig {
     this.quality = quality;
     this.skyUniforms = createPhysicalSkyUniforms();
 
-    // 1. Directional sun with Cascaded Shadow Maps (3 cascades High 2048 px / 2 Low 1024 px, fade=true).
+    // 1. Directional sun with Cascaded Shadow Maps (High: 3x2048, Low: 2x1024, Minimal: disabled for weak GPUs).
     this.sun = new DirectionalLight(0xffffff, 1);
     this.sun.name = 'SunLight';
-    this.sun.castShadow = true;
-    this.sun.shadow.mapSize.set(quality.shadowMapSizePx, quality.shadowMapSizePx);
-    this.sun.shadow.camera.near = 1;
-    this.sun.shadow.camera.far = 640;
-    this.sun.shadow.bias = quality.shadowBias;
-    this.sun.shadow.normalBias = quality.shadowNormalBias;
-    // Enable layers 0 (direct casters like animated LOD0 units) and 1 (R7 coarse opaque shadow stand-ins).
-    // CSMShadowNode clones `this.sun.shadow` (and its camera layers mask) for each cascade on first setup.
-    this.sun.shadow.camera.layers.enable(0);
-    this.sun.shadow.camera.layers.enable(SHADOW_ONLY_LAYER);
+    if (quality.shadowCascades > 0) {
+      this.sun.castShadow = true;
+      this.sun.shadow.mapSize.set(quality.shadowMapSizePx, quality.shadowMapSizePx);
+      this.sun.shadow.camera.near = 1;
+      this.sun.shadow.camera.far = 640;
+      this.sun.shadow.bias = quality.shadowBias;
+      this.sun.shadow.normalBias = quality.shadowNormalBias;
+      // Enable layers 0 (direct casters like animated LOD0 units) and 1 (R7 coarse opaque shadow stand-ins).
+      // CSMShadowNode clones `this.sun.shadow` (and its camera layers mask) for each cascade on first setup.
+      this.sun.shadow.camera.layers.enable(0);
+      this.sun.shadow.camera.layers.enable(SHADOW_ONLY_LAYER);
 
-    // Leave `csm.camera` unset until first render (playbook §11: setting it early skips _init()).
-    this.csm = new CSMShadowNode(this.sun, {
-      cascades: quality.shadowCascades,
-      maxFar: quality.shadowMaxFarM,
-      mode: 'custom',
-      lightMargin: quality.shadowLightMarginM,
-      customSplitsCallback: (cascades, near, far, target) => {
-        const splits = computeCsmSplits(cascades, near, far, quality.shadowSplitLambda);
-        for (const s of splits) target.push(s);
-      },
-    });
-    this.csm.fade = true;
-    this.sun.shadow.shadowNode = this.csm;
+      // Leave `csm.camera` unset until first render (playbook §11: setting it early skips _init()).
+      this.csm = new CSMShadowNode(this.sun, {
+        cascades: quality.shadowCascades,
+        maxFar: quality.shadowMaxFarM,
+        mode: 'custom',
+        lightMargin: quality.shadowLightMarginM,
+        customSplitsCallback: (cascades, near, far, target) => {
+          const splits = computeCsmSplits(cascades, near, far, quality.shadowSplitLambda);
+          for (const s of splits) target.push(s);
+        },
+      });
+      this.csm.fade = true;
+      this.sun.shadow.shadowNode = this.csm;
+    } else {
+      this.sun.castShadow = false;
+      this.csm = null;
+    }
 
     scene.add(this.sun);
     scene.add(this.sun.target);
@@ -234,7 +239,7 @@ export class LightingRig {
 
   /** Recomputes CSM frustums after viewport/aspect resize, strictly after CSM has initialized. */
   onCameraResize(): void {
-    if (this.csm.camera !== null) {
+    if (this.csm && this.csm.camera !== null) {
       this.csm.updateFrustums();
     }
   }
@@ -256,13 +261,13 @@ export class LightingRig {
       cascades: this.quality.shadowCascades,
       maxFarM: this.quality.shadowMaxFarM,
       mapSizePx: this.quality.shadowMapSizePx,
-      fade: this.csm.fade,
-      initialized: this.csm.camera !== null,
+      fade: this.csm?.fade ?? false,
+      initialized: this.csm ? this.csm.camera !== null : false,
     };
   }
 
   dispose(): void {
-    this.csm.dispose();
+    this.csm?.dispose();
     this.probeTarget?.dispose();
     this.pmrem?.dispose();
     this.probeTarget = null;

@@ -70,7 +70,7 @@ export class RenderStage {
   private readonly uSharpenStrength = uniform(float(0.3));
   private readonly uTexelSize = uniform(new Vector2(1 / 1280, 1 / 720));
   private readonly uViewportSize = uniform(new Vector2(1280, 720));
-  private readonly bloomNode: ReturnType<typeof bloom>;
+  private readonly bloomNode: ReturnType<typeof bloom> | null;
 
   private baseDpr = 1;
   private renderScale = 1;
@@ -96,6 +96,20 @@ export class RenderStage {
     const qCfg = QUALITY_PRESETS[quality];
     this.uSunShaftSamples.value = qCfg.sunShaftSamples;
     this.uSharpenStrength.value = qCfg.sharpenStrength;
+    const tmEnum = toneMapping === 'agx' ? AgXToneMapping : ACESFilmicToneMapping;
+
+    if (!qCfg.traaEnabled) {
+      // Minimal preset for low-end mobile/tablet GPUs (e.g. Adreno 510): single-pass render
+      // without velocity MRT, TRAA, sun shafts, bloom, or CAS sharpen.
+      const scenePass = pass(scene, camera, { type: HalfFloatType });
+      const sceneColor = scenePass.getTextureNode('output');
+      const hdrMinimal = vec4(sceneColor.rgb.mul(this.uRelativeExposure), float(1.0));
+      const toneMapped = renderOutput(hdrMinimal, tmEnum, SRGBColorSpace);
+      this.bloomNode = null;
+      this.pipeline = new RenderPipeline(renderer, toneMapped);
+      this.pipeline.outputColorTransform = false;
+      return;
+    }
 
     // 1. HDR scene pass with MRT { output, velocity } for TRAA (playbook §1).
     const scenePass = pass(scene, camera, { type: HalfFloatType });
@@ -143,7 +157,6 @@ export class RenderStage {
     const hdrCombined = vec4(withShafts.rgb.add(this.bloomNode.rgb).mul(this.uRelativeExposure), float(1.0));
 
     // 5. Tone map + sRGB output transform ONCE (outputColorTransform = false prevents double transform).
-    const tmEnum = toneMapping === 'agx' ? AgXToneMapping : ACESFilmicToneMapping;
     const toneMapped = renderOutput(hdrCombined, tmEnum, SRGBColorSpace);
     const srgbTex = convertToTexture(toneMapped);
 
@@ -192,7 +205,7 @@ export class RenderStage {
     });
     renderer.toneMapping = NoToneMapping;
     renderer.toneMappingExposure = 1.0;
-    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.enabled = opts.quality !== 'minimal';
 
     const passTimer = new PassTimer();
     renderer.inspector = passTimer;
@@ -240,7 +253,9 @@ export class RenderStage {
   applyGovernorStep(step: GovernorStep): void {
     const qCfg = QUALITY_PRESETS[this.quality];
     this.uSunShaftSamples.value = Math.min(qCfg.sunShaftSamples, step.sunShaftSamples);
-    this.bloomNode.strength.value = step.bloomEnabled ? qCfg.bloomStrength : 0.0;
+    if (this.bloomNode) {
+      this.bloomNode.strength.value = step.bloomEnabled ? qCfg.bloomStrength : 0.0;
+    }
     if (Math.abs(step.renderScale - this.renderScale) > 0.001) {
       this.renderScale = step.renderScale;
       this.applyPixelSize();

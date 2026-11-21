@@ -8,6 +8,7 @@ import {
   ALL_GOODS,
   BUILDING_DEFS,
   CAMPAIGN,
+  DIFFICULTY_SETTINGS,
   ECONOMY,
   SIM,
   type BuildingTypeId,
@@ -25,6 +26,7 @@ import { ForestGrid } from './trees.ts';
 import type {
   BuildingEntity,
   CommandResult,
+  Difficulty,
   PlacementRejectionReason,
   SideId,
   SideState,
@@ -39,10 +41,11 @@ function createEmptyStock(): Record<GoodId, number> {
   return s;
 }
 
-function createSideState(side: SideId): SideState {
+function createSideState(side: SideId, difficulty: Difficulty = 'normal'): SideState {
   const stock = createEmptyStock();
+  const mul = side === 0 ? DIFFICULTY_SETTINGS[difficulty].playerStockMul : 1.0;
   for (const g of Object.keys(ECONOMY.startingStock) as GoodId[]) {
-    stock[g] = ECONOMY.startingStock[g] ?? 0;
+    stock[g] = Math.round((ECONOMY.startingStock[g] ?? 0) * mul);
   }
   return {
     side,
@@ -186,7 +189,7 @@ export class SimEngine {
       nextOrderId: 1,
       nextAlertId: 1,
       rngState: (seed * 2654435761) >>> 0 || 1,
-      sides: [createSideState(0), createSideState(1)],
+      sides: [createSideState(0, difficulty), createSideState(1, 'normal')],
       buildings: [],
       walls: [],
       gates: [],

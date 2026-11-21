@@ -1,7 +1,7 @@
 // Single source of truth for Marchland tuning constants (SI units in every identifier).
 // Reference values: NUMBERS.md, GUIDE.md, docs/ECONOMY.md, docs/BUILDINGS.md, docs/UNITS.md.
 
-export type QualityPreset = 'high' | 'low';
+export type QualityPreset = 'high' | 'low' | 'minimal';
 export type ToneMappingChoice = 'aces' | 'agx';
 export type LightingPresetId = 'clearNoon' | 'lateAutumn' | 'goldenHour' | 'overcast';
 export type LangCode = 'en' | 'pl';
@@ -228,7 +228,7 @@ export const QUALITY_PRESETS: Record<QualityPreset, QualityPresetConfig> = {
   },
   low: {
     id: 'low',
-    maxDpr: 2,
+    maxDpr: 1.5,
     shadowCascades: 2,
     shadowMapSizePx: 1024,
     shadowMaxFarM: 200,
@@ -242,6 +242,23 @@ export const QUALITY_PRESETS: Record<QualityPreset, QualityPresetConfig> = {
     bloomStrength: 0.09,
     bloomThreshold: 2.1,
     bloomRadius: 0.35,
+  },
+  minimal: {
+    id: 'minimal',
+    maxDpr: 1,
+    shadowCascades: 0,
+    shadowMapSizePx: 512,
+    shadowMaxFarM: 120,
+    shadowSplitLambda: 0.5,
+    shadowLightMarginM: 80,
+    shadowBias: -0.0003,
+    shadowNormalBias: 0.05,
+    traaEnabled: false,
+    sharpenStrength: 0.0,
+    sunShaftSamples: 0,
+    bloomStrength: 0.0,
+    bloomThreshold: 3.0,
+    bloomRadius: 0.0,
   },
 };
 
@@ -259,11 +276,21 @@ export const GOVERNOR_STEPS: Record<QualityPreset, readonly GovernorStep[]> = {
     { label: 'L0 100%', renderScale: 1.0, sunShaftSamples: 0, bloomEnabled: true },
     { label: 'L1 85%', renderScale: 0.85, sunShaftSamples: 0, bloomEnabled: true },
     { label: 'L2 72%', renderScale: 0.72, sunShaftSamples: 0, bloomEnabled: false },
-    { label: 'L3 60%', renderScale: 0.6, sunShaftSamples: 0, bloomEnabled: false },
-    { label: 'L4 50%', renderScale: 0.5, sunShaftSamples: 0, bloomEnabled: false },
-    { label: 'L5 42%', renderScale: 0.42, sunShaftSamples: 0, bloomEnabled: false },
+    { label: 'L3 66%', renderScale: 0.66, sunShaftSamples: 0, bloomEnabled: false },
+  ],
+  minimal: [
+    { label: 'L0 100%', renderScale: 1.0, sunShaftSamples: 0, bloomEnabled: false },
+    { label: 'L1 85%', renderScale: 0.85, sunShaftSamples: 0, bloomEnabled: false },
+    { label: 'L2 75%', renderScale: 0.75, sunShaftSamples: 0, bloomEnabled: false },
   ],
 };
+
+/** Difficulty scaling: starting stock multiplier for the player & enemy attacking army size multiplier. */
+export const DIFFICULTY_SETTINGS = {
+  easy:   { playerStockMul: 1.45, enemyArmyMul: 0.7,  aiProdMul: 0.78, aiReactS: 6.0 },
+  normal: { playerStockMul: 1.0,  enemyArmyMul: 1.0,  aiProdMul: 1.0,  aiReactS: 3.0 },
+  hard:   { playerStockMul: 0.75, enemyArmyMul: 1.35, aiProdMul: 1.28, aiReactS: 1.0 },
+} as const;
 
 export const BENCH = {
   /** Real hardware frames per spot (docs/graphics-playbook.md §9.2). */
@@ -863,7 +890,7 @@ export const UNIT_DEFS: Record<UnitTypeId, UnitDef> = {
     hp: 80, attack: 0, defence: 0, armour: 0.0, meleeDamage: 0, morale: 55,
     walkSpeedMs: 0.9, runSpeedMs: 0.9, shieldBlock: 0.70, antiCavBonus: 0, weaponReachM: 1.5,
     chargeAttackBonus: 0, chargeMoraleShock: 0,
-    ranged: { minRangeM: 10, maxRangeM: 120, damage: 55, armorPierce: 0.90, reloadS: 10, splashRadiusM: 1.4, buildingDamage: 30, projectileSpeedMs: 110, kind: 'cannonball' },
+    ranged: { minRangeM: 10, maxRangeM: 88, damage: 42, armorPierce: 0.85, reloadS: 12, splashRadiusM: 1.2, buildingDamage: 22, projectileSpeedMs: 105, kind: 'cannonball' },
     refitTargets: [],
     valueGold: 248,
   },
@@ -874,7 +901,7 @@ export const UNIT_DEFS: Record<UnitTypeId, UnitDef> = {
     hp: 120, attack: 0, defence: 0, armour: 0.0, meleeDamage: 0, morale: 60,
     walkSpeedMs: 0.6, runSpeedMs: 0.6, shieldBlock: 0.80, antiCavBonus: 0, weaponReachM: 1.5,
     chargeAttackBonus: 0, chargeMoraleShock: 0,
-    ranged: { minRangeM: 40, maxRangeM: 150, damage: 30, armorPierce: 0.50, reloadS: 15, splashRadiusM: 3.5, buildingDamage: 110, projectileSpeedMs: 50, kind: 'mortar' },
+    ranged: { minRangeM: 35, maxRangeM: 112, damage: 24, armorPierce: 0.50, reloadS: 17, splashRadiusM: 3.2, buildingDamage: 80, projectileSpeedMs: 50, kind: 'mortar' },
     refitTargets: [],
     valueGold: 294,
   },
@@ -968,20 +995,20 @@ export const CAMPAIGN = {
   /** Mission 3 relief timer (12 min = 720 s). */
   m3ReliefTimeS: 720,
   m3MarchDelayS: 180,
-  /** Mission 4 target & raid timers (8, 16, 24 min). */
+  /** Mission 4 target & small raid timers starting after 25 min (25, 30, 35 min). */
   m4TargetMen: 160,
   m4TargetRegiments: 10,
-  m4RaidTimesS: [480, 960, 1440] as readonly [number, number, number],
+  m4RaidTimesS: [1500, 1800, 2100] as readonly [number, number, number],
   /** Mission 5 Fortress sortie, relief & barracks spawn timers. */
   m5WallHpMul: 2.0,
-  m5SortieTriggerM: 230,
+  m5SortieTriggerM: 155,
   m5SortieReturnS: 150,
   m5ReliefTimeS: 900,
   m5BarracksSpawnS: 300,
   m5BreachStarTimeS: 600,
-  /** Defence mode wave interval (4 min from min 7, win at 30 min). */
-  defenceFirstWaveS: 420,
-  defenceWaveIntervalS: 240,
-  defenceWinTimeS: 1800,
+  /** Defence mode: 25 min prep to first wave, escalating waves every 5 min (10 waves -> win at 75 min). */
+  defenceFirstWaveS: 1500,
+  defenceWaveIntervalS: 300,
+  defenceWinTimeS: 4500,
 } as const;
 

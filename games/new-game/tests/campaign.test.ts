@@ -176,17 +176,111 @@ describe('Stage 6 campaign missions 1-5, defence, tutorial & deterministic save/
     expect(m5.state.scenario.outcome).toBe('victory');
   });
 
-  it('spawns Defence waves starting at minute 7 and awards victory at 30 min', () => {
-    const def = new SimEngine({ mapId: 'crossing', mode: 'defence', disableAi: true, seed: 909 });
-    def.state.timeS = CAMPAIGN.defenceFirstWaveS - 0.5;
-    stepSeconds(def, 2.0);
-    expect(def.state.scenario.waveIndex).toBe(1);
-    const wave1Men = def.state.regiments.filter((r) => r.side === 1).reduce((s, r) => s + countAliveSoldiers(r), 0);
-    expect(wave1Men).toBeGreaterThanOrEqual(20);
+  it('spawns Defence waves starting at minute 25, escalates every 5 min, scales with difficulty, and awards victory at 75 min', () => {
+    const defEasy = new SimEngine({ mapId: 'crossing', mode: 'defence', difficulty: 'easy', disableAi: true, seed: 909 });
+    const defNorm = new SimEngine({ mapId: 'crossing', mode: 'defence', difficulty: 'normal', disableAi: true, seed: 909 });
+    const defHard = new SimEngine({ mapId: 'crossing', mode: 'defence', difficulty: 'hard', disableAi: true, seed: 909 });
 
-    // Reaching 30 min with Keep intact wins Defence!
-    def.state.timeS = CAMPAIGN.defenceWinTimeS - 0.2;
-    stepSeconds(def, 1.0);
-    expect(def.state.scenario.outcome).toBe('victory');
+    // Starting resources scale Easy > Normal > Hard
+    expect(defEasy.state.sides[0].stock.gold).toBeGreaterThan(defNorm.state.sides[0].stock.gold);
+    expect(defNorm.state.sides[0].stock.gold).toBeGreaterThan(defHard.state.sides[0].stock.gold);
+
+    // No wave before minute 25
+    expect(CAMPAIGN.defenceFirstWaveS).toBe(1500);
+    expect(CAMPAIGN.defenceWaveIntervalS).toBe(300);
+    defNorm.state.timeS = CAMPAIGN.defenceFirstWaveS - 2.0;
+    stepSeconds(defNorm, 1.0);
+    expect(defNorm.state.scenario.waveIndex).toBe(0);
+
+    // Wave 1 arrives at 25:00 and scales with difficulty (Easy < Normal < Hard)
+    for (const sim of [defEasy, defNorm, defHard]) {
+      sim.state.timeS = CAMPAIGN.defenceFirstWaveS - 0.4;
+      stepSeconds(sim, 1.6);
+      expect(sim.state.scenario.waveIndex).toBe(1);
+    }
+    const menOf = (sim: SimEngine) =>
+      sim.state.regiments.filter((r) => r.side === 1).reduce((s, r) => s + countAliveSoldiers(r), 0);
+    const easyMen = menOf(defEasy);
+    const normMen = menOf(defNorm);
+    const hardMen = menOf(defHard);
+    expect(normMen).toBeGreaterThanOrEqual(20);
+    expect(easyMen).toBeLessThan(normMen);
+    expect(hardMen).toBeGreaterThan(normMen);
+
+    // Wave 2 arrives 5 minutes later (30:00) and is stronger
+    defNorm.state.timeS = CAMPAIGN.defenceFirstWaveS + CAMPAIGN.defenceWaveIntervalS - 0.4;
+    stepSeconds(defNorm, 1.6);
+    expect(defNorm.state.scenario.waveIndex).toBe(2);
+    expect(menOf(defNorm)).toBeGreaterThan(normMen);
+
+    // Reaching 75 min with Keep intact wins Defence!
+    defNorm.state.timeS = CAMPAIGN.defenceWinTimeS - 0.2;
+    stepSeconds(defNorm, 1.0);
+    expect(defNorm.state.scenario.outcome).toBe('victory');
+  });
+
+  it('transfers Map 2 central watchtower on capture so player can garrison it immediately', () => {
+    const m2 = new SimEngine({ mapId: 'forest', mode: 'campaign', missionId: 2, disableAi: true, seed: 202 });
+    const cp = m2.state.capturePoints.find((c) => c.id === 'cp_glade')!;
+    expect(cp).toBeDefined();
+    const centralTower = m2.state.buildings.find(
+      (b) => b.type === 'watchtower' && Math.hypot(b.x - cp.x, b.z - cp.z) <= 30,
+    )!;
+    expect(centralTower).toBeDefined();
+    expect(centralTower.side).toBe(1);
+
+    // Clear enemy defenders near the glade and move player crossbowmen onto the capture point
+    for (const r of m2.state.regiments) {
+      if (r.side === 1 && Math.hypot(r.x - cp.x, r.z - cp.z) < 55) {
+        for (const s of r.soldiers) s.alive = false;
+      }
+    }
+    const xbow = spawnRegiment(m2.state, 0, 'crossbowmen', cp.x, cp.z, 0);
+    stepSeconds(m2, 22.0);
+    expect(cp.owner).toBe(0);
+    expect(centralTower.side).toBe(0);
+
+    // Now player can garrison the captured central watchtower!
+    const gRes = m2.execute({
+      type: 'issueOrder',
+      side: 0,
+      regimentIds: [xbow.id],
+      order: { kind: 'garrison', x: centralTower.x, z: centralTower.z, targetBuildingId: centralTower.id },
+    });
+    expect(gRes.ok).toBe(true);
+    stepSeconds(m2, 6.0);
+    expect(centralTower.garrisonCount).toBe(4);
+    expect(centralTower.garrisonType).toBe('crossbowmen');
+  });
+
+  it('starts Mission 4 in the unified conquered central city (raids after 25m) and Mission 5 army on the southern settlement side', () => {
+    // Mission 4: single Keep inside conquered central town, no disconnected western settlement, small raid at 25m
+    const m4 = new SimEngine({ mapId: 'valley', mode: 'campaign', missionId: 4, disableAi: true, seed: 404 });
+    const keep4 = m4.state.buildings.find((b) => b.side === 0 && b.type === 'keep')!;
+    expect(keep4).toBeDefined();
+    expect(Math.hypot(keep4.x - 118, keep4.z)).toBeLessThan(15);
+    expect(m4.state.buildings.some((b) => b.side === 0 && b.x < 40)).toBe(false);
+    expect(m4.state.sides[0].stock.gold).toBeGreaterThanOrEqual(420);
+
+    // No raids before 25 min
+    m4.state.timeS = 1490;
+    stepSeconds(m4, 2.0);
+    expect(m4.state.regiments.filter((r) => r.side === 1).length).toBe(0);
+
+    // Small raid arrives at minute 25
+    m4.state.timeS = CAMPAIGN.m4RaidTimesS[0]! - 0.4;
+    stepSeconds(m4, 1.6);
+    const m4EnemyRegs = m4.state.regiments.filter((r) => r.side === 1);
+    expect(m4EnemyRegs.length).toBeGreaterThanOrEqual(1);
+    expect(m4EnemyRegs.length).toBeLessThanOrEqual(2);
+
+    // Mission 5: all player troops & siege engines start safely south of river beside own settlement
+    const m5 = new SimEngine({ mapId: 'fortress', mode: 'campaign', missionId: 5, disableAi: true, seed: 505 });
+    const playerRegs = m5.state.regiments.filter((r) => r.side === 0);
+    expect(playerRegs.length).toBeGreaterThanOrEqual(5);
+    for (const r of playerRegs) {
+      expect(r.z).toBeGreaterThanOrEqual(125);
+    }
+    expect(m5.state.sides[0].stock.gold).toBeGreaterThanOrEqual(450);
   });
 });

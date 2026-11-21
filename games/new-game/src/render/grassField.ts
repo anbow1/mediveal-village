@@ -184,6 +184,15 @@ export function buildGrassField(
   groundWorksTexture: DataTexture,
   quality: QualityPreset,
 ): GrassFieldHandles {
+  if (quality === 'minimal') {
+    return {
+      meshes: [],
+      totalBlades: 0,
+      totalTriangles: 0,
+      update: () => undefined,
+      dispose: () => undefined,
+    };
+  }
   const tileSizeM = 3.2;
   const isHigh = quality === 'high';
 

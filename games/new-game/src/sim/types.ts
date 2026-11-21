@@ -56,7 +56,7 @@ export interface CarryJob {
 
 export interface TownsfolkEntity {
   readonly id: number;
-  readonly side: SideId;
+  side: SideId;
   role: CitizenRole;
   homeBuildingId: number;
   assignedBuildingId: number | null;

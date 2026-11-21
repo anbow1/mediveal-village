@@ -1215,7 +1215,10 @@ export class GameHud {
       const span = document.createElement('span');
       span.className = 'obj-chip';
       const rem = Math.max(0, CAMPAIGN.defenceWinTimeS - state.timeS);
-      span.textContent = `${s.waveLabel(sc.waveIndex)} · ${s.tributeCountdown(rem)}`;
+      const nextRem = Math.max(0, sc.nextWaveTimeS - state.timeS);
+      span.textContent = sc.waveIndex < 10
+        ? `${s.waveLabel(sc.waveIndex)} · ⚔ ${s.tributeCountdown(nextRem)} · ⏳ ${s.tributeCountdown(rem)}`
+        : `${s.waveLabel(sc.waveIndex)} · ⏳ ${s.tributeCountdown(rem)}`;
       this.objStripEl.appendChild(span);
     } else if (sc.mode === 'campaign' && sc.missionId !== null) {
       const mt = s.missions[sc.missionId];
@@ -2024,7 +2027,11 @@ export class GameHud {
       const qualBtn = document.createElement('button');
       qualBtn.className = 'btn';
       qualBtn.textContent = `${s.qualityLabel}: ${qualityLabel(s, this.quality)}`;
-      qualBtn.addEventListener('click', () => this.cb.onChangeQuality(this.quality === 'high' ? 'low' : 'high'));
+      qualBtn.addEventListener('click', () => {
+        const order: QualityPreset[] = ['high', 'low', 'minimal'];
+        const next = order[(order.indexOf(this.quality) + 1) % order.length]!;
+        this.cb.onChangeQuality(next);
+      });
 
       startPanel.append(playQuick, campBtn, skirBtn, tutBtn, langBtn, qualBtn);
     } else if (this.menuView === 'campaign') {
@@ -2066,6 +2073,14 @@ export class GameHud {
         this.menuView = 'home';
         this.rebuildMenus();
       });
+      const campDiffBtn = document.createElement('button');
+      campDiffBtn.className = 'btn';
+      campDiffBtn.textContent = `${s.difficultyLabel}: ${s.difficultyNames[this.selDiff]}`;
+      campDiffBtn.addEventListener('click', () => {
+        const order: Difficulty[] = ['easy', 'normal', 'hard'];
+        this.selDiff = order[(order.indexOf(this.selDiff) + 1) % order.length]!;
+        this.rebuildMenus();
+      });
       const go = document.createElement('button');
       go.className = 'btn btn-primary';
       go.textContent = s.launchMatchBtn;
@@ -2079,7 +2094,7 @@ export class GameHud {
           showcaseMode: false,
         }),
       );
-      row.append(back, go);
+      row.append(back, campDiffBtn, go);
       startPanel.append(mList, brief, row);
     } else {
       startPanel.innerHTML = `<h2>${s.startSkirmishBtn} & ${s.startDefenceBtn}</h2>`;
@@ -2099,7 +2114,7 @@ export class GameHud {
       optRow.className = 'btn-row wrap';
       const diffBtn = document.createElement('button');
       diffBtn.className = 'btn';
-      diffBtn.textContent = s.difficultyNames[this.selDiff];
+      diffBtn.textContent = `${s.difficultyLabel}: ${s.difficultyNames[this.selDiff]}`;
       diffBtn.addEventListener('click', () => {
         const order: Difficulty[] = ['easy', 'normal', 'hard'];
         this.selDiff = order[(order.indexOf(this.selDiff) + 1) % order.length]!;
@@ -2187,6 +2202,15 @@ export class GameHud {
       this.cb.onChangeLighting(next);
     });
 
+    const pQualBtn = document.createElement('button');
+    pQualBtn.className = 'btn';
+    pQualBtn.textContent = `${s.qualityLabel}: ${qualityLabel(s, this.quality)}`;
+    pQualBtn.addEventListener('click', () => {
+      const order: QualityPreset[] = ['high', 'low', 'minimal'];
+      const next = order[(order.indexOf(this.quality) + 1) % order.length]!;
+      this.cb.onChangeQuality(next);
+    });
+
     const govBtn = document.createElement('button');
     govBtn.className = 'btn';
     govBtn.textContent = `${s.governorLabel}: ${this.governorEnabled ? s.on : s.off}`;
@@ -2202,7 +2226,7 @@ export class GameHud {
     mainBtn.textContent = s.returnMenuBtn;
     mainBtn.addEventListener('click', () => this.showStartMenu());
 
-    leftCol.append(resumeBtn, restartBtn, volWrap, lightBtn, govBtn, benchBtn, mainBtn);
+    leftCol.append(resumeBtn, restartBtn, volWrap, lightBtn, pQualBtn, govBtn, benchBtn, mainBtn);
 
     // Right column: Save / Load 3 Slots + JSON Export/Import
     const rightCol = document.createElement('div');

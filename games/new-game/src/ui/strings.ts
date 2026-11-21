@@ -46,6 +46,8 @@ export interface Strings {
   readonly qualityLabel: string;
   readonly qualityHigh: string;
   readonly qualityLow: string;
+  readonly qualityMinimal: string;
+  readonly difficultyLabel: string;
   readonly langLabel: string;
   readonly lightingLabel: string;
   readonly governorLabel: string;
@@ -185,6 +187,8 @@ const EN: Strings = {
   qualityLabel: 'Graphics',
   qualityHigh: 'High',
   qualityLow: 'Low',
+  qualityMinimal: 'Minimal',
+  difficultyLabel: 'Difficulty',
   langLabel: 'Language',
   lightingLabel: 'Lighting',
   governorLabel: 'Frame governor',
@@ -207,13 +211,13 @@ const EN: Strings = {
   },
   modeNames: {
     skirmish: 'Skirmish',
-    defence: 'Defence (10 Waves)',
+    defence: 'Defence (25m + 10 Waves)',
     tutorial: 'Tutorial (7 Steps)',
     campaign: 'Campaign (5 Missions)',
   },
   difficultyNames: {
     easy: 'Easy',
-    normal: 'Normal',
+    normal: 'Medium',
     hard: 'Hard',
   },
   personalityNames: {
@@ -327,8 +331,8 @@ const EN: Strings = {
     crossbowmen: '60% armour-piercing bolts counter Halberdiers & heavy armour; weak to Cavalry.',
     lightCav: 'Fast flanker countering Archers, Crossbows & Siege; weak to Pikemen.',
     heavyCav: 'Devastating flank shock vs Swordsmen & Ranged; countered by Pikemen.',
-    cannon: '120 m flat trajectory breaches walls & towers; protect from Cavalry.',
-    mortar: '150 m high-arc siege shells over walls; minimum range 40 m.',
+    cannon: '88 m flat trajectory breaches walls & towers; protect from Cavalry.',
+    mortar: '112 m high-arc siege shells over walls; minimum range 35 m.',
   },
 
   buildings: {
@@ -458,12 +462,12 @@ const EN: Strings = {
     4: {
       title: 'IV. Raising the Great Host',
       objective: 'Upgrade Keep to Level 3 and muster 160 soldiers across 10 regiments.',
-      briefing: 'Rebuild the six half-price ruins along the valley, repel three escalating raids (8, 16, 24 min), and forge an army worthy of storming the citadel.',
+      briefing: 'Starting from your newly conquered central town and Keep, rebuild the ruins, expand your economy, repel small raids after minute 25, and muster an army worthy of storming the citadel.',
     },
     5: {
       title: 'V. The Citadel Donżon',
       objective: 'Breach the fortress walls and defeat the inner courtyard guard.',
-      briefing: 'Twin stone rings and twelve watchtowers crown the granite plateau. Bring cannons and mortars to open a breach, weather the garrison sortie and min-15 relief, and claim the courtyard.',
+      briefing: 'Your army and siege train await at the southern settlement across the river. Build up your supply base first, then cross the ford with cannons and mortars to breach the twin stone rings.',
     },
   },
   tutorialSteps: {
@@ -502,6 +506,8 @@ const PL: Strings = {
   qualityLabel: 'Grafika',
   qualityHigh: 'Wysoka',
   qualityLow: 'Niska',
+  qualityMinimal: 'Minimalna',
+  difficultyLabel: 'Poziom trudności',
   langLabel: 'Język',
   lightingLabel: 'Światło',
   governorLabel: 'Regulator klatek',
@@ -524,13 +530,13 @@ const PL: Strings = {
   },
   modeNames: {
     skirmish: 'Potyczka',
-    defence: 'Obrona (10 fal)',
+    defence: 'Obrona (25 min + 10 fal)',
     tutorial: 'Samouczek (7 kroków)',
     campaign: 'Kampania (5 misji)',
   },
   difficultyNames: {
     easy: 'Łatwy',
-    normal: 'Normalny',
+    normal: 'Średni',
     hard: 'Trudny',
   },
   personalityNames: {
@@ -644,8 +650,8 @@ const PL: Strings = {
     crossbowmen: 'Skórznie i kusza — bełty przebijają 60% pancerza ciężkozbrojnych.',
     lightCav: 'Skórznie, piki, miecze i tarcze — szybkie oskrzydlenie strzelców i dział.',
     heavyCav: 'Rycerze ciężkozbrojni z kopią, mieczem i tarczą — miażdżąca szarża.',
-    cannon: 'Płaski ogień 120 m burzy mury i baszty; chroń przed jazdą.',
-    mortar: 'Stromy ostrzał 150 m ponad murami; minimalny zasięg 40 m.',
+    cannon: 'Płaski ogień 88 m burzy mury i baszty; chroń przed jazdą.',
+    mortar: 'Stromy ostrzał 112 m ponad murami; minimalny zasięg 35 m.',
   },
 
   buildings: {
@@ -775,12 +781,12 @@ const PL: Strings = {
     4: {
       title: 'IV. Wielki Zaciąg',
       objective: 'Ulepsz Gród do poziomu 3 i wystaw 160 żołnierzy w 10 oddziałach.',
-      briefing: 'Odbuduj sześć ruin za połowę ceny, odeprzyj trzy narastające najazdy (8, 16, 24 min) i zgromadź armię zdolną zdobyć twierdzę.',
+      briefing: 'Zaczynasz w zdobytym środkowym mieście z własnym Grodem i zapasami. Odbuduj ruiny, rozwiń gospodarkę, odeprzyj drobne najazdy po 25. minucie i wystaw wielką armię.',
     },
     5: {
       title: 'V. Donżon Twierdzy',
       objective: 'Wyłom mur twierdzy i pokonaj gwardię na wewnętrznym dziedzińcu.',
-      briefing: 'Dwa pierścienie murów i dwanaście baszt wieńczą skalny płaskowyż. Użyj dział i moździerzy, odeprzyj wycieczkę i odsiecz z 15. minuty, i zdobądź dziedziniec.',
+      briefing: 'Twoje oddziały i artyleria czekają przy południowej osadzie po Twojej stronie rzeki. Najpierw rozbuduj zaplecze, potem przepraw działa i moździerze i zdobądź twierdzę.',
     },
   },
   tutorialSteps: {
@@ -803,5 +809,7 @@ const PL: Strings = {
 export const STRINGS: Record<LangCode, Strings> = { en: EN, pl: PL };
 
 export function qualityLabel(s: Strings, q: QualityPreset): string {
-  return q === 'high' ? s.qualityHigh : s.qualityLow;
+  if (q === 'high') return s.qualityHigh;
+  if (q === 'low') return s.qualityLow;
+  return s.qualityMinimal;
 }

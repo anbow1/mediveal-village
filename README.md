@@ -1,4 +1,12 @@
-# New game AAA — lite
+# Marchland — Medieval Village RTS
+
+**Play in browser / Zagraj w przeglądarce:** https://anbow1.github.io/mediveal-village/
+
+A medieval town-builder and tactical regiment RTS built with Three.js (WebGPU + TSL). Works on desktop and mobile/tablet browsers (with PWA installation support and 3 graphics presets: High, Low, Minimal).
+
+---
+
+## Kit base (New game AAA — lite)
 
 Same goal as `docs/new-game-AAA/`: a new three.js game (WebGPU + TSL, browser
 and APK) as close to AAA as the platform allows. Built to save the model's

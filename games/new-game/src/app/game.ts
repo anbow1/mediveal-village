@@ -237,6 +237,11 @@ export class Game {
       onChangeLighting: (preset) => gameRef?.setLightingPreset(preset),
       onToggleGovernor: (enabled) => gameRef?.setGovernorEnabled(enabled),
       onChangeQuality: (q) => {
+        try {
+          localStorage.setItem('marchland.quality', q);
+        } catch {
+          // Ignore storage restrictions
+        }
         const url = new URL(window.location.href);
         url.searchParams.set('q', q);
         window.location.href = url.toString();
@@ -280,7 +285,8 @@ export class Game {
       typeof (stage.renderer as unknown as { getMaxAnisotropy?: () => number }).getMaxAnisotropy === 'function'
         ? (stage.renderer as unknown as { getMaxAnisotropy: () => number }).getMaxAnisotropy()
         : 8;
-    const anisotropy = Math.min(opts.quality === 'high' ? 8 : 4, maxAniso);
+    const targetAniso = opts.quality === 'high' ? 8 : opts.quality === 'low' ? 4 : 1;
+    const anisotropy = Math.min(targetAniso, maxAniso);
 
     const world = await buildStage5World(
       stage.scene,
@@ -320,6 +326,10 @@ export class Game {
     );
     const startSpot = opts.initialSpot && benchSpots.some((s) => s.name === opts.initialSpot) ? opts.initialSpot : 'showcase';
     camCtrl.applySpotCamera(findBenchSpot(startSpot, benchSpots).camera);
+    if (!opts.initialSpot && opts.autostart && (opts.mode === 'campaign' || opts.mode === 'defence' || opts.mode === 'tutorial' || opts.showcaseMode === false)) {
+      const startKeep = findKeep(sim.state, 0);
+      if (startKeep) camCtrl.jumpTo(startKeep.x, startKeep.z, true);
+    }
     const initDir = new Vector3();
     stage.camera.getWorldDirection(initDir);
     lighting.followCamera(stage.camera.position);

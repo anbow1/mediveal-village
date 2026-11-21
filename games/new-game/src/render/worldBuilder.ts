@@ -405,7 +405,7 @@ function buildWheatField(
   const sway = sin(uWindTime.mul(1.85).add(positionLocal.x.mul(2.5))).mul(0.065).mul(bend).mul(bend);
   mat.positionNode = positionLocal.add(vec3(sway, float(0.0), sway.mul(0.55)));
 
-  const spacingM = quality === 'high' ? 0.56 : 0.78;
+  const spacingM = quality === 'high' ? 0.56 : quality === 'low' ? 0.78 : 1.15;
   const maxC = 2400;
   const mesh = new InstancedMesh(geo, mat, maxC);
   mesh.name = 'MarchlandWheatClusters';
@@ -563,7 +563,7 @@ function buildShorelineReeds(
     return seed / 4294967296;
   };
 
-  const target = quality === 'high' ? 190 : 105;
+  const target = quality === 'high' ? 190 : quality === 'low' ? 105 : 40;
   const wl = terrain.config.river?.waterLevelM ?? terrain.config.lake.waterLevelM;
   for (let attempt = 0; attempt < target * 45 && matrices.length < target; attempt++) {
     const x = (rand() - 0.5) * 440;

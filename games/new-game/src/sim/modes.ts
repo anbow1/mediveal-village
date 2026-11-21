@@ -2,13 +2,15 @@
 // Implements Skirmish, Defence, 7-step Tutorial, and Campaign Missions 1–5 per docs/CAMPAIGN.md & BRIEF.md F20–F21.
 
 import {
+  BUILDING_DEFS,
   CAMPAIGN,
+  DIFFICULTY_SETTINGS,
   ECONOMY,
   type BuildingTypeId,
   type UnitTypeId,
 } from '../config.ts';
 import { countAliveSoldiers, pushAlert, spawnRegiment } from './combat.ts';
-import { findKeep } from './economy.ts';
+import { findKeep, spawnCitizen } from './economy.ts';
 import type {
   BuildingEntity,
   CampaignCarryOver,
@@ -56,6 +58,97 @@ export function applyMissionSetup(
   missionId: CampaignMissionId,
   carryOver?: CampaignCarryOver,
 ): void {
+  const diffCfg = DIFFICULTY_SETTINGS[state.scenario.difficulty];
+  const scaleEnemyMen = (base: number): number => Math.max(4, Math.min(20, Math.round(base * diffCfg.enemyArmyMul)));
+
+  // Mission 4: Start exclusively inside the conquered central city (118, 0) — single unified settlement with Keep & starting stock!
+  if (missionId === 4) {
+    // Remove disconnected old western town & eastern camp tents so logistics stay cleanly centered in the conquered city
+    const removedIds = new Set<number>();
+    state.buildings = state.buildings.filter((b) => {
+      if (b.x < 40 || b.x > 180) {
+        removedIds.add(b.id);
+        return false;
+      }
+      return true;
+    });
+    state.citizens = state.citizens.filter((c) => !removedIds.has(c.homeBuildingId));
+
+    // Shift market slightly west if right next to Keep spot (118, 0) so buildings never overlap
+    for (const b of state.buildings) {
+      if (b.type === 'market' && Math.hypot(b.x - 118, b.z) < 12) {
+        b.x = 102;
+        b.z = -11;
+      }
+    }
+
+    // Place Player Keep right in the conquered central city with 8 starting residents!
+    const keepDef = BUILDING_DEFS.keep;
+    const conqueredKeep: BuildingEntity = {
+      id: state.nextEntityId++,
+      side: 0,
+      type: 'keep',
+      level: 1,
+      x: 118,
+      z: 0,
+      yawRad: Math.PI * 0.5,
+      hp: keepDef.maxHp,
+      maxHp: keepDef.maxHp,
+      buildProgress: 1,
+      buildCostNeeded: {},
+      buildCostDelivered: {},
+      upgradingToLevel: null,
+      upgradeTimerS: 0,
+      paused: false,
+      status: 'idle',
+      inputs: {},
+      yard: {},
+      pendingOrders: 0,
+      residents: ECONOMY.keepResidents,
+      houseFoodRations: 0,
+      houseWineCasks: 0,
+      hungry: false,
+      growthTimerS: 0,
+      cycleTimerS: 0,
+      yardFullTimerS: 0,
+      strips: [],
+      recruitQueue: [],
+      fireCooldownS: 0,
+      garrisonRegimentIds: [],
+      garrisonType: null,
+      garrisonCount: 0,
+      isFortressDonzon: false,
+    };
+    state.buildings.push(conqueredKeep);
+    for (let i = 0; i < ECONOMY.keepResidents; i++) {
+      spawnCitizen(state, 0, conqueredKeep);
+    }
+
+    const ruinTargets: readonly BuildingTypeId[] = ['house', 'house', 'house', 'bakery', 'windmill', 'market'];
+    let rIdx = 0;
+    for (const b of state.buildings) {
+      if (b.x >= 60 && b.x <= 170) {
+        b.side = 0;
+        if (b.type === 'ruin') {
+          b.ruinTargetType = ruinTargets[rIdx % ruinTargets.length]!;
+          rIdx++;
+        }
+      }
+    }
+    // Flip any surviving citizens of the central city houses to player side 0
+    for (const c of state.citizens) {
+      if (c.x >= 60 && c.x <= 170) c.side = 0;
+    }
+
+    // Generous conquered-city starting resources scaled by difficulty!
+    const stock = state.sides[0].stock;
+    stock.gold = Math.max(stock.gold, Math.round(420 * diffCfg.playerStockMul));
+    stock.timber = Math.max(stock.timber, Math.round(120 * diffCfg.playerStockMul));
+    stock.stone = Math.max(stock.stone, Math.round(60 * diffCfg.playerStockMul));
+    stock.bread = Math.max(stock.bread, Math.round(60 * diffCfg.playerStockMul));
+    state.visualRevision++;
+  }
+
   const playerKeep = findKeep(state, 0);
   const px = playerKeep?.x ?? -100;
   const pz = playerKeep?.z ?? 0;
@@ -65,7 +158,10 @@ export function applyMissionSetup(
     state.sides[0].stock.gold = Math.max(state.sides[0].stock.gold, carryOver.gold + 200);
     for (let i = 0; i < carryOver.regiments.length; i++) {
       const cr = carryOver.regiments[i]!;
-      spawnRegiment(state, 0, cr.unitType, px + 24 + (i % 4) * 11, pz - 16 + Math.floor(i / 4) * 14, Math.PI * 0.5, {
+      const sx = missionId === 5 ? -24 + (i % 4) * 16 : px + 24 + (i % 4) * 11;
+      const sz = missionId === 5 ? 142 + Math.floor(i / 4) * 12 : pz - 16 + Math.floor(i / 4) * 14;
+      const syaw = missionId === 5 ? Math.PI : Math.PI * 0.5;
+      spawnRegiment(state, 0, cr.unitType, sx, sz, syaw, {
         count: cr.aliveMen,
         kills: cr.kills,
         veteranTier: cr.veteranTier,
@@ -89,16 +185,16 @@ export function applyMissionSetup(
       ['crossbowmen', 114, 18],
     ];
     for (const [ut, x, z] of enemyUnits) {
-      spawnRegiment(state, 1, ut, x, z, -Math.PI * 0.5, { count: 20, noUpkeep: true, scenarioTag: 'm1_invader' });
+      spawnRegiment(state, 1, ut, x, z, -Math.PI * 0.5, { count: scaleEnemyMen(18), noUpkeep: true, scenarioTag: 'm1_invader' });
     }
     pushAlert(state, 0, 'missionInfo', 86, 0, 'M1: Pay 600g / 200 bread / 40 weapons within 30 min');
   } else if (missionId === 2) {
     // Mission 2: Camp Across the River — 3 camp regiments + 2 flanking raiding detachments
-    spawnRegiment(state, 1, 'swordsmen', 92, 0, -Math.PI * 0.5, { count: 16, noUpkeep: true, scenarioTag: 'm2_camp' });
-    spawnRegiment(state, 1, 'pikemen', 92, 12, -Math.PI * 0.5, { count: 16, noUpkeep: true, scenarioTag: 'm2_camp' });
-    spawnRegiment(state, 1, 'crossbowmen', 106, 6, -Math.PI * 0.5, { count: 14, noUpkeep: true, scenarioTag: 'm2_camp' });
-    spawnRegiment(state, 1, 'lightCav', 135, -105, -Math.PI * 0.5, { count: 10, noUpkeep: true, scenarioTag: 'm2_raider_n' });
-    spawnRegiment(state, 1, 'lightCav', 135, 110, -Math.PI * 0.5, { count: 10, noUpkeep: true, scenarioTag: 'm2_raider_s' });
+    spawnRegiment(state, 1, 'swordsmen', 92, 0, -Math.PI * 0.5, { count: scaleEnemyMen(16), noUpkeep: true, scenarioTag: 'm2_camp' });
+    spawnRegiment(state, 1, 'pikemen', 92, 12, -Math.PI * 0.5, { count: scaleEnemyMen(16), noUpkeep: true, scenarioTag: 'm2_camp' });
+    spawnRegiment(state, 1, 'crossbowmen', 106, 6, -Math.PI * 0.5, { count: scaleEnemyMen(14), noUpkeep: true, scenarioTag: 'm2_camp' });
+    spawnRegiment(state, 1, 'lightCav', 135, -105, -Math.PI * 0.5, { count: scaleEnemyMen(10), noUpkeep: true, scenarioTag: 'm2_raider_n' });
+    spawnRegiment(state, 1, 'lightCav', 135, 110, -Math.PI * 0.5, { count: scaleEnemyMen(10), noUpkeep: true, scenarioTag: 'm2_raider_s' });
     if (state.regiments.filter((r) => r.side === 0).length === 0) {
       spawnRegiment(state, 0, 'swordsmen', px + 26, pz - 8, Math.PI * 0.5, { count: 16 });
       spawnRegiment(state, 0, 'pikemen', px + 26, pz + 8, Math.PI * 0.5, { count: 16 });
@@ -117,7 +213,7 @@ export function applyMissionSetup(
       ['archers', vx + 16, vz],
     ];
     for (const [ut, x, z] of defs) {
-      spawnRegiment(state, 1, ut, x, z, -Math.PI * 0.5, { count: 16, noUpkeep: true, scenarioTag: 'm3_garrison' });
+      spawnRegiment(state, 1, ut, x, z, -Math.PI * 0.5, { count: scaleEnemyMen(16), noUpkeep: true, scenarioTag: 'm3_garrison' });
     }
     // Garrison village watchtower with 4 crossbowmen
     const vTower = state.buildings.find((b) => b.type === 'watchtower' && Math.hypot(b.x - vx, b.z - vz) < 40);
@@ -128,22 +224,11 @@ export function applyMissionSetup(
     }
     pushAlert(state, 0, 'missionInfo', vx, vz, 'M3: Hold the central village square for 20 s');
   } else if (missionId === 4) {
-    // Mission 4: Rebuilding & Great Army — central village & 6 half-price ruins belong to Player!
-    const ruinTargets: readonly BuildingTypeId[] = ['house', 'house', 'house', 'bakery', 'windmill', 'market'];
-    let rIdx = 0;
-    for (const b of state.buildings) {
-      if (b.x > 60 && b.x < 170) {
-        b.side = 0;
-        if (b.type === 'ruin') {
-          b.ruinTargetType = ruinTargets[rIdx % ruinTargets.length]!;
-          rIdx++;
-        }
-      }
-    }
-    pushAlert(state, 0, 'missionInfo', 118, 0, 'M4: Rebuild ruins, reach Keep L3 & 160 soldiers in 10 regiments');
+    pushAlert(state, 0, 'missionInfo', 118, 0, 'M4: Rebuild the conquered city, reach Keep L3 & 160 soldiers (small raids after 25 min)');
   } else if (missionId === 5) {
-    // Mission 5: The Fortress — 2x wall/gate HP, 2 crossbowmen per tower, indestructible Donżon,
-    // player starts with carried-over army + 2 cannons + 2 mortars + barracks & gun foundry!
+    // Mission 5: The Fortress — 2x wall/gate HP, 2 crossbowmen per tower, indestructible Donżon.
+    // Player army & siege guns wait safely on the southern settlement side of the river (z = 136..158)
+    // so the player can expand their southern settlement & economic base before crossing the ford!
     for (const w of state.walls) {
       w.maxHp = Math.round(ECONOMY.wallSegmentHp * CAMPAIGN.m5WallHpMul);
       w.hp = w.maxHp;
@@ -163,35 +248,42 @@ export function applyMissionSetup(
       }
     }
 
-    // Ensure player siege battery: 2 cannons + 2 mortars + assault regiments if no carryOver!
-    spawnRegiment(state, 0, 'cannon', -10, 88, Math.PI, { count: 2 });
-    spawnRegiment(state, 0, 'cannon', 10, 88, Math.PI, { count: 2 });
-    spawnRegiment(state, 0, 'mortar', -18, 98, Math.PI, { count: 1 });
-    spawnRegiment(state, 0, 'mortar', 18, 98, Math.PI, { count: 1 });
+    // Starting siege base resources scaled by difficulty
+    const stock = state.sides[0].stock;
+    stock.gold = Math.max(stock.gold, Math.round(450 * diffCfg.playerStockMul));
+    stock.timber = Math.max(stock.timber, Math.round(120 * diffCfg.playerStockMul));
+    stock.stone = Math.max(stock.stone, Math.round(60 * diffCfg.playerStockMul));
+    stock.bread = Math.max(stock.bread, Math.round(60 * diffCfg.playerStockMul));
+
+    // Player siege battery & waiting assault regiments stationed south of the river (z = 136..158) beside the southern camp!
+    spawnRegiment(state, 0, 'cannon', -12, 148, Math.PI, { count: 2 });
+    spawnRegiment(state, 0, 'cannon', 12, 148, Math.PI, { count: 2 });
+    spawnRegiment(state, 0, 'mortar', -22, 156, Math.PI, { count: 1 });
+    spawnRegiment(state, 0, 'mortar', 22, 156, Math.PI, { count: 1 });
     if (state.regiments.filter((r) => r.side === 0 && r.unitType !== 'cannon' && r.unitType !== 'mortar').length === 0) {
       const defaults: readonly [UnitTypeId, number, number][] = [
-        ['swordsmen', -24, 68],
-        ['swordsmen', 24, 68],
-        ['pikemen', -12, 74],
-        ['halberdiers', 12, 74],
-        ['crossbowmen', 0, 80],
-        ['heavyCav', -34, 82],
+        ['swordsmen', -26, 138],
+        ['swordsmen', 26, 138],
+        ['pikemen', -12, 136],
+        ['halberdiers', 12, 136],
+        ['crossbowmen', 0, 142],
+        ['heavyCav', -36, 148],
       ];
       for (const [ut, x, z] of defaults) {
-        spawnRegiment(state, 0, ut, x, z, Math.PI, { count: 20 });
+        spawnRegiment(state, 0, ut, x, z, Math.PI, { count: 16 });
       }
     }
 
     // Fortress Defenders: outer bailey garrison, gate sortie force, and 2 elite Courtyard Heavy Cav Guard!
-    spawnRegiment(state, 1, 'heavyCav', -12, -26, 0, { count: 16, noUpkeep: true, scenarioTag: 'm5_guard' });
-    spawnRegiment(state, 1, 'heavyCav', 12, -26, 0, { count: 16, noUpkeep: true, scenarioTag: 'm5_guard' });
-    spawnRegiment(state, 1, 'heavyCav', -16, 12, 0, { count: 12, noUpkeep: true, scenarioTag: 'm5_sortie' });
-    spawnRegiment(state, 1, 'swordsmen', 16, 12, 0, { count: 16, noUpkeep: true, scenarioTag: 'm5_sortie' });
-    spawnRegiment(state, 1, 'pikemen', -32, -10, 0, { count: 16, noUpkeep: true, scenarioTag: 'm5_bailey' });
-    spawnRegiment(state, 1, 'halberdiers', 32, -10, 0, { count: 16, noUpkeep: true, scenarioTag: 'm5_bailey' });
-    spawnRegiment(state, 1, 'crossbowmen', 0, -2, 0, { count: 16, noUpkeep: true, scenarioTag: 'm5_bailey' });
+    spawnRegiment(state, 1, 'heavyCav', -12, -26, 0, { count: scaleEnemyMen(16), noUpkeep: true, scenarioTag: 'm5_guard' });
+    spawnRegiment(state, 1, 'heavyCav', 12, -26, 0, { count: scaleEnemyMen(16), noUpkeep: true, scenarioTag: 'm5_guard' });
+    spawnRegiment(state, 1, 'heavyCav', -16, 12, 0, { count: scaleEnemyMen(12), noUpkeep: true, scenarioTag: 'm5_sortie' });
+    spawnRegiment(state, 1, 'swordsmen', 16, 12, 0, { count: scaleEnemyMen(16), noUpkeep: true, scenarioTag: 'm5_sortie' });
+    spawnRegiment(state, 1, 'pikemen', -32, -10, 0, { count: scaleEnemyMen(16), noUpkeep: true, scenarioTag: 'm5_bailey' });
+    spawnRegiment(state, 1, 'halberdiers', 32, -10, 0, { count: scaleEnemyMen(16), noUpkeep: true, scenarioTag: 'm5_bailey' });
+    spawnRegiment(state, 1, 'crossbowmen', 0, -2, 0, { count: scaleEnemyMen(16), noUpkeep: true, scenarioTag: 'm5_bailey' });
 
-    pushAlert(state, 0, 'missionInfo', 0, -48, 'M5: Breach the twin walls and defeat the Courtyard Guard');
+    pushAlert(state, 0, 'missionInfo', 0, 160, 'M5: Expand your southern camp, then cross the ford to storm the Fortress');
   }
 }
 
@@ -215,6 +307,8 @@ export function stepScenario(state: SimWorldState, dtS: number): void {
 
   const p0Keep = findKeep(state, 0);
   const p1Keep = findKeep(state, 1);
+  const enemyMul = DIFFICULTY_SETTINGS[sc.difficulty].enemyArmyMul;
+  const scaleMen = (base: number): number => Math.max(4, Math.min(20, Math.round(base * enemyMul)));
 
   // 1. Tutorial 7 state-driven auto-completing steps (BRIEF.md F20)
   if (sc.mode === 'tutorial') {
@@ -249,7 +343,7 @@ export function stepScenario(state: SimWorldState, dtS: number): void {
     return;
   }
 
-  // 2. Defence mode: 10 escalating waves every 4 min from min 7, win at 30 min!
+  // 2. Defence mode: 25 min prep to wave 1, then 10 escalating waves every 5 min (scaled by difficulty)!
   if (sc.mode === 'defence') {
     if (!p0Keep) {
       sc.outcome = 'defeat';
@@ -261,17 +355,26 @@ export function stepScenario(state: SimWorldState, dtS: number): void {
       sc.nextWaveTimeS = state.timeS + CAMPAIGN.defenceWaveIntervalS;
       const sx = -p0Keep.x > 0 ? 195 : -195;
       const sz = 0;
-      const waveCount = Math.min(6, 1 + Math.ceil(sc.waveIndex * 0.6));
+      const baseCount = Math.min(8, 2 + Math.floor(sc.waveIndex * 0.7));
+      const waveCount = Math.max(1, Math.round(baseCount * enemyMul));
       const pool: readonly UnitTypeId[] =
         sc.waveIndex <= 2
-          ? ['pikemen', 'archers']
-          : sc.waveIndex <= 5
-            ? ['swordsmen', 'crossbowmen', 'lightCav']
-            : ['swordsmen', 'halberdiers', 'heavyCav', 'crossbowmen'];
+          ? ['militia', 'pikemen', 'archers']
+          : sc.waveIndex <= 4
+            ? ['pikemen', 'swordsmen', 'archers', 'crossbowmen']
+            : sc.waveIndex <= 7
+              ? ['swordsmen', 'halberdiers', 'crossbowmen', 'lightCav']
+              : ['swordsmen', 'halberdiers', 'heavyCav', 'crossbowmen', 'cannon'];
       const spawned: RegimentEntity[] = [];
       for (let k = 0; k < waveCount; k++) {
         const ut = pool[(sc.waveIndex + k) % pool.length]!;
-        spawned.push(spawnRegiment(state, 1, ut, sx, sz + (k - waveCount * 0.5) * 14, Math.atan2(p0Keep.x - sx, p0Keep.z - sz), { noUpkeep: true }));
+        const countOpt = ut === 'cannon' || ut === 'mortar' ? undefined : scaleMen(12 + Math.min(6, sc.waveIndex));
+        spawned.push(
+          spawnRegiment(state, 1, ut, sx, sz + (k - waveCount * 0.5) * 14, Math.atan2(p0Keep.x - sx, p0Keep.z - sz), {
+            count: countOpt,
+            noUpkeep: true,
+          }),
+        );
       }
       orderRegimentsTo(spawned, p0Keep.x, p0Keep.z, p0Keep.id);
       pushAlert(state, 0, 'waveIncoming', sx, sz, `Wave ${sc.waveIndex}/10`);
@@ -301,7 +404,7 @@ export function stepScenario(state: SimWorldState, dtS: number): void {
         sc.starsEarned = p0Regs >= 4 ? 3 : 2;
         return;
       }
-      // Deadline elapsed -> 200-man invader host assaults player town!
+      // Deadline elapsed -> invader host assaults player town!
       if (state.timeS >= CAMPAIGN.m1DeadlineS) {
         if (!sc.firedTriggers.includes('m1_assault')) {
           sc.firedTriggers.push('m1_assault');
@@ -361,9 +464,9 @@ export function stepScenario(state: SimWorldState, dtS: number): void {
       if (state.timeS >= CAMPAIGN.m3ReliefTimeS && !sc.firedTriggers.includes('m3_relief')) {
         sc.firedTriggers.push('m3_relief');
         const relief = [
-          spawnRegiment(state, 1, 'heavyCav', 210, -8, -Math.PI * 0.5, { count: 16, noUpkeep: true, scenarioTag: 'm3_relief' }),
-          spawnRegiment(state, 1, 'swordsmen', 216, 4, -Math.PI * 0.5, { count: 16, noUpkeep: true, scenarioTag: 'm3_relief' }),
-          spawnRegiment(state, 1, 'crossbowmen', 222, 12, -Math.PI * 0.5, { count: 16, noUpkeep: true, scenarioTag: 'm3_relief' }),
+          spawnRegiment(state, 1, 'heavyCav', 210, -8, -Math.PI * 0.5, { count: scaleMen(14), noUpkeep: true, scenarioTag: 'm3_relief' }),
+          spawnRegiment(state, 1, 'swordsmen', 216, 4, -Math.PI * 0.5, { count: scaleMen(16), noUpkeep: true, scenarioTag: 'm3_relief' }),
+          spawnRegiment(state, 1, 'crossbowmen', 222, 12, -Math.PI * 0.5, { count: scaleMen(14), noUpkeep: true, scenarioTag: 'm3_relief' }),
         ];
         orderRegimentsTo(relief, 118, 0);
         pushAlert(state, 0, 'waveIncoming', 210, 0, 'Enemy relief force enters the eastern pass!');
@@ -393,19 +496,20 @@ export function stepScenario(state: SimWorldState, dtS: number): void {
         sc.outcomeReason = 'keepLost';
         return;
       }
-      // Raids of 2, 3, and 4 full regiments at min 8, 16, 24!
-      const raidSizes = [2, 3, 4] as const;
+      // Small raids starting after minute 25 (min 25, 30, 35), scaled by difficulty!
+      const raidSizes = [1, 2, 2] as const;
       for (let i = 0; i < 3; i++) {
         const key = `m4_raid_${i}`;
         if (state.timeS >= CAMPAIGN.m4RaidTimesS[i]! && !sc.firedTriggers.includes(key)) {
           sc.firedTriggers.push(key);
           const spawned: RegimentEntity[] = [];
-          const types: readonly UnitTypeId[] = ['swordsmen', 'crossbowmen', 'heavyCav', 'halberdiers'];
-          for (let k = 0; k < raidSizes[i]!; k++) {
-            spawned.push(spawnRegiment(state, 1, types[k % types.length]!, 215, -14 + k * 12, -Math.PI * 0.5, { count: 16, noUpkeep: true }));
+          const types: readonly UnitTypeId[] = ['lightCav', 'swordsmen', 'crossbowmen'];
+          const regCount = Math.max(1, Math.round(raidSizes[i]! * enemyMul));
+          for (let k = 0; k < regCount; k++) {
+            spawned.push(spawnRegiment(state, 1, types[(i + k) % types.length]!, 215, -10 + k * 12, -Math.PI * 0.5, { count: scaleMen(12), noUpkeep: true }));
           }
           orderRegimentsTo(spawned, p0Keep.x, p0Keep.z, p0Keep.id);
-          pushAlert(state, 0, 'waveIncoming', 215, 0, `Raid ${i + 1}/3 advancing down the valley!`);
+          pushAlert(state, 0, 'waveIncoming', 215, 0, `Small raid ${i + 1}/3 advancing from the pass!`);
         }
       }
       // Win: Keep L3 AND >= 160 soldiers in >= 10 regiments!
@@ -454,9 +558,9 @@ export function stepScenario(state: SimWorldState, dtS: number): void {
       if (state.timeS >= CAMPAIGN.m5ReliefTimeS && !sc.firedTriggers.includes('m5_relief')) {
         sc.firedTriggers.push('m5_relief');
         const relief = [
-          spawnRegiment(state, 1, 'heavyCav', -45, 225, 0, { count: 16, noUpkeep: true, scenarioTag: 'm5_relief' }),
-          spawnRegiment(state, 1, 'swordsmen', 0, 228, 0, { count: 16, noUpkeep: true, scenarioTag: 'm5_relief' }),
-          spawnRegiment(state, 1, 'crossbowmen', 45, 225, 0, { count: 16, noUpkeep: true, scenarioTag: 'm5_relief' }),
+          spawnRegiment(state, 1, 'heavyCav', -45, 225, 0, { count: scaleMen(14), noUpkeep: true, scenarioTag: 'm5_relief' }),
+          spawnRegiment(state, 1, 'swordsmen', 0, 228, 0, { count: scaleMen(16), noUpkeep: true, scenarioTag: 'm5_relief' }),
+          spawnRegiment(state, 1, 'crossbowmen', 45, 225, 0, { count: scaleMen(14), noUpkeep: true, scenarioTag: 'm5_relief' }),
         ];
         orderRegimentsTo(relief, p0Keep.x, p0Keep.z, p0Keep.id);
         pushAlert(state, 0, 'waveIncoming', 0, 225, 'Enemy relief army arrives behind your camp!');
@@ -469,7 +573,7 @@ export function stepScenario(state: SimWorldState, dtS: number): void {
         if (enemyBar) {
           sc.firedTriggers.push(`m5_bar_${spawnIdx}`);
           const rot: readonly UnitTypeId[] = ['swordsmen', 'crossbowmen', 'pikemen'];
-          spawnRegiment(state, 1, rot[spawnIdx % 3]!, enemyBar.x, enemyBar.z + 8, 0, { count: 14, noUpkeep: true });
+          spawnRegiment(state, 1, rot[spawnIdx % 3]!, enemyBar.x, enemyBar.z + 8, 0, { count: scaleMen(14), noUpkeep: true });
         }
       }
 

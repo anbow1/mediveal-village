@@ -12,10 +12,22 @@ import type { AiPersonality, CampaignMissionId, Difficulty, GameMode } from './s
 import { Game } from './app/game.ts';
 
 function parseQuality(raw: string | null): QualityPreset {
-  if (raw === 'low') return 'low';
-  if (raw === 'high') return 'high';
-  // Default phones / coarse touch pointers to Low preset (2x DPR + TRAA + governor).
+  if (raw === 'minimal' || raw === 'low' || raw === 'high') return raw;
+  try {
+    const saved = localStorage.getItem('marchland.quality');
+    if (saved === 'minimal' || saved === 'low' || saved === 'high') return saved;
+  } catch {
+    // Ignore storage restrictions
+  }
+  // Default phones / coarse touch pointers to Low preset; desktops to High.
   return window.matchMedia?.('(pointer: coarse)').matches ? 'low' : 'high';
+}
+
+// Register PWA Service Worker over HTTPS (or ?sw locally) so Chrome on Android tablets & desktops offers "Install App"
+if ('serviceWorker' in navigator) {
+  if (location.protocol === 'https:' || new URLSearchParams(location.search).has('sw')) {
+    navigator.serviceWorker.register('./sw.js').catch(() => undefined);
+  }
 }
 
 function parseLighting(raw: string | null): LightingPresetId {
