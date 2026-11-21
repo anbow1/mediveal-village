@@ -168,7 +168,7 @@ export class RtsCameraController {
               targetX: this.goal.targetX + delta.dx,
               targetZ: this.goal.targetZ + delta.dz,
               distanceM: this.goal.distanceM * zoomRatio,
-              yawRad: this.goal.yawRad - dAngle,
+              yawRad: this.goal.yawRad + dAngle,
             });
           }
           this.prevPinchDist = dist;
