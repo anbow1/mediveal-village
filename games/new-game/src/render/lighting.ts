@@ -122,9 +122,9 @@ export class LightingRig {
     this.hemi.name = 'SkyHemisphereLight';
     scene.add(this.hemi);
 
-    // 3. Single analytic sky dome (fog disabled; follows camera position).
+    // 3. Single analytic sky dome (fog disabled; follows camera position; wraps outside 1120 m distant horizon hills).
     const skyMat = createSkyDomeMaterial(this.skyUniforms);
-    this.skyDome = new Mesh(new SphereGeometry(900, 32, 20), skyMat);
+    this.skyDome = new Mesh(new SphereGeometry(1140, 32, 20), skyMat);
     this.skyDome.name = 'SkyDome';
     this.skyDome.frustumCulled = false;
     this.skyDome.renderOrder = -1000;
@@ -251,9 +251,23 @@ export class LightingRig {
     this.skyUniforms.uWaterTimeS.value += dtS;
   }
 
-  /** Keeps sky dome centered on the camera so it never clips into world geometry. */
+  /**
+   * Keeps sky dome centered on camera, adapts atmospheric haze to camera altitude (lush depth at village height,
+   * crisp clarity at high tactical RTS altitude — ported from FPS/marchland), and texel-snaps the sun target
+   * so shadow edges stay rock-steady while panning.
+   */
   followCamera(camPos: Vector3): void {
     this.skyDome.position.copy(camPos);
+    const altM = Math.max(1, camPos.y);
+    this.skyUniforms.uHazeShare.value = Math.min(1.0, Math.max(0.28, 72 / altM));
+    if (this.quality.shadowCascades > 0) {
+      const texelM = Math.max(0.25, (2 * this.quality.shadowMaxFarM) / Math.max(256, this.quality.shadowMapSizePx));
+      const sx = Math.round(camPos.x / texelM) * texelM;
+      const sz = Math.round(camPos.z / texelM) * texelM;
+      this.sun.target.position.set(sx, 0, sz);
+      this.sun.position.copy(this.sun.target.position).addScaledVector(this.state.sunDirection, 180);
+      this.sun.target.updateMatrixWorld();
+    }
   }
 
   getShadowInfo(): ShadowConfigSummary {

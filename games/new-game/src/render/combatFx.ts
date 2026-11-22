@@ -11,18 +11,19 @@
 
 import {
   BoxGeometry,
+  BufferAttribute,
   Color,
   ConeGeometry,
   CylinderGeometry,
   DoubleSide,
   DynamicDrawUsage,
   Euler,
+  IcosahedronGeometry,
+  InstancedBufferAttribute,
   InstancedMesh,
   Matrix4,
   MeshBasicNodeMaterial,
   MeshStandardNodeMaterial,
-  Object3D,
-  PlaneGeometry,
   Quaternion,
   RingGeometry,
   SphereGeometry,
@@ -30,7 +31,7 @@ import {
   type BufferGeometry,
   type Scene,
 } from 'three/webgpu';
-import { float, length, smoothstep, uv, vec2 } from 'three/tsl';
+import { abs, attribute, dot, float, normalView, pow, vec3 } from 'three/tsl';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { markStaticInstances } from './instancing.ts';
 import { BUILDING_DEFS, UNIT_DEFS, type BuildingTypeId, type GoodId } from '../config.ts';
@@ -112,7 +113,6 @@ const TEMP_POS = new Vector3();
 const TEMP_QUAT = new Quaternion();
 const TEMP_SCALE = new Vector3();
 const TEMP_EULER = new Euler();
-const BILLBOARD_DUMMY = new Object3D();
 const UP = new Vector3(0, 1, 0);
 const DIR_TMP = new Vector3();
 
@@ -165,8 +165,7 @@ function mergePartGeos(parts: BufferGeometry[]): BufferGeometry {
     if (!g.getAttribute('normal')) g.computeVertexNormals();
     if (!g.getAttribute('uv')) {
       const cnt = g.getAttribute('position').count;
-      g.setAttribute('uv', raw.getAttribute('uv')?.clone() ?? new PlaneGeometry(1, 1).getAttribute('uv'));
-      void cnt;
+      g.setAttribute('uv', raw.getAttribute('uv')?.clone() ?? new BufferAttribute(new Float32Array(cnt * 2), 2));
     }
     normalized.push(g);
     raw.dispose();
@@ -342,21 +341,33 @@ export function buildCombatFx(scene: Scene): CombatFxHandles {
   mats.push(solidMat);
 
   // Soft feathered billboarding TSL smoke/dust wisp material (matches chimney smoke realism — zero hard opaque spheres!)
-  const smokeMat = new MeshBasicNodeMaterial({
+  // Volumetric lit blackpowder smoke (ported from FPS/marchland shotSmokeView.ts):
+  // thin at the rim, thick in the core via view-space normal dot Z -> soft billowing 3D cloud lit by sun & sky!
+  const puffFadeAttr = new InstancedBufferAttribute(new Float32Array(180), 1);
+  puffFadeAttr.setUsage(DynamicDrawUsage);
+  const puffGeo = new IcosahedronGeometry(1, 1);
+  puffGeo.setAttribute('aFade', puffFadeAttr);
+  geos.push(puffGeo);
+
+  const smokeMat = new MeshStandardNodeMaterial({
     color: 0xffffff,
+    roughness: 1.0,
+    metalness: 0.0,
     transparent: true,
     depthWrite: false,
     fog: true,
-    side: DoubleSide,
   });
   smokeMat.name = 'MarchlandCombatFxSmoke';
   {
-    const p = uv(0).mul(2.0).sub(vec2(1.0));
-    const r = length(p);
-    const softDisc = float(1.0).sub(smoothstep(float(0.04), float(0.95), r));
-    smokeMat.opacityNode = softDisc.mul(softDisc).mul(float(0.46));
+    const facing = pow(abs(dot(normalView, vec3(0, 0, 1))), float(1.6));
+    smokeMat.opacityNode = attribute('aFade', 'float').mul(facing).mul(float(0.54));
   }
   mats.push(smokeMat);
+
+  // Crisp bright muzzle flash material (120 ms blink on cannon/mortar shots & blasts)
+  const flashMat = new MeshBasicNodeMaterial({ color: 0xffd27a, fog: true });
+  flashMat.name = 'MarchlandCombatFxFlash';
+  mats.push(flashMat);
 
   // Sleek double-sided tactical ground overlay material (thin selection rings, formation slots, build ghost)
   const ringMat = new MeshStandardNodeMaterial({
@@ -399,11 +410,13 @@ export function buildCombatFx(scene: Scene): CombatFxHandles {
   geos.push(shellGeo);
   const shellMesh = makeInstanced(scene, 'Fx_Shells', shellGeo, solidMat, 48, false);
 
-  // 6. Soft feathered billboarding blackpowder smoke & dust wisps (cap 180)
-  const puffGeo = new PlaneGeometry(1, 1);
-  geos.push(puffGeo);
+  // 6. Volumetric Fresnel blackpowder smoke & dust clouds (cap 180) + crisp muzzle flashes (cap 24)
   const puffMesh = makeInstanced(scene, 'Fx_BattleSmoke', puffGeo, smokeMat, 180, false);
   puffMesh.renderOrder = 6;
+  const flashGeo = new IcosahedronGeometry(1, 0);
+  geos.push(flashGeo);
+  const flashMesh = makeInstanced(scene, 'Fx_MuzzleFlash', flashGeo, flashMat, 24, false);
+  flashMesh.renderOrder = 7;
 
   // 7. Regiment Heraldic Standards (3.4 m spear flagpole + swallowtail pennant, cap 64)
   const bannerGeo = buildBannerGeometry();
@@ -416,8 +429,22 @@ export function buildCombatFx(scene: Scene): CombatFxHandles {
   geos.push(ringGeo);
   const ringMesh = makeInstanced(scene, 'Fx_TacticalRings', ringGeo, ringMat, 256, false);
 
-  // Active particle pool (bounded at 180 puffs, zero GC thrash)
+  // Active particle pools (bounded, zero GC thrash)
   const puffs: PuffParticle[] = [];
+  interface FlashParticle {
+    x: number;
+    y: number;
+    z: number;
+    size: number;
+    ageS: number;
+    maxAgeS: number;
+  }
+  const flashes: FlashParticle[] = [];
+
+  const spawnFlash = (x: number, y: number, z: number, size: number, maxAgeS = 0.14): void => {
+    if (flashes.length >= 24) flashes.shift();
+    flashes.push({ x, y, z, size, ageS: 0, maxAgeS });
+  };
 
   const spawnPuff = (
     x: number,
@@ -451,43 +478,43 @@ export function buildCombatFx(scene: Scene): CombatFxHandles {
   const spawnFxEvents = (events: readonly FxEvent[]): void => {
     for (const ev of events) {
       if (ev.kind === 'cannonMuzzle') {
-        spawnPuff(ev.x, ev.y + 1.0, ev.z, 0, 0.8, 0, 0.28, 0.65, 1.35, COL_FIRE);
-        for (let i = 0; i < 8; i++) {
-          const ang = (i / 8) * Math.PI * 2 + ev.x;
-          const r = 0.25 + (i % 3) * 0.35;
+        spawnFlash(ev.x, ev.y + 1.05, ev.z, 1.15, 0.13);
+        for (let i = 0; i < 9; i++) {
+          const ang = (i / 9) * Math.PI * 2 + ev.x;
+          const r = 0.25 + (i % 3) * 0.36;
           spawnPuff(
             ev.x + Math.cos(ang) * r,
-            ev.y + 0.9 + (i % 2) * 0.3,
+            ev.y + 0.95 + (i % 2) * 0.28,
             ev.z + Math.sin(ang) * r,
-            Math.cos(ang) * 0.85 + 0.55,
-            1.15 + (i % 4) * 0.28,
-            Math.sin(ang) * 0.85 + 0.25,
-            2.4 + (i % 3) * 0.55,
-            0.75,
-            2.9,
+            Math.cos(ang) * 0.78 + 0.35,
+            0.42 + (i % 4) * 0.22,
+            Math.sin(ang) * 0.78 + 0.2,
+            3.8 + (i % 3) * 0.6,
+            0.55,
+            2.15,
             COL_SMOKE,
           );
         }
       } else if (ev.kind === 'mortarImpact' || ev.kind === 'wallCollapse') {
         const count = ev.kind === 'wallCollapse' ? 10 : 7;
-        spawnPuff(ev.x, ev.y + 0.5, ev.z, 0, 1.1, 0, 0.32, 0.85, 1.65, COL_FIRE);
+        spawnFlash(ev.x, ev.y + 0.65, ev.z, ev.kind === 'wallCollapse' ? 1.45 : 1.25, 0.16);
         for (let i = 0; i < count; i++) {
           const ang = (i / count) * Math.PI * 2 + ev.z * 0.3;
           spawnPuff(
             ev.x + Math.cos(ang) * 0.85,
-            ev.y + 0.45 + (i % 2) * 0.25,
+            ev.y + 0.5 + (i % 2) * 0.25,
             ev.z + Math.sin(ang) * 0.85,
-            Math.cos(ang) * 1.35 + 0.35,
-            1.45 + (i % 3) * 0.45,
-            Math.sin(ang) * 1.35,
-            2.2 + (i % 3) * 0.5,
-            0.9,
-            3.3,
+            Math.cos(ang) * 1.25 + 0.3,
+            1.15 + (i % 3) * 0.42,
+            Math.sin(ang) * 1.25,
+            3.2 + (i % 3) * 0.55,
+            0.7,
+            2.65,
             i % 2 === 0 ? COL_DUST : COL_SMOKE,
           );
         }
       } else if (ev.kind === 'buildHammer' || ev.kind === 'woodChop') {
-        spawnPuff(ev.x, ev.y + 0.8, ev.z, 0.25, 0.9, 0.12, 1.1, 0.55, 1.55, COL_DUST);
+        spawnPuff(ev.x, ev.y + 0.8, ev.z, 0.25, 0.75, 0.12, 1.35, 0.4, 1.15, COL_DUST);
       }
     }
   };
@@ -497,7 +524,7 @@ export function buildCombatFx(scene: Scene): CombatFxHandles {
   const update = (
     dtS: number,
     state: SimWorldState,
-    cameraPos: Vector3,
+    _cameraPos: Vector3,
     heightAt: (x: number, z: number) => number,
     selectedRegimentIds: ReadonlySet<number>,
     selectedBuildingId: number | null,
@@ -872,7 +899,8 @@ export function buildCombatFx(scene: Scene): CombatFxHandles {
       }
     }
 
-    // 4. Advance & Pack Soft Feathered Camera-Facing Smoke & Impact Dust Wisps
+    // 4. Advance & Pack Volumetric View-Fresnel Blackpowder Smoke & Impact Dust Clouds
+    const fadeArr = puffFadeAttr.array as Float32Array;
     let puffCount = 0;
     for (let i = puffs.length - 1; i >= 0; i--) {
       const pf = puffs[i]!;
@@ -881,8 +909,9 @@ export function buildCombatFx(scene: Scene): CombatFxHandles {
         pf.x += pf.vx * dtS;
         pf.y += pf.vy * dtS;
         pf.z += pf.vz * dtS;
-        pf.vx *= 0.96;
-        pf.vz *= 0.96;
+        const drag = Math.exp(-dtS * 0.8);
+        pf.vx *= drag;
+        pf.vz *= drag;
       }
       if (pf.ageS >= pf.maxAgeS) {
         puffs.splice(i, 1);
@@ -890,19 +919,46 @@ export function buildCombatFx(scene: Scene): CombatFxHandles {
       }
       if (puffCount >= 180) continue;
       const u = pf.ageS / pf.maxAgeS;
-      // Smooth sine envelope fades size smoothly to 0 at end-of-life (zero pop!)
-      const env = Math.pow(Math.sin(Math.max(0.02, Math.min(0.99, u)) * Math.PI), 0.45);
-      const sc = Math.max(0.05, (pf.startScale + (pf.endScale - pf.startScale) * Math.sqrt(u)) * env);
-      BILLBOARD_DUMMY.position.set(pf.x, pf.y, pf.z);
-      BILLBOARD_DUMMY.lookAt(cameraPos);
-      BILLBOARD_DUMMY.rotation.z += pf.spin + u * 0.9;
-      BILLBOARD_DUMMY.scale.setScalar(sc);
-      BILLBOARD_DUMMY.updateMatrix();
-      puffMesh.setMatrixAt(puffCount, BILLBOARD_DUMMY.matrix);
-      // Softly desaturate smoke as it cools and dissipates
-      COL_TMP.copy(pf.color).multiplyScalar(0.82 - u * 0.18);
+      const sc = Math.max(0.05, pf.startScale + (pf.endScale - pf.startScale) * Math.sqrt(u));
+      TEMP_POS.set(pf.x, pf.y, pf.z);
+      TEMP_QUAT.setFromAxisAngle(UP, pf.spin + u * 0.6);
+      TEMP_SCALE.set(sc, sc * 0.85, sc);
+      TEMP_MAT.compose(TEMP_POS, TEMP_QUAT, TEMP_SCALE);
+      puffMesh.setMatrixAt(puffCount, TEMP_MAT);
+      // Softly cool smoke tint as it expands and dissipates
+      COL_TMP.copy(pf.color).multiplyScalar(0.88 - u * 0.16);
       puffMesh.setColorAt(puffCount, COL_TMP);
+      fadeArr[puffCount] = Math.pow(Math.max(0, 1 - u), 1.5);
       puffCount++;
+    }
+    if (puffCount === 0) {
+      fadeArr[0] = 0;
+    }
+    puffFadeAttr.clearUpdateRanges();
+    puffFadeAttr.addUpdateRange(0, Math.max(1, puffCount));
+    puffFadeAttr.needsUpdate = true;
+
+    // 5. Advance & Pack Crisp 120 ms Cannon/Mortar Muzzle Flashes
+    let flashCount = 0;
+    for (let i = flashes.length - 1; i >= 0; i--) {
+      const fl = flashes[i]!;
+      if (!paused && dtS > 0) {
+        fl.ageS += dtS;
+      }
+      if (fl.ageS >= fl.maxAgeS) {
+        flashes.splice(i, 1);
+        continue;
+      }
+      if (flashCount >= 24) continue;
+      const u = fl.ageS / fl.maxAgeS;
+      const sc = Math.max(0.05, fl.size * (1 - u * 0.72));
+      TEMP_POS.set(fl.x, fl.y, fl.z);
+      TEMP_QUAT.setFromAxisAngle(UP, fl.ageS * 14);
+      TEMP_SCALE.set(sc, sc * 0.75, sc);
+      TEMP_MAT.compose(TEMP_POS, TEMP_QUAT, TEMP_SCALE);
+      flashMesh.setMatrixAt(flashCount, TEMP_MAT);
+      flashMesh.setColorAt(flashCount, COL_FIRE);
+      flashCount++;
     }
 
     finalizeBatch(horseMesh, horseCount);
@@ -911,6 +967,7 @@ export function buildCombatFx(scene: Scene): CombatFxHandles {
     finalizeBatch(arrowMesh, arrowCount);
     finalizeBatch(shellMesh, shellCount);
     finalizeBatch(puffMesh, puffCount);
+    finalizeBatch(flashMesh, flashCount);
     finalizeBatch(bannerMesh, bannerCount);
     finalizeBatch(ringMesh, ringCount);
   };
@@ -919,7 +976,17 @@ export function buildCombatFx(scene: Scene): CombatFxHandles {
     spawnFxEvents,
     update,
     dispose() {
-      for (const m of [horseMesh, cannonMesh, crateMesh, arrowMesh, shellMesh, puffMesh, bannerMesh, ringMesh]) {
+      for (const m of [
+        horseMesh,
+        cannonMesh,
+        crateMesh,
+        arrowMesh,
+        shellMesh,
+        puffMesh,
+        flashMesh,
+        bannerMesh,
+        ringMesh,
+      ]) {
         scene.remove(m);
       }
       for (const g of geos) g.dispose();

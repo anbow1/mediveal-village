@@ -833,6 +833,200 @@ function createMultiLodBatch(
 /**
  * Builds the complete 560 x 560 m Stage 5 World for any of the 5 campaign/skirmish maps!
  */
+/**
+ * Builds the 360-degree distant wooded lowland & rolling hill ring outside the 560 x 560 m battlefield
+ * (ported from FPS/marchland horizonView.ts) so low camera angles always see a continuous horizon fading into
+ * aerial perspective haze instead of an abrupt world edge. Fits cleanly inside both 1200 m (Low/Minimal)
+ * and 1800 m (High) camera far planes.
+ */
+function buildDistantHorizon(
+  scene: Scene,
+  disposableMats: Material[],
+  disposableGeos: BufferGeometry[],
+): { readonly meshes: readonly Mesh[] } {
+  const material = new MeshStandardNodeMaterial({
+    color: 0x2f3d26,
+    roughness: 1.0,
+    metalness: 0.0,
+  });
+  material.name = 'MarchlandHorizonWoodlandMat';
+  disposableMats.push(material);
+
+  const lowlandGeo = new PlaneGeometry(2240, 2240);
+  lowlandGeo.rotateX(-Math.PI / 2);
+  disposableGeos.push(lowlandGeo);
+  const lowland = new Mesh(lowlandGeo, material);
+  lowland.name = 'MarchlandHorizonLowland';
+  lowland.position.y = -18.0;
+  lowland.receiveShadow = false;
+  lowland.castShadow = false;
+  scene.add(lowland);
+
+  const segments = 144;
+  const hillsFromM = 460;
+  const hillsCrestM = 780;
+  const hillsToM = 1100;
+  const hillsMaxH = 128;
+
+  const positions = new Float32Array((segments + 1) * 3 * 3);
+  const indices: number[] = [];
+  const fbmRing = (x: number, y: number): number => {
+    const a = Math.sin(x * 1.9 + y * 1.3) * Math.cos(y * 2.1 - x * 1.1);
+    const b = Math.sin(x * 4.3 - y * 3.7 + 1.4) * Math.cos(x * 3.5 + y * 4.1);
+    const c = Math.sin(x * 8.1 + y * 6.9 - 2.2) * 0.5;
+    return 0.5 + 0.5 * (a * 0.55 + b * 0.30 + c * 0.15);
+  };
+
+  for (let i = 0; i <= segments; i++) {
+    const a = (i / segments) * Math.PI * 2;
+    const sa = Math.sin(a);
+    const ca = Math.cos(a);
+    const crestH = hillsMaxH * (0.40 + 0.60 * fbmRing(sa * 2.4 + 3.1, ca * 2.4 - 1.7));
+    const rings: readonly (readonly [number, number])[] = [
+      [hillsFromM, -4.0],
+      [hillsCrestM, crestH],
+      [hillsToM, -26.0],
+    ];
+    for (let r = 0; r < 3; r++) {
+      const [rad, y] = rings[r]!;
+      const o = (i * 3 + r) * 3;
+      positions[o] = sa * rad;
+      positions[o + 1] = y;
+      positions[o + 2] = ca * rad;
+    }
+    if (i === segments) continue;
+    for (let r = 0; r < 2; r++) {
+      const p = i * 3 + r;
+      indices.push(p, p + 3, p + 1, p + 1, p + 3, p + 4);
+    }
+  }
+
+  const hillsGeo = new BufferGeometry();
+  hillsGeo.setAttribute('position', new Float32BufferAttribute(positions, 3));
+  hillsGeo.setIndex(indices);
+  hillsGeo.computeVertexNormals();
+  disposableGeos.push(hillsGeo);
+
+  const hills = new Mesh(hillsGeo, material);
+  hills.name = 'MarchlandHorizonHills';
+  hills.receiveShadow = false;
+  hills.castShadow = false;
+  scene.add(hills);
+
+  return { meshes: [lowland, hills] };
+}
+
+/**
+ * Builds organic woodland undergrowth bushes tucked along forest edges & glade fringes
+ * (ported from FPS/marchland landView.ts buildBushes; 1 single instanced draw call, skipped on Minimal).
+ */
+function buildForestUndergrowthBushes(
+  scene: Scene,
+  terrain: TerrainField,
+  layout: MapLayoutSpec,
+  quality: QualityPreset,
+  disposableMats: Material[],
+  disposableGeos: BufferGeometry[],
+): InstancedMesh | null {
+  if (quality === 'minimal' || layout.trees.length === 0) return null;
+
+  // Build a multi-lobe organic leafy bush cluster from 3 overlapping perturbed dodecahedra
+  const lobes: BufferGeometry[] = [];
+  const specs: readonly (readonly [number, number, number, number, number, number])[] = [
+    [0.0, 0.42, 0.0, 0.72, 0.56, 0.68],
+    [0.45, 0.28, 0.24, 0.48, 0.38, 0.46],
+    [-0.42, 0.24, -0.28, 0.44, 0.34, 0.44],
+  ];
+  for (const [ox, oy, oz, sx, sy, sz] of specs) {
+    const raw = new DodecahedronGeometry(1.0, 0);
+    const g = raw.index ? raw.toNonIndexed() : raw;
+    const p = g.getAttribute('position');
+    const col = new Float32Array(p.count * 3);
+    for (let i = 0; i < p.count; i++) {
+      const px = p.getX(i);
+      const py = p.getY(i);
+      const pz = p.getZ(i);
+      const lump = 0.86 + 0.24 * Math.sin(px * 4.1 + pz * 3.7 + ox * 5.0);
+      const nx = px * sx * lump + ox;
+      const ny = Math.max(-0.08, py * sy * lump + oy);
+      const nz = pz * sz * lump + oz;
+      p.setXYZ(i, nx, ny, nz);
+      const hShade = 0.52 + 0.48 * Math.max(0, Math.min(1, ny / 0.95));
+      col[i * 3] = 0.23 * hShade;
+      col[i * 3 + 1] = 0.35 * hShade;
+      col[i * 3 + 2] = 0.14 * hShade;
+    }
+    g.setAttribute('color', new Float32BufferAttribute(col, 3));
+    g.computeVertexNormals();
+    lobes.push(g);
+  }
+  const bushGeo = mergeGeometries(lobes, false);
+  for (const l of lobes) l.dispose();
+  if (!bushGeo) return null;
+  disposableGeos.push(bushGeo);
+
+  const bushMat = new MeshStandardNodeMaterial({
+    vertexColors: true,
+    roughness: 0.92,
+    metalness: 0.0,
+  });
+  bushMat.name = 'MarchlandUndergrowthBushMat';
+  disposableMats.push(bushMat);
+
+  const maxBushes = quality === 'high' ? 360 : 180;
+  const matrices: Matrix4[] = [];
+  const tints: Color[] = [];
+  let seed = 40413;
+  const rand = (): number => {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    return seed / 4294967296;
+  };
+
+  const step = Math.max(1, Math.floor(layout.trees.length / maxBushes));
+  for (let i = 0; i < layout.trees.length && matrices.length < maxBushes; i += step) {
+    const tr = layout.trees[i]!;
+    const a = rand() * Math.PI * 2;
+    const dist = 2.6 + rand() * 3.8;
+    const bx = tr.x + Math.cos(a) * dist;
+    const bz = tr.z + Math.sin(a) * dist;
+    if (Math.abs(bx) > terrain.halfSizeM - 10 || Math.abs(bz) > terrain.halfSizeM - 10) continue;
+    if (terrain.waterDepthAt(bx, bz) > 0.02 || terrain.isImpassable(bx, bz)) continue;
+    // Keep bushes clear of buildings & yards
+    let blocked = false;
+    for (const b of layout.buildings) {
+      if (Math.hypot(bx - b.x, bz - b.z) < Math.max(b.yardRx, b.yardRz) + 3.0) {
+        blocked = true;
+        break;
+      }
+    }
+    if (blocked) continue;
+    const by = terrain.heightAt(bx, bz);
+    const sc = 0.65 + rand() * 0.72;
+    TEMP_POS.set(bx, by - 0.06, bz);
+    TEMP_QUAT.setFromAxisAngle(UP_AXIS, rand() * Math.PI * 2);
+    TEMP_SCALE.set(sc, sc * (0.78 + rand() * 0.38), sc);
+    matrices.push(new Matrix4().compose(TEMP_POS, TEMP_QUAT, TEMP_SCALE));
+    const tone = 0.80 + rand() * 0.36;
+    tints.push(new Color(tone, tone * 1.04, tone * 0.90));
+  }
+
+  if (matrices.length === 0) return null;
+  const mesh = new InstancedMesh(bushGeo, bushMat, matrices.length);
+  mesh.name = 'MarchlandUndergrowthBushes';
+  mesh.castShadow = false;
+  mesh.receiveShadow = true;
+  mesh.frustumCulled = false;
+  markStaticInstances(mesh);
+  for (let i = 0; i < matrices.length; i++) {
+    mesh.setMatrixAt(i, matrices[i]!);
+    mesh.setColorAt(i, tints[i]!);
+  }
+  mesh.instanceMatrix.needsUpdate = true;
+  if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+  scene.add(mesh);
+  return mesh;
+}
+
 export async function buildStage5World(
   scene: Scene,
   loader: AssetLoader,
@@ -868,12 +1062,20 @@ export async function buildStage5World(
   // 1. Load 12-layer KTX2 surface library (zero extra textures for all 18 buildings & terrain!)
   const surfaces = await loadSurfaceLibrary(loader, anisotropy, tracker, quality);
 
-  // 2. Terrain mesh + unified physical lakes/rivers + 3-ring Roberts R2 Bézier grass
-  const terrainHandles: TerrainRenderHandles = buildTerrainMesh(terrain, groundWorks, surfaces);
+  // 2. Terrain mesh (untiled on High) + physical lakes/rivers (refracted on High, PMREM+shadows on Low) + 3-ring grass + 360° horizon hills
+  const terrainHandles: TerrainRenderHandles = buildTerrainMesh(terrain, groundWorks, surfaces, quality);
   scene.add(terrainHandles.mesh);
 
-  const waterHandles: LakeWaterHandles = buildLakeWater(terrain, skyUniforms, terrainHandles.heightGrid);
+  const waterHandles: LakeWaterHandles = buildLakeWater(terrain, skyUniforms, terrainHandles.heightGrid, quality);
   scene.add(waterHandles.mesh);
+
+  const shadowProxyMat = new MeshStandardNodeMaterial({ color: 0x333333, roughness: 1.0, metalness: 0.0 });
+  shadowProxyMat.name = 'Stage5ShadowProxyMat';
+  const disposableMats: Material[] = [shadowProxyMat];
+  const disposableGeos: BufferGeometry[] = [];
+
+  const horizonHandles = buildDistantHorizon(scene, disposableMats, disposableGeos);
+  const bushMesh = buildForestUndergrowthBushes(scene, terrain, layout, quality, disposableMats, disposableGeos);
 
   const grass = buildGrassField(
     terrain,
@@ -883,11 +1085,6 @@ export async function buildStage5World(
     quality,
   );
   for (const gm of grass.meshes) scene.add(gm);
-
-  const shadowProxyMat = new MeshStandardNodeMaterial({ color: 0x333333, roughness: 1.0, metalness: 0.0 });
-  shadowProxyMat.name = 'Stage5ShadowProxyMat';
-  const disposableMats: Material[] = [shadowProxyMat];
-  const disposableGeos: BufferGeometry[] = [];
 
   // Helper to load a 4-LOD static template
   const loadLodTemplate = async (
@@ -1693,6 +1890,8 @@ export async function buildStage5World(
       terrainHandles.dispose();
       scene.remove(waterHandles.mesh);
       waterHandles.dispose();
+      for (const hm of horizonHandles.meshes) scene.remove(hm);
+      if (bushMesh) scene.remove(bushMesh);
       for (const gm of grass.meshes) scene.remove(gm);
       grass.dispose();
       scene.remove(wheat.mesh);

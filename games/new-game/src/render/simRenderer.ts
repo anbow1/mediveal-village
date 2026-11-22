@@ -579,7 +579,7 @@ export function buildSimWorldRenderer(opts: {
   const leafGreen = new Color(0x4b7d26);
   const leafAutumn = new Color(0xa59234);
   for (const vm of [dynVinePostMesh, dynVineLeafMesh, dynVineGrapeMesh]) {
-    vm.castShadow = false;
+    vm.castShadow = vm !== dynVineGrapeMesh;
     vm.receiveShadow = true;
     vm.frustumCulled = false;
     markStaticInstances(vm);

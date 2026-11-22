@@ -1,6 +1,9 @@
-// Single-height-function 560 x 560 m terrain mesh + 6-layer height-blended dual-scale TSL material.
-// Uses the EXACT same `TerrainField.heightAt()` as gameplay/grass/water and the SAME 3 shared
-// 12-layer KTX2 CompressedArrayTextures (`albedoArray`, `normalArray`, `ormArray`) -> only 4 textures total!
+// Single-height-function 560 x 560 m terrain mesh + 6-layer height-blended untiled TSL material
+// (upgraded with FPS/marchland terrainView.ts realism techniques):
+//   - High preset: irrational-angle dual-sample untiling (kills tiling grids from 0.45 m to 460 m),
+//     distance-faded normal maps & AO (kills far-field shimmer), wheel-rutted cart tracks with grassy crown,
+//     broad natural meadow swathes, and soft map-border transition into the distant wooded lowland.
+//   - Low / Minimal presets: lean single-sample shader preserving full mobile/iPad smoothness.
 
 import {
   ClampToEdgeWrapping,
@@ -17,9 +20,14 @@ import {
 } from 'three/webgpu';
 import {
   abs,
+  cameraPosition,
   clamp,
+  cos,
+  dot,
   float,
   int,
+  length,
+  max,
   mix,
   normalMap,
   normalWorld,
@@ -30,6 +38,7 @@ import {
   vec2,
   vec3,
 } from 'three/tsl';
+import type { QualityPreset } from '../config.ts';
 import type { GroundWorksMap } from '../sim/groundWorks.ts';
 import type { TerrainField } from '../sim/terrain.ts';
 import type { SurfaceLibrary } from './surfaces.ts';
@@ -46,19 +55,14 @@ export interface TerrainRenderHandles {
   readonly dispose: () => void;
 }
 
-/**
- * Builds the displaced 560 x 560 m terrain mesh and height-blended 6-layer TSL material:
- *   Layer 0 (grass)  — dual near/far meadow turf (zero visible tiling from 0.45 m to 460 m)
- *   Layer 1 (dirt)   — trampled village yards, road shoulders & wet lake shore silt
- *   Layer 2 (cobble) — cobbled medieval village lanes & market tracks
- *   Layer 8 (rubble) — hillside rock scree on steeper slopes
- *   Layer 10 (bark)  — needle/leaf forest-floor litter under tree canopies + indirect AO
- *   Layer 6 (thatch) — ploughed dark-earth agricultural furrows & straw stubble
- */
+const TURN_COS = Math.cos(0.646); // ~37 deg irrational rotation prevents dual-sample repeat alignment
+const TURN_SIN = Math.sin(0.646);
+
 export function buildTerrainMesh(
   terrain: TerrainField,
   groundWorks: GroundWorksMap,
   surfaces: SurfaceLibrary,
+  quality: QualityPreset = 'high',
 ): TerrainRenderHandles {
   const n = terrain.config.gridResolution;
   const segs = n - 1;
@@ -80,7 +84,6 @@ export function buildTerrainMesh(
   posAttr.needsUpdate = true;
   geo.computeVertexNormals();
 
-  // R32F height grid texture (NearestFilter + manual textureLoad triangle-split in grassField.ts per playbook §11)
   const heightTexture = new DataTexture(heightGrid, n, n, RedFormat, FloatType);
   heightTexture.minFilter = NearestFilter;
   heightTexture.magFilter = NearestFilter;
@@ -89,7 +92,6 @@ export function buildTerrainMesh(
   heightTexture.generateMipmaps = false;
   heightTexture.needsUpdate = true;
 
-  // RGBA8 dynamic ground-works texture (R=dirt, G=cobble, B=farm furrows, A=canopy litter/shade)
   const groundWorksTexture = new DataTexture(
     groundWorks.data,
     groundWorks.resolution,
@@ -104,7 +106,7 @@ export function buildTerrainMesh(
   groundWorksTexture.generateMipmaps = false;
   groundWorksTexture.needsUpdate = true;
 
-  const mat = createTerrainMaterial(terrain, groundWorks, groundWorksTexture, surfaces);
+  const mat = createTerrainMaterial(terrain, groundWorks, groundWorksTexture, surfaces, quality);
 
   const mesh = new Mesh(geo, mat);
   mesh.name = 'MarchlandTerrain';
@@ -134,8 +136,10 @@ function createTerrainMaterial(
   groundWorks: GroundWorksMap,
   groundWorksTex: DataTexture,
   surfaces: SurfaceLibrary,
+  quality: QualityPreset,
 ): MeshStandardNodeMaterial {
   const { albedoArray, normalArray, ormArray } = surfaces;
+  const untile = quality === 'high';
   const mat = new MeshStandardNodeMaterial({
     roughness: 1.0,
     metalness: 0.0,
@@ -144,6 +148,8 @@ function createTerrainMaterial(
 
   const wp = positionWorld;
   const xz = wp.xz;
+  const camDistM = length(wp.sub(cameraPosition));
+  const farFade = smoothstep(float(55.0), float(210.0), camDistM);
 
   // Sample dynamic groundWorks RGBA8 (R=dirt yard, G=cobble road, B=farm furrows, A=canopy shade/litter)
   const gwUv = xz.add(vec2(groundWorks.halfSpanM)).div(float(groundWorks.spanM));
@@ -169,8 +175,35 @@ function createTerrainMaterial(
     .mul(0.5)
     .add(0.5);
   const macroFar = sin(xz.x.mul(0.014).sub(xz.y.mul(0.011))).mul(0.5).add(0.5);
+  // Broad landscape meadow swathes (tens of metres across — FPS/marchland terrainView.ts)
+  const swathe = sin(xz.x.mul(0.022).add(cos(xz.y.mul(0.019)))).mul(0.5).add(0.5);
 
-  // Near + far dual-scale grass sampling (playbook §3 #6: kills tiling at both eye-level and RTS altitude)
+  const turnedXz = vec2(xz.x.mul(TURN_COS).sub(xz.y.mul(TURN_SIN)), xz.x.mul(TURN_SIN).add(xz.y.mul(TURN_COS)));
+  const untileBlend = smoothstep(float(0.26), float(0.74), macroA.mul(0.65).add(macroB.mul(0.35)));
+  // Variance-preserving spread compensation keeps blended detail crisp instead of washed flat
+  const untileSpread = untileBlend
+    .mul(untileBlend)
+    .add(float(1.0).sub(untileBlend).mul(float(1.0).sub(untileBlend)))
+    .sqrt()
+    .max(0.72);
+
+  const photo = surfaces.photoTerrain;
+  const gAlbArr = photo ? photo.albedoArray : albedoArray;
+  const gNorArr = photo ? photo.normalArray : normalArray;
+  const gOrmArr = photo ? photo.ormArray : ormArray;
+
+  const sampleUntiledAlb = (arr: typeof albedoArray, scaleM: number, layerIdx: number, shift: number) => {
+    const uA = xz.div(scaleM).add(vec2(shift, shift * 0.6));
+    const a = texture(arr, uA).depth(int(layerIdx)).rgb;
+    if (!untile) return a;
+    const uB = turnedXz.div(scaleM * 1.27).add(vec2(0.43 + shift, 0.29));
+    const b = texture(arr, uB).depth(int(layerIdx)).rgb;
+    const blended = mix(a, b, untileBlend);
+    const mean = a.add(b).mul(0.5);
+    return clamp(blended.sub(mean).div(untileSpread).add(mean), vec3(0.01), vec3(1.0));
+  };
+
+  // Near + far dual-scale grass sampling (zero visible tiling from 0.45 m to 460 m)
   const grassUvNear = xz.div(2.8);
   const grassUvFar = xz.div(13.5).add(vec2(0.37, 0.61));
   const dirtUv = xz.div(2.4);
@@ -179,16 +212,11 @@ function createTerrainMaterial(
   const litterUv = xz.div(2.6);
   const farmUv = xz.div(2.5);
 
-  const photo = surfaces.photoTerrain;
-  const gAlbArr = photo ? photo.albedoArray : albedoArray;
-  const gNorArr = photo ? photo.normalArray : normalArray;
-  const gOrmArr = photo ? photo.ormArray : ormArray;
-
   // Photogrammetry indices: 0=meadow, 1=pasture, 2=dry_grass, 3=forest_floor, 4=farm_soil, 5=mud, 6=rock
   const hillDry = smoothstep(float(2.6), float(7.2), wp.y);
-  const meadowAlbNear = texture(gAlbArr, grassUvNear).depth(int(0)).rgb;
+  const meadowAlbNear = sampleUntiledAlb(gAlbArr, 2.8, 0, 0.0);
   const pastureAlbFar = texture(gAlbArr, grassUvFar).depth(int(photo ? 1 : 0)).rgb;
-  const dryGrassAlb = texture(gAlbArr, grassUvNear.mul(0.85)).depth(int(photo ? 2 : 0)).rgb;
+  const dryGrassAlb = sampleUntiledAlb(gAlbArr, 3.3, photo ? 2 : 0, 0.17);
   const baseMeadowAlb = mix(meadowAlbNear, pastureAlbFar, float(0.42).mul(macroA.mul(0.6).add(0.4)));
   const grassAlb = photo
     ? mix(baseMeadowAlb, dryGrassAlb, hillDry.mul(0.55).add(macroFar.mul(0.18)))
@@ -196,7 +224,7 @@ function createTerrainMaterial(
   const grassNor = texture(gNorArr, grassUvNear).depth(int(0)).rgb;
   const grassOrm = texture(gOrmArr, grassUvNear).depth(int(0));
 
-  const dirtAlb = texture(gAlbArr, dirtUv).depth(int(photo ? 5 : 1)).rgb;
+  const dirtAlb = sampleUntiledAlb(gAlbArr, 2.4, photo ? 5 : 1, 0.23);
   const dirtNor = texture(gNorArr, dirtUv).depth(int(photo ? 5 : 1)).rgb;
   const dirtOrm = texture(gOrmArr, dirtUv).depth(int(photo ? 5 : 1));
 
@@ -204,7 +232,7 @@ function createTerrainMaterial(
   const cobbleNor = texture(normalArray, cobbleUv).depth(int(2)).rgb;
   const cobbleOrm = texture(ormArray, cobbleUv).depth(int(2));
 
-  const rockAlb = texture(gAlbArr, rockUv).depth(int(photo ? 6 : 8)).rgb;
+  const rockAlb = sampleUntiledAlb(gAlbArr, 3.4, photo ? 6 : 8, 0.31);
   const rockNor = texture(gNorArr, rockUv).depth(int(photo ? 6 : 8)).rgb;
   const rockOrm = texture(gOrmArr, rockUv).depth(int(photo ? 6 : 8));
 
@@ -214,21 +242,27 @@ function createTerrainMaterial(
 
   const farmAlb = photo ? texture(gAlbArr, farmUv).depth(int(4)).rgb : dirtAlb;
 
-  // Lush Central European meadow tint variation (gentle when photo biome textures are already colour-calibrated!)
-  const meadowTint = photo
+  // Lush Central European meadow swathes (rich darker hollows, warm sunlit crests — FPS/marchland terrainView.ts)
+  const swatheTint = mix(vec3(0.84, 0.92, 0.85), vec3(1.10, 1.06, 0.88), swathe);
+  const meadowTint = (photo
     ? mix(vec3(0.92, 1.0, 0.88), vec3(1.04, 1.0, 0.90), macroA)
     : mix(
         mix(vec3(0.58, 0.98, 0.42), vec3(0.84, 1.04, 0.48), macroA),
         vec3(0.94, 0.92, 0.50),
         hillDry.mul(0.34).add(macroFar.mul(0.14)),
-      );
+      )
+  ).mul(swatheTint);
   const grassCol = grassAlb.mul(meadowTint);
   const dirtCol = dirtAlb.mul(photo ? vec3(0.98, 0.94, 0.88) : vec3(0.94, 0.86, 0.74)).mul(mix(float(0.88), float(1.08), macroB));
-  const cobbleCol = cobbleAlb.mul(vec3(0.92, 0.95, 1.02)).mul(mix(float(0.88), float(1.14), macroB));
+  // Cart-track wheel ruts darkening just inside road edges + faint grassy crown in the middle (FPS/marchland)
+  const rutBand = smoothstep(float(0.45), float(0.65), cobbleGw).mul(float(1.0).sub(smoothstep(float(0.76), float(0.92), cobbleGw)));
+  const roadCrown = smoothstep(float(0.95), float(1.0), cobbleGw).mul(smoothstep(float(0.45), float(0.75), macroB));
+  const cobbleBase = cobbleAlb.mul(vec3(0.92, 0.95, 1.02)).mul(mix(float(0.88), float(1.14), macroB));
+  const cobbleCol = mix(cobbleBase.mul(float(1.0).sub(rutBand.mul(0.18))), grassCol.mul(0.82), roadCrown.mul(0.18));
   const rockCol = rockAlb.mul(vec3(0.95, 0.93, 0.89));
   const litterCol = litterAlb.mul(photo ? vec3(0.92, 0.90, 0.85) : vec3(0.72, 0.64, 0.48));
 
-  // Ploughed dark-loam agricultural furrows (oriented along farm rows with subtle parallel furrow troughs)
+  // Ploughed dark-loam agricultural furrows
   const furrowWave = sin(xz.x.mul(9.2).add(macroB.mul(0.6))).mul(0.5).add(0.5);
   const farmCol = farmAlb.mul(
     photo
@@ -236,56 +270,64 @@ function createTerrainMaterial(
       : mix(vec3(0.46, 0.39, 0.30), vec3(0.72, 0.61, 0.45), furrowWave),
   );
 
-  // Height-blended splat weights (playbook §3 #4: stones/rock/cobbles poke sharply through turf/soil)
+  // Height-blended splat weights
   const slope = float(1.0).sub(clamp(normalWorld.y, 0.0, 1.0));
   const rockW = smoothstep(float(0.065), float(0.18), slope).mul(float(0.85).add(rockOrm.r.mul(0.3)));
   const litterW = clamp(canopyGw.mul(1.15), 0.0, 0.88);
-  // Subtle height sharpening on cobble stones so earth fills between stones naturally
   const cobbleSharp = smoothstep(float(0.18), float(0.68), cobbleGw.add(cobbleOrm.r.sub(0.5).mul(0.35)));
   const dirtSharp = smoothstep(float(0.12), float(0.78), dirtGw.add(dirtOrm.r.sub(0.5).mul(0.25)));
 
-  // Compose base land cover: meadow -> canopy needle litter -> trampled dirt -> ploughed farm -> rock scree -> cobble road
   const c1 = mix(grassCol, litterCol, litterW);
   const c2 = mix(c1, dirtCol, dirtSharp);
   const c3 = mix(c2, farmCol, farmGw);
   const c4 = mix(c3, rockCol, clamp(rockW, 0.0, 0.92));
   const dryCol = mix(c4, cobbleCol, cobbleSharp);
 
-  // Canopy shade subtly darkens indirect ground reflectance under dense trees (playbook §3 #7)
   const canopyShade = mix(float(1.0), float(0.68), clamp(canopyGw, 0.0, 1.0));
   const dryShaded = dryCol.mul(canopyShade);
 
-  // Universal wet-silt shoreline band & sandy-gravel shallows for all lakes, rivers & shallow fords (playbook §6aa & §7.2b)
+  // Universal wet-silt shoreline band & sandy-gravel shallows
   const waterLevel = terrain.config.river?.waterLevelM ?? terrain.config.lake.waterLevelM;
   const hAboveWater = wp.y.sub(waterLevel);
   const dryRoadKeep = float(1.0).sub(cobbleSharp.mul(0.85));
-  // Wet silt band hugging shorelines from -0.15 m to +0.44 m above waterline
   const wetSiltMask = float(1.0)
     .sub(smoothstep(float(0.02), float(0.44), abs(hAboveWater.sub(0.10))))
     .mul(dryRoadKeep);
-  // Warm sandy-gravel riverbed & lakebed below water (hAboveWater < 0.04 m)
   const lakeBedMask = smoothstep(float(0.06), float(-0.20), hAboveWater);
 
   const shoreEarth = mix(dryShaded, dirtCol.mul(vec3(0.48, 0.44, 0.37)), wetSiltMask.mul(0.86));
   const lakeBedCol = dirtAlb.mul(vec3(0.88, 0.82, 0.66)).mul(mix(float(0.55), float(1.0), smoothstep(float(-1.2), float(-0.08), hAboveWater)));
-  const finalCol = mix(shoreEarth, lakeBedCol, lakeBedMask);
+  const baseFinal = mix(shoreEarth, lakeBedCol, lakeBedMask);
+
+  // Subtle natural darkening outside buildable border (|x|, |z| > 266 m) blending into distant wooded lowland
+  const edgeM = max(abs(wp.x), abs(wp.z));
+  const borderFade = smoothstep(float(terrain.halfSizeM - 16), float(terrain.halfSizeM - 2), edgeM);
+  const luma = dot(baseFinal, vec3(0.2126, 0.7152, 0.0722));
+  const finalCol = mix(baseFinal, mix(baseFinal, vec3(luma), float(0.38)).mul(0.68), borderFade);
 
   mat.colorNode = clamp(finalCol, vec3(0.02), vec3(0.76));
 
-  // Blend corresponding tangent-space normals
+  // Blend tangent-space normals and fade bump amplitude with distance to eliminate far-field shimmer!
   const n1 = mix(grassNor, litterNor, litterW);
   const n2 = mix(n1, dirtNor, dirtSharp);
   const n3 = mix(n2, rockNor, clamp(rockW, 0.0, 0.92));
   const finalNor = mix(n3, cobbleNor, cobbleSharp);
-  mat.normalNode = normalMap(finalNor, vec2(0.88, 0.88));
+  const norScale = float(0.88).mul(float(1.0).sub(farFade.mul(0.72)));
+  mat.normalNode = normalMap(finalNor, vec2(norScale, norScale));
 
-  // Roughness: matte dry turf/earth/rock, damp specular sheen on wet lake shore silt
+  // Roughness & distance-faded micro-AO
   const r1 = mix(grassOrm.g, litterOrm.g, litterW);
   const r2 = mix(r1, dirtOrm.g, dirtSharp);
   const r3 = mix(r2, rockOrm.g, clamp(rockW, 0.0, 0.92));
   const dryRough = mix(r3, cobbleOrm.g, cobbleSharp);
   const finalRough = mix(dryRough, float(0.46), wetSiltMask.mul(0.85));
   mat.roughnessNode = clamp(finalRough, 0.42, 0.96);
+
+  const a1 = mix(grassOrm.r, litterOrm.r, litterW);
+  const a2 = mix(a1, dirtOrm.r, dirtSharp);
+  const a3 = mix(a2, rockOrm.r, clamp(rockW, 0.0, 0.92));
+  const finalAo = mix(mix(a3, cobbleOrm.r, cobbleSharp), float(1.0), farFade);
+  mat.aoNode = clamp(finalAo, 0.55, 1.0);
   mat.metalnessNode = float(0.0);
 
   return mat;

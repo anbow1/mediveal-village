@@ -58,6 +58,8 @@ export function createPhysicalSkyUniforms() {
     uCloudDrift: uniform(0.0),
     uFogDensity: uniform(0.0009),
     uFogHeightFalloff: uniform(0.014),
+    uHazeShare: uniform(1.0),
+    uSkyRadiance: uniform(0.14),
     uContactShadowGain: uniform(0.4),
     uWaterTimeS: uniform(0.0),
   };
@@ -89,6 +91,7 @@ export function updatePhysicalSkyUniforms(
   const skyRgb = kelvinToLinearRgb(config.skyKelvin);
 
   const skyLum = (config.skyIlluminanceLux / Math.PI) * preExposure;
+  u.uSkyRadiance.value = skyLum;
   const isOvercast = presetId === 'overcast';
   const isGolden = presetId === 'goldenHour';
   const isAutumn = presetId === 'lateAutumn';
@@ -320,7 +323,7 @@ export function createHeightFogNode(u: PhysicalSkyUniforms) {
 
   const tau = max(
     float(0.0),
-    u.uFogDensity.mul(dist).mul(exp(u.uFogHeightFalloff.mul(h0).negate())).mul(heightRatio),
+    u.uFogDensity.mul(u.uHazeShare).mul(dist).mul(exp(u.uFogHeightFalloff.mul(h0).negate())).mul(heightRatio),
   );
   const fogFactor = clamp(float(1.0).sub(exp(tau.negate())), 0.0, 0.94);
 
