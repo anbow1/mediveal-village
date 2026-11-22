@@ -72,6 +72,8 @@ export interface HudCallbacks {
   readonly onSelectTool: (tool: PlacementTool) => void;
   readonly onRotatePlacement: () => void;
   readonly onSelectRegiment: (id: number, additive: boolean, jump: boolean) => void;
+  readonly onToggleMultiSelect: () => void;
+  readonly onSelectAllRegiments: () => void;
   readonly onSaveSlot: (slot: 1 | 2 | 3) => void;
   readonly onLoadSlot: (slot: 1 | 2 | 3) => void;
   readonly onExportSave: () => void;
@@ -241,6 +243,7 @@ export class GameHud {
   private activeTab: 'build' | 'recruit' | 'production' | 'buildings' | null = 'build';
   private activeBranch: BuildingBranch = 'town';
   private activeTool: PlacementTool = null;
+  private multiSelectMode = false;
   private showResLabels = false;
   private lastHudRefreshMs = 0;
   private lastDrawerRefreshMs = 0;
@@ -404,10 +407,10 @@ export class GameHud {
   }
 
   private attachMinimapEvents(): void {
-    const toWorld = (e: MouseEvent): { x: number; z: number } => {
+    const toWorldXY = (clientX: number, clientY: number): { x: number; z: number } => {
       const rect = this.minimapCanvas.getBoundingClientRect();
-      const u = Math.max(0, Math.min(1, (e.clientX - rect.left) / Math.max(1, rect.width)));
-      const v = Math.max(0, Math.min(1, (e.clientY - rect.top) / Math.max(1, rect.height)));
+      const u = Math.max(0, Math.min(1, (clientX - rect.left) / Math.max(1, rect.width)));
+      const v = Math.max(0, Math.min(1, (clientY - rect.top) / Math.max(1, rect.height)));
       return {
         x: (u - 0.5) * WORLD.sizeM,
         z: (v - 0.5) * WORLD.sizeM,
@@ -416,7 +419,7 @@ export class GameHud {
     this.minimapCanvas.addEventListener('contextmenu', (e) => e.preventDefault());
     this.minimapCanvas.addEventListener('mousedown', (e) => {
       e.stopPropagation();
-      const pt = toWorld(e);
+      const pt = toWorldXY(e.clientX, e.clientY);
       if (e.button === 0) {
         this.minimapDragging = true;
         this.cb.onJumpCamera(pt.x, pt.z);
@@ -426,10 +429,43 @@ export class GameHud {
     });
     window.addEventListener('mousemove', (e) => {
       if (!this.minimapDragging) return;
-      const pt = toWorld(e);
+      const pt = toWorldXY(e.clientX, e.clientY);
       this.cb.onJumpCamera(pt.x, pt.z);
     });
     window.addEventListener('mouseup', () => {
+      this.minimapDragging = false;
+    });
+
+    // Touch pan & jump on minimap (tablets / iPad)
+    this.minimapCanvas.addEventListener(
+      'touchstart',
+      (e) => {
+        if (e.touches.length !== 1) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const t = e.touches[0]!;
+        const pt = toWorldXY(t.clientX, t.clientY);
+        this.minimapDragging = true;
+        this.cb.onJumpCamera(pt.x, pt.z);
+      },
+      { passive: false },
+    );
+    this.minimapCanvas.addEventListener(
+      'touchmove',
+      (e) => {
+        if (!this.minimapDragging || e.touches.length !== 1) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const t = e.touches[0]!;
+        const pt = toWorldXY(t.clientX, t.clientY);
+        this.cb.onJumpCamera(pt.x, pt.z);
+      },
+      { passive: false },
+    );
+    this.minimapCanvas.addEventListener('touchend', () => {
+      this.minimapDragging = false;
+    });
+    this.minimapCanvas.addEventListener('touchcancel', () => {
       this.minimapDragging = false;
     });
   }
@@ -689,6 +725,11 @@ export class GameHud {
     if (this.latestState) this.refreshInspector(true);
   }
 
+  setMultiSelectMode(on: boolean): void {
+    this.multiSelectMode = on;
+    this.lastHudRefreshMs = 0;
+  }
+
   private buildBarracksEquipPanel(state: SimWorldState): HTMLDivElement {
     const s = this.str;
     const wrap = document.createElement('div');
@@ -888,15 +929,30 @@ export class GameHud {
       }
 
       if (this.activeTool) {
-        const rotBtn = document.createElement('button');
-        rotBtn.className = 'rts-tab-btn';
-        rotBtn.textContent = '↻ R';
-        rotBtn.addEventListener('click', () => this.cb.onRotatePlacement());
+        if (this.activeTool.kind === 'building' || this.activeTool.kind === 'gate') {
+          const rotBtn = document.createElement('button');
+          rotBtn.className = 'rts-tab-btn active';
+          rotBtn.textContent = s.rotateBtn;
+          rotBtn.addEventListener('click', () => this.cb.onRotatePlacement());
+          tabBar.appendChild(rotBtn);
+        } else if (this.activeTool.kind === 'road' || this.activeTool.kind === 'wall') {
+          const hint = document.createElement('span');
+          hint.className = 'obj-chip';
+          hint.style.fontSize = '11px';
+          hint.textContent = s.lineToolHint;
+          tabBar.appendChild(hint);
+        } else if (this.activeTool.kind === 'regimentPose') {
+          const hint = document.createElement('span');
+          hint.className = 'obj-chip';
+          hint.style.fontSize = '11px';
+          hint.textContent = s.poseToolHint;
+          tabBar.appendChild(hint);
+        }
         const cancelBtn = document.createElement('button');
         cancelBtn.className = 'rts-tab-btn bad';
         cancelBtn.textContent = `✕ ${s.cancelTool}`;
         cancelBtn.addEventListener('click', () => this.cb.onSelectTool(null));
-        tabBar.append(rotBtn, cancelBtn);
+        tabBar.appendChild(cancelBtn);
       }
     }
 
@@ -1301,9 +1357,25 @@ export class GameHud {
       this.alertsEl.appendChild(btn);
     }
 
-    // Persistent Bottom Regiment Cards
+    // Persistent Bottom Regiment Cards + Touch Multi-Select Controls
     this.regStripEl.innerHTML = '';
     const p0Regs = state.regiments.filter((r) => r.side === 0 && countAliveSoldiers(r) > 0);
+    if (p0Regs.length >= 2) {
+      const multiBtn = document.createElement('button');
+      multiBtn.className = `rts-reg-card ${this.multiSelectMode ? 'selected' : ''}`;
+      multiBtn.style.minWidth = '64px';
+      multiBtn.innerHTML = `<div class="rc-top"><span>${s.multiSelectBtn}</span></div>`;
+      multiBtn.addEventListener('click', () => this.cb.onToggleMultiSelect());
+      this.regStripEl.appendChild(multiBtn);
+
+      const allSelected = p0Regs.every((r) => selectedRegimentIds.has(r.id));
+      const allBtn = document.createElement('button');
+      allBtn.className = `rts-reg-card ${allSelected ? 'selected' : ''}`;
+      allBtn.style.minWidth = '64px';
+      allBtn.innerHTML = `<div class="rc-top"><span>⚔ ${s.selectAllBtn}</span></div>`;
+      allBtn.addEventListener('click', () => this.cb.onSelectAllRegiments());
+      this.regStripEl.appendChild(allBtn);
+    }
     for (const r of p0Regs) {
       const alive = countAliveSoldiers(r);
       const hpPct = Math.round((alive / Math.max(1, r.maxMen)) * 100);

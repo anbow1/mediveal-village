@@ -84,6 +84,10 @@ export class RtsInputController {
   private touchLongPressTimer: number | null = null;
   private touchStartX = 0;
   private touchStartY = 0;
+  private touchPoseActive = false;
+  private lastTouchTapRegId = -1;
+  private lastTouchTapMs = 0;
+  private multiSelectMode = false;
 
   private readonly cleanupFns: (() => void)[] = [];
 
@@ -111,6 +115,45 @@ export class RtsInputController {
     return this.gridSnap;
   }
 
+  isMultiSelectMode(): boolean {
+    return this.multiSelectMode;
+  }
+
+  toggleMultiSelectMode(): boolean {
+    this.multiSelectMode = !this.multiSelectMode;
+    this.cb.onSelectionChanged();
+    return this.multiSelectMode;
+  }
+
+  toggleRegimentSelection(id: number): void {
+    this.selectedBuildingId = null;
+    if (this.selectedRegimentIds.has(id)) {
+      this.selectedRegimentIds.delete(id);
+    } else {
+      this.selectedRegimentIds.add(id);
+    }
+    this.activeSavedFormationId = null;
+    if (this.selectedRegimentIds.size === 0 && this.placementTool?.kind === 'regimentPose') {
+      this.setPlacementTool(null);
+      return;
+    }
+    this.cb.onSelectionChanged();
+  }
+
+  selectAllPlayerRegiments(): void {
+    const sim = this.cb.getSim();
+    const aliveIds = sim.state.regiments
+      .filter((r) => r.side === 0 && countAliveSoldiers(r) > 0)
+      .map((r) => r.id);
+    if (aliveIds.length === 0) return;
+    const allSelected = aliveIds.every((id) => this.selectedRegimentIds.has(id));
+    if (allSelected) {
+      this.selectRegiments([], false);
+    } else {
+      this.selectRegiments(aliveIds, false);
+    }
+  }
+
   toggleGridSnap(): boolean {
     this.gridSnap = !this.gridSnap;
     if (this.gridSnap) {
@@ -134,6 +177,7 @@ export class RtsInputController {
     this.lineJustStarted = false;
     this.poseAnchor = null;
     this.poseJustAnchored = false;
+    this.touchPoseActive = false;
     this.placementGhost = null;
     this.formationGhost = null;
     if (!tool) {
@@ -147,12 +191,14 @@ export class RtsInputController {
     if (this.poseAnchor) {
       this.poseAnchor = null;
       this.poseJustAnchored = false;
+      this.touchPoseActive = false;
       this.formationGhost = null;
       return true;
     }
     if (this.lineDragStart) {
       this.lineDragStart = null;
       this.lineJustStarted = false;
+      this.placementGhost = null;
       return true;
     }
     if (this.placementTool) {
@@ -1027,18 +1073,39 @@ export class RtsInputController {
       }
     };
 
-    // Touch controls: single-tap selects/places; long-press (380 ms) issues context move/attack order!
+    // Touch controls:
+    //  - regimentPose tool: 1-finger touch down anchors target, drag aims facing live, lift issues positioned orders
+    //  - road / wall tool: 2-tap placement (tap start -> tap end, chains start point; 1-finger pan works between taps!)
+    //  - building / gate tool: tap places with current rotation (↻ Obróć button rotates)
+    //  - normal play: tap selects regiment/building (respects + Multi & double-tap same type), tap enemy attacks,
+    //    tap empty ground or long-press (380 ms) issues context move/attack/garrison order!
     const onTouchStart = (e: TouchEvent): void => {
       if (!this.cb.isPlaying() || e.touches.length !== 1) {
         if (this.touchLongPressTimer !== null) {
           window.clearTimeout(this.touchLongPressTimer);
           this.touchLongPressTimer = null;
         }
+        if (this.touchPoseActive) {
+          this.touchPoseActive = false;
+          this.poseAnchor = null;
+          this.formationGhost = null;
+        }
         return;
       }
       const t = e.touches[0]!;
       this.touchStartX = t.clientX;
       this.touchStartY = t.clientY;
+
+      // Active `⌖ Ustaw pozycję` (regimentPose): touch down immediately anchors spot & starts live facing rotation!
+      if (this.placementTool?.kind === 'regimentPose' && this.selectedRegimentIds.size > 0) {
+        const pt = this.screenToGround(t.clientX, t.clientY);
+        if (pt) {
+          this.poseAnchor = pt;
+          this.touchPoseActive = true;
+          this.updatePlacementPreview(t.clientX, t.clientY);
+        }
+        return;
+      }
 
       if (this.selectedRegimentIds.size > 0 && !this.placementTool) {
         this.touchLongPressTimer = window.setTimeout(() => {
@@ -1050,6 +1117,11 @@ export class RtsInputController {
     };
 
     const onTouchMove = (e: TouchEvent): void => {
+      if (this.touchPoseActive && this.placementTool?.kind === 'regimentPose' && e.touches.length === 1) {
+        const t = e.touches[0]!;
+        this.updatePlacementPreview(t.clientX, t.clientY);
+        return;
+      }
       if (this.touchLongPressTimer !== null && e.touches.length === 1) {
         const t = e.touches[0]!;
         if (Math.hypot(t.clientX - this.touchStartX, t.clientY - this.touchStartY) > 14) {
@@ -1066,18 +1138,46 @@ export class RtsInputController {
       }
       if (!this.cb.isPlaying() || e.changedTouches.length !== 1 || e.touches.length > 0) return;
       const t = e.changedTouches[0]!;
+
+      // Finish touch `⌖ Ustaw pozycję` (regimentPose) on finger lift — works both for drag-to-aim and quick tap!
+      if (this.touchPoseActive && this.placementTool?.kind === 'regimentPose' && this.poseAnchor) {
+        this.updatePlacementPreview(t.clientX, t.clientY);
+        const targets = this.computePoseTargets(this.poseAnchor.x, this.poseAnchor.z, this.poseYawRad);
+        for (const tr of targets) {
+          this.cb.onExecute({
+            type: 'issueOrder',
+            side: 0,
+            regimentIds: [tr.regiment.id],
+            order: {
+              kind: 'march',
+              x: tr.x,
+              z: tr.z,
+              facingYawRad: tr.yawRad,
+              width: tr.width,
+              ranks: tr.ranks,
+            },
+            queue: false,
+          });
+        }
+        this.touchPoseActive = false;
+        this.cb.onPlayUiSound('uiClick');
+        this.setPlacementTool(null);
+        return;
+      }
+
       if (Math.hypot(t.clientX - this.touchStartX, t.clientY - this.touchStartY) > 14) return;
 
       const pt = this.screenToGround(t.clientX, t.clientY);
       if (!pt) return;
       if (this.placementTool) {
         if (this.placementTool.kind === 'building') {
+          const snapped = this.snapBuildingPoint(pt);
           const ok = this.cb.onExecute({
             type: 'placeBuilding',
             side: 0,
             buildingType: this.placementTool.buildingType,
-            x: pt.x,
-            z: pt.z,
+            x: snapped.x,
+            z: snapped.z,
             yawRad: this.placementYawRad,
           });
           this.cb.onPlayUiSound(ok ? 'uiClick' : 'uiError');
@@ -1086,22 +1186,72 @@ export class RtsInputController {
           const ok = this.cb.onExecute({ type: 'placeGate', side: 0, x: pt.x, z: pt.z, yawRad: this.placementYawRad });
           this.cb.onPlayUiSound(ok ? 'uiClick' : 'uiError');
           if (ok) this.setPlacementTool(null);
+        } else if (this.placementTool.kind === 'road' || this.placementTool.kind === 'wall') {
+          if (!this.lineDragStart) {
+            // 1st tap: anchor start point & show visual marker on the ground
+            this.lineDragStart = pt;
+            this.updatePlacementPreview(t.clientX, t.clientY);
+            this.cb.onPlayUiSound('uiClick');
+          } else {
+            // 2nd tap: build road or wall segment from start -> end, then chain start point for continuous runs!
+            const ok = this.cb.onExecute({
+              type: this.placementTool.kind === 'road' ? 'placeRoad' : 'placeWall',
+              side: 0,
+              x0: this.lineDragStart.x,
+              z0: this.lineDragStart.z,
+              x1: pt.x,
+              z1: pt.z,
+            });
+            this.cb.onPlayUiSound(ok ? 'uiClick' : 'uiError');
+            if (ok) {
+              this.lineDragStart = pt;
+              this.updatePlacementPreview(t.clientX, t.clientY);
+            } else {
+              this.lineDragStart = null;
+              this.placementGhost = null;
+            }
+          }
         }
         return;
       }
 
-      const reg = this.pickNearestRegiment(pt.x, pt.z, 0, 9.0);
+      const sim = this.cb.getSim();
+      const reg = this.pickNearestRegiment(pt.x, pt.z, 0, 9.5);
       if (reg) {
-        this.selectRegiments([reg.id], false);
-        this.cb.onPlayUiSound('uiClick');
-      } else {
-        const bId = this.pickNearestBuilding(pt.x, pt.z);
-        if (bId !== null) {
-          this.selectBuilding(bId);
-          this.cb.onPlayUiSound('uiClick');
-        } else if (this.selectedRegimentIds.size > 0) {
-          this.issueContextOrderAt(pt.x, pt.z, false, false);
+        if (this.multiSelectMode) {
+          this.toggleRegimentSelection(reg.id);
+        } else {
+          const now = performance.now();
+          if (this.lastTouchTapRegId === reg.id && now - this.lastTouchTapMs < 420) {
+            const sameType = sim.state.regiments
+              .filter((r) => r.side === 0 && r.unitType === reg.unitType && countAliveSoldiers(r) > 0)
+              .map((r) => r.id);
+            this.selectRegiments(sameType, false);
+          } else {
+            this.selectRegiments([reg.id], false);
+          }
+          this.lastTouchTapRegId = reg.id;
+          this.lastTouchTapMs = now;
         }
+        this.cb.onPlayUiSound('uiClick');
+        return;
+      }
+
+      // If troops are selected and user taps an enemy regiment directly, prioritize attacking it over nearby buildings
+      if (this.selectedRegimentIds.size > 0) {
+        const enemyReg = this.pickNearestRegiment(pt.x, pt.z, 1, 10.0);
+        if (enemyReg) {
+          this.issueContextOrderAt(enemyReg.x, enemyReg.z, false, false);
+          return;
+        }
+      }
+
+      const bId = this.pickNearestBuilding(pt.x, pt.z);
+      if (bId !== null) {
+        this.selectBuilding(bId);
+        this.cb.onPlayUiSound('uiClick');
+      } else if (this.selectedRegimentIds.size > 0) {
+        this.issueContextOrderAt(pt.x, pt.z, false, false);
       }
     };
 

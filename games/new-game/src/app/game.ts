@@ -187,6 +187,7 @@ export class Game {
       onPlayUiSound: (kind) => this.sound.playUi(kind),
       onSelectionChanged: () => {
         this.ui.setActiveTool(this.inputCtrl.placementTool);
+        this.ui.setMultiSelectMode(this.inputCtrl.isMultiSelectMode());
         this.ui.refreshInspector();
       },
       onPlacementHover: (reason, sx, sy) => this.ui.setPlacementHover(reason, sx, sy),
@@ -194,6 +195,8 @@ export class Game {
     // FPS/marchland controls: when troops are selected, right-drag rotates target formation instead of orbiting camera!
     this.camCtrl.canRightDragRotate = () =>
       this.inputCtrl.selectedRegimentIds.size === 0 && this.inputCtrl.placementTool === null;
+    // Tablet touch controls: when `⌖ Ustaw pozycję` (regimentPose) is active, 1-finger drag aims facing instead of panning!
+    this.camCtrl.canSingleTouchPan = () => this.inputCtrl.placementTool?.kind !== 'regimentPose';
 
     this.governor = new FrameGovernor(GOVERNOR_STEPS[opts.quality], (step) => {
       this.stage.applyGovernorStep(step);
@@ -253,12 +256,18 @@ export class Game {
       onRotatePlacement: () => gameRef?.inputCtrl.rotatePlacement(),
       onSelectRegiment: (id, additive, jump) => {
         if (!gameRef) return;
-        gameRef.inputCtrl.selectRegiments([id], additive);
+        if (additive || gameRef.inputCtrl.isMultiSelectMode()) {
+          gameRef.inputCtrl.toggleRegimentSelection(id);
+        } else {
+          gameRef.inputCtrl.selectRegiments([id], false);
+        }
         if (jump) {
           const r = gameRef.sim.state.regiments.find((x) => x.id === id);
           if (r) gameRef.camCtrl.jumpTo(r.x, r.z);
         }
       },
+      onToggleMultiSelect: () => gameRef?.inputCtrl.toggleMultiSelectMode(),
+      onSelectAllRegiments: () => gameRef?.inputCtrl.selectAllPlayerRegiments(),
       onSaveSlot: (slot) => gameRef?.saveSlot(slot),
       onLoadSlot: (slot) => gameRef?.loadSlot(slot),
       onExportSave: () => gameRef?.exportSaveJson(),

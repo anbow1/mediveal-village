@@ -71,7 +71,12 @@ export interface Strings {
   readonly toolWall: string;
   readonly toolGate: string;
   readonly cancelTool: string;
+  readonly rotateBtn: string;
   readonly rotateHint: string;
+  readonly lineToolHint: string;
+  readonly poseToolHint: string;
+  readonly multiSelectBtn: string;
+  readonly selectAllBtn: string;
 
   // Economy & HUD labels
   readonly popLabel: string;
@@ -241,7 +246,12 @@ const EN: Strings = {
   toolWall: 'Stone Wall',
   toolGate: 'Gatehouse',
   cancelTool: 'Cancel',
+  rotateBtn: '↻ Rotate',
   rotateHint: 'R: Rotate · Right-click: Cancel',
+  lineToolHint: 'Tap start point → tap end point',
+  poseToolHint: 'Touch spot & drag finger to set facing',
+  multiSelectBtn: '+ Multi',
+  selectAllBtn: 'All',
 
   popLabel: 'Pop',
   freeCarriersLabel: 'Free',
@@ -560,7 +570,12 @@ const PL: Strings = {
   toolWall: 'Mur kamienny',
   toolGate: 'Brama',
   cancelTool: 'Anuluj',
+  rotateBtn: '↻ Obróć',
   rotateHint: 'R: Obrót · PPM: Anuluj',
+  lineToolHint: 'Stuknij start → stuknij koniec',
+  poseToolHint: 'Dotknij miejsca i przeciągnij kierunek',
+  multiSelectBtn: '+ Wiele',
+  selectAllBtn: 'Wszystkie',
 
   popLabel: 'Ludność',
   freeCarriersLabel: 'Wolni',

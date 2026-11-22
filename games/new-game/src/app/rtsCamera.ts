@@ -55,6 +55,8 @@ export class RtsCameraController {
 
   /** When false, right-drag is reserved for tactical regiment facing/placement (FPS/marchland controls). */
   canRightDragRotate: () => boolean = () => true;
+  /** When false, 1-finger touch drag is reserved for regiment pose facing rotation (2-finger zoom/rotate still works). */
+  canSingleTouchPan: () => boolean = () => true;
 
   private readonly cleanupFns: (() => void)[] = [];
 
@@ -136,7 +138,7 @@ export class RtsCameraController {
       for (const t of Array.from(e.changedTouches)) {
         this.touches.set(t.identifier, { id: t.identifier, x: t.clientX, y: t.clientY });
       }
-      if (this.touches.size === 1 && prevSingle) {
+      if (this.touches.size === 1 && prevSingle && this.canSingleTouchPan()) {
         const cur = this.touches.get(prevSingle.id);
         if (cur) {
           const dx = cur.x - prevSingle.x;
