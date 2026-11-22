@@ -47,6 +47,11 @@ export interface Strings {
   readonly qualityHigh: string;
   readonly qualityLow: string;
   readonly qualityMinimal: string;
+  readonly offlineDownload: (mb: number) => string;
+  readonly offlineProgress: (pct: number, doneMb: number, totalMb: number) => string;
+  readonly offlineReady: (mb: number) => string;
+  readonly offlineQuota: (doneMb: number, totalMb: number) => string;
+  readonly offlineRetry: string;
   readonly difficultyLabel: string;
   readonly langLabel: string;
   readonly lightingLabel: string;
@@ -193,6 +198,11 @@ const EN: Strings = {
   qualityHigh: 'High',
   qualityLow: 'Low',
   qualityMinimal: 'Minimal',
+  offlineDownload: (mb) => `Save offline (~${mb} MB)`,
+  offlineProgress: (pct, doneMb, totalMb) => `Saving offline: ${pct}% (${doneMb}/${totalMb} MB)`,
+  offlineReady: (mb) => `Ready offline (${mb} MB)`,
+  offlineQuota: (doneMb, totalMb) => `Storage limit (${doneMb}/${totalMb} MB)`,
+  offlineRetry: 'Offline save incomplete — tap to retry',
   difficultyLabel: 'Difficulty',
   langLabel: 'Language',
   lightingLabel: 'Lighting',
@@ -517,6 +527,11 @@ const PL: Strings = {
   qualityHigh: 'Wysoka',
   qualityLow: 'Niska',
   qualityMinimal: 'Minimalna',
+  offlineDownload: (mb) => `Zapisz offline (~${mb} MB)`,
+  offlineProgress: (pct, doneMb, totalMb) => `Zapisywanie offline: ${pct}% (${doneMb}/${totalMb} MB)`,
+  offlineReady: (mb) => `Gotowe offline (${mb} MB)`,
+  offlineQuota: (doneMb, totalMb) => `Limit pamięci (${doneMb}/${totalMb} MB)`,
+  offlineRetry: 'Niepełny zapis offline — ponów',
   difficultyLabel: 'Poziom trudności',
   langLabel: 'Język',
   lightingLabel: 'Światło',

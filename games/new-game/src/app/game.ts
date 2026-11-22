@@ -38,6 +38,7 @@ import {
   saveGameToSlot,
 } from '../ui/campaignStore.ts';
 import { GameHud } from '../ui/hud.ts';
+import { offlineManager } from '../ui/offlineCache.ts';
 import { SoundEngine } from '../ui/sound.ts';
 import {
   type BenchResult,
@@ -386,6 +387,9 @@ export class Game {
 
     window.__ready = true;
     game.startRaf();
+    if (!opts.autoBench) {
+      offlineManager.scheduleAutoDownload(opts.quality);
+    }
     return game;
   }
 

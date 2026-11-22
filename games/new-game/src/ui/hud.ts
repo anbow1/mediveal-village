@@ -43,6 +43,7 @@ import type {
   StanceKind,
 } from '../sim/types.ts';
 import { listSaveSlots, loadCampaignProgress } from './campaignStore.ts';
+import { offlineManager, type OfflineStatus } from './offlineCache.ts';
 import { qualityLabel, STRINGS, type Strings } from './strings.ts';
 
 export interface HudCallbacks {
@@ -256,6 +257,7 @@ export class GameHud {
   private latestSelectedRegs: ReadonlySet<number> = new Set();
   private latestSelectedBld: number | null = null;
   private latestGroups: ReadonlyMap<number, number[]> = new Map();
+  private offlineBtns: HTMLButtonElement[] = [];
 
   constructor(
     parent: HTMLElement,
@@ -400,6 +402,7 @@ export class GameHud {
     this.rebuildTopControls();
     this.rebuildDrawer();
     this.rebuildMenus();
+    offlineManager.subscribe((status) => this.syncOfflineButtons(status));
   }
 
   private get str(): Strings {
@@ -2051,8 +2054,56 @@ export class GameHud {
     this.endModalEl.classList.remove('hidden');
   }
 
+  private makeOfflineButton(): HTMLButtonElement {
+    const btn = document.createElement('button');
+    btn.className = 'btn';
+    btn.style.display = 'none';
+    btn.addEventListener('click', () => {
+      const st = offlineManager.getStatus();
+      if (st.state === 'downloading') return;
+      void offlineManager.startDownload(this.quality);
+    });
+    this.offlineBtns.push(btn);
+    return btn;
+  }
+
+  private syncOfflineButtons(status: OfflineStatus): void {
+    const s = this.str;
+    const totalMb = Math.max(1, Math.round(status.totalBytes / (1024 * 1024)));
+    const doneMb = Math.round(status.cachedBytes / (1024 * 1024));
+    const pct = status.totalBytes > 0 ? Math.min(100, Math.round((status.cachedBytes / status.totalBytes) * 100)) : 0;
+
+    for (const btn of this.offlineBtns) {
+      if (status.state === 'unsupported' || status.state === 'checking') {
+        btn.style.display = 'none';
+        continue;
+      }
+      btn.style.display = '';
+      btn.disabled = status.state === 'downloading';
+      btn.style.borderColor = '';
+      btn.style.color = '';
+      if (status.state === 'ready') {
+        btn.textContent = `✓ ${s.offlineReady(totalMb)}`;
+        btn.style.borderColor = 'rgba(72, 196, 114, 0.55)';
+        btn.style.color = '#9be8b4';
+      } else if (status.state === 'downloading') {
+        btn.textContent = `📥 ${s.offlineProgress(pct, doneMb, totalMb)}`;
+      } else if (status.state === 'quota') {
+        btn.textContent = `⚠ ${s.offlineQuota(doneMb, totalMb)}`;
+        btn.style.borderColor = 'rgba(232, 168, 72, 0.55)';
+        btn.style.color = '#f0cc86';
+      } else if (status.state === 'error') {
+        btn.textContent = `↻ ${s.offlineRetry}`;
+        btn.style.borderColor = 'rgba(232, 118, 108, 0.55)';
+      } else {
+        btn.textContent = `📥 ${s.offlineDownload(totalMb)}`;
+      }
+    }
+  }
+
   private rebuildMenus(): void {
     const s = this.str;
+    this.offlineBtns = [];
 
     // --- 1. Start Menu ---
     this.startMenuEl.innerHTML = '';
@@ -2119,7 +2170,16 @@ export class GameHud {
       qualHead.style.marginTop = '4px';
       qualHead.textContent = `${s.qualityLabel}:`;
 
-      startPanel.append(playQuick, campBtn, skirBtn, tutBtn, langBtn, qualHead, buildQualityPicker());
+      startPanel.append(
+        playQuick,
+        campBtn,
+        skirBtn,
+        tutBtn,
+        langBtn,
+        qualHead,
+        buildQualityPicker(),
+        this.makeOfflineButton(),
+      );
     } else if (this.menuView === 'campaign') {
       const prog = loadCampaignProgress();
       startPanel.innerHTML = `<h2>${s.startCampaignBtn}</h2>`;
@@ -2320,7 +2380,18 @@ export class GameHud {
     mainBtn.textContent = s.returnMenuBtn;
     mainBtn.addEventListener('click', () => this.showStartMenu());
 
-    leftCol.append(resumeBtn, restartBtn, volWrap, lightBtn, pQualHead, pQualRow, govBtn, benchBtn, mainBtn);
+    leftCol.append(
+      resumeBtn,
+      restartBtn,
+      volWrap,
+      lightBtn,
+      pQualHead,
+      pQualRow,
+      this.makeOfflineButton(),
+      govBtn,
+      benchBtn,
+      mainBtn,
+    );
 
     // Right column: Save / Load 3 Slots + JSON Export/Import
     const rightCol = document.createElement('div');
@@ -2388,6 +2459,7 @@ export class GameHud {
     pGrid.append(leftCol, rightCol);
     pPanel.appendChild(pGrid);
     this.pauseMenuEl.appendChild(pPanel);
+    this.syncOfflineButtons(offlineManager.getStatus());
   }
 
   updatePerfOverlay(snap: PerfSnapshot): void {
