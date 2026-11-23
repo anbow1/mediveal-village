@@ -736,7 +736,7 @@ export function stepEconomy(
     }
 
     if (c.fleeing && keep) {
-      moveCitizenToward(c, keep.x, keep.z, dtS, nav, false);
+      moveCitizenToward(c, keep.x, keep.z, dtS, nav, false, BUILDING_DEFS.keep.radiusM + 1.2);
       continue;
     }
 
@@ -973,7 +973,7 @@ export function stepEconomy(
           }
         } else if (c.workPhase === 'returning') {
           shop.status = 'working';
-          if (moveCitizenToward(c, shop.x, shop.z, dtS, nav, false)) {
+          if (moveCitizenToward(c, shop.x, shop.z, dtS, nav, false, BUILDING_DEFS[shop.type].radiusM + 1.1)) {
             shop.yard.timber = (shop.yard.timber ?? 0) + ECONOMY.woodcutterTimberPerTree;
             recordProduced(state.sides[c.side], 'timber', ECONOMY.woodcutterTimberPerTree);
             c.carryingGood = null;
@@ -1010,7 +1010,7 @@ export function stepEconomy(
             c.workPhase = 'returning';
           }
         } else if (c.workPhase === 'returning') {
-          if (moveCitizenToward(c, shop.x, shop.z, dtS, nav, false)) {
+          if (moveCitizenToward(c, shop.x, shop.z, dtS, nav, false, BUILDING_DEFS[shop.type].radiusM + 1.1)) {
             shop.yard.fish = (shop.yard.fish ?? 0) + ECONOMY.fisherFishPerTrip;
             recordProduced(state.sides[c.side], 'fish', ECONOMY.fisherFishPerTrip);
             c.carryingGood = null;
@@ -1092,10 +1092,10 @@ export function stepEconomy(
       const rx = Math.cos(shop.yawRad);
       const rz = -Math.sin(shop.yawRad);
       const stationSide = Math.floor((state.timeS + c.id * 1.7) / 4.5) % 2 === 0 ? -0.95 : 0.95;
-      const frontDist = Math.min(3.4, BUILDING_DEFS[shop.type].radiusM * 0.62);
+      const frontDist = BUILDING_DEFS[shop.type].radiusM + 0.65;
       const tx = shop.x + fx * frontDist + rx * stationSide;
       const tz = shop.z + fz * frontDist + rz * stationSide;
-      if (Math.hypot(shop.x - c.x, shop.z - c.z) > 5.0) {
+      if (Math.hypot(shop.x - c.x, shop.z - c.z) > BUILDING_DEFS[shop.type].radiusM + 2.6) {
         c.workPhase = 'toField';
         moveCitizenToward(c, tx, tz, dtS, nav, true, 1.0);
       } else {
@@ -1115,6 +1115,51 @@ export function stepEconomy(
   // Prune citizens who arrived at barracks to become soldiers
   if (state.citizens.some((c) => c.assignedBuildingId === -999)) {
     state.citizens = state.citizens.filter((c) => c.assignedBuildingId !== -999);
+  }
+
+  // 3b. Deterministic collision resolution: keep citizens outside solid building footprints/plinths & separated from each other!
+  const citizens = state.citizens;
+  for (let i = 0; i < citizens.length; i++) {
+    const a = citizens[i]!;
+    for (let j = i + 1; j < citizens.length; j++) {
+      const b = citizens[j]!;
+      const dx = b.x - a.x;
+      const dz = b.z - a.z;
+      const dSq = dx * dx + dz * dz;
+      const minGap = 0.88;
+      if (dSq < minGap * minGap) {
+        const d = Math.sqrt(dSq);
+        const nx = d > 1e-4 ? dx / d : Math.cos((a.id + j) * 2.1);
+        const nz = d > 1e-4 ? dz / d : Math.sin((a.id + j) * 2.1);
+        const push = Math.min(0.12, (minGap - d) * 0.5);
+        a.x -= nx * push;
+        a.z -= nz * push;
+        b.x += nx * push;
+        b.z += nz * push;
+      }
+    }
+  }
+  for (const c of citizens) {
+    for (const b of state.buildings) {
+      if (b.hp <= 0 || b.type === 'gate' || b.type === 'ruin') continue;
+      // Keep stone plinth (~7.0 m) & solid walls (~0.78 * radiusM) keep citizens visually outside masonry
+      const solidR =
+        b.type === 'keep'
+          ? 7.0
+          : b.type === 'well'
+            ? 1.85
+            : Math.max(2.75, BUILDING_DEFS[b.type].radiusM * 0.78);
+      const dx = c.x - b.x;
+      const dz = c.z - b.z;
+      const dSq = dx * dx + dz * dz;
+      if (dSq < solidR * solidR) {
+        const d = Math.sqrt(dSq);
+        const nx = d > 1e-4 ? dx / d : Math.sin(b.yawRad);
+        const nz = d > 1e-4 ? dz / d : Math.cos(b.yawRad);
+        c.x = b.x + nx * (solidR + 0.12);
+        c.z = b.z + nz * (solidR + 0.12);
+      }
+    }
   }
 
   // 4. Step buildings (construction, upgrades, recipes, farms, vineyards, houses, tax, food, wine)

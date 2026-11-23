@@ -369,6 +369,60 @@ function pushBox(
   }
 }
 
+function pushTri(
+  buf: RawVertBuf,
+  a: readonly [number, number, number],
+  b: readonly [number, number, number],
+  c: readonly [number, number, number],
+  col: Color,
+  metal: number,
+  rough: number,
+  team: number,
+  partVec: readonly [number, number, number, number],
+): void {
+  const ux = b[0] - a[0];
+  const uy = b[1] - a[1];
+  const uz = b[2] - a[2];
+  const vx = c[0] - a[0];
+  const vy = c[1] - a[1];
+  const vz = c[2] - a[2];
+  let nx = uy * vz - uz * vy;
+  let ny = uz * vx - ux * vz;
+  let nz = ux * vy - uy * vx;
+  const len = Math.hypot(nx, ny, nz) || 1;
+  nx /= len;
+  ny /= len;
+  nz /= len;
+  for (const pt of [a, b, c]) {
+    buf.positions.push(pt[0], pt[1], pt[2]);
+    buf.normals.push(nx, ny, nz);
+    buf.colours.push(col.r, col.g, col.b);
+    buf.surface.push(metal, rough, team);
+    buf.part.push(partVec[0], partVec[1], partVec[2], partVec[3]);
+  }
+}
+
+function pushQuad(
+  buf: RawVertBuf,
+  a: readonly [number, number, number],
+  b: readonly [number, number, number],
+  c: readonly [number, number, number],
+  d: readonly [number, number, number],
+  col: Color,
+  metal: number,
+  rough: number,
+  team: number,
+  partVec: readonly [number, number, number, number],
+): void {
+  pushTri(buf, a, b, c, col, metal, rough, team, partVec);
+  pushTri(buf, a, c, d, col, metal, rough, team, partVec);
+}
+
+/**
+ * Sculpted 14th-century curved Gothic Heater Shield:
+ * smooth tapered pointed silhouette, convex front curvature, thin beveled steel border trim,
+ * raised central iron boss & subtle heraldic cross band, and dark oak wooden backing.
+ */
 function pushHeaterShield(
   buf: RawVertBuf,
   cx: number,
@@ -377,13 +431,271 @@ function pushHeaterShield(
   width: number,
   height: number,
   partVec: readonly [number, number, number, number] = [0, 0, 0, 0],
+  yawRad = -0.58,
 ): void {
-  // Heraldic team-coloured heater shield with steel rim
-  pushBox(buf, cx, y0 + height * 0.22, cz, width, height * 0.78, 0.035, 0xffffff, 0.05, 0.65, 1.0, partVec);
-  pushBox(buf, cx, y0, cz, width * 0.62, height * 0.26, 0.035, 0xffffff, 0.05, 0.65, 1.0, partVec);
-  pushBox(buf, cx, y0 + height - 0.04, cz - 0.01, width + 0.04, 0.05, 0.05, 0xc4c5c8, 0.9, 0.4, 0.0, partVec);
-  pushBox(buf, cx - width * 0.5, y0 + height * 0.22, cz - 0.01, 0.04, height * 0.78, 0.05, 0xc4c5c8, 0.9, 0.4, 0.0, partVec);
-  pushBox(buf, cx + width * 0.5, y0 + height * 0.22, cz - 0.01, 0.04, height * 0.78, 0.05, 0xc4c5c8, 0.9, 0.4, 0.0, partVec);
+  const cy = Math.cos(yawRad);
+  const sy = Math.sin(yawRad);
+  const toWorld = (lx: number, ly: number, lz: number): [number, number, number] => [
+    cx + lx * cy + lz * sy,
+    y0 + ly,
+    cz - lx * sy + lz * cy,
+  ];
+
+  // Authentic Gothic heater half-width profile from top (v = 1) down to bottom point (v = 0)
+  const vSteps: readonly [number, number][] = [
+    [0.0, 0.0],
+    [0.14, 0.42],
+    [0.32, 0.72],
+    [0.54, 0.91],
+    [0.76, 0.99],
+    [0.92, 1.0],
+    [1.0, 0.97],
+  ];
+  const uCols = [-1.0, -0.55, -0.14, 0.14, 0.55, 1.0];
+  const hw = width * 0.5;
+  const curveDepth = width * 0.16;
+  const thick = 0.022;
+
+  const colField = new Color(0xc8c4bc);
+  const colRim = new Color(0xb4b8be);
+  const colCross = new Color(0xd8b44c);
+  const colWood = new Color(0x463222);
+
+  const ptAt = (vIdx: number, u: number, front: boolean): [number, number, number] => {
+    const [v, wFrac] = vSteps[vIdx]!;
+    const lx = u * hw * wFrac;
+    const archTop = v > 0.9 ? (1 - u * u) * height * 0.032 : 0;
+    const ly = v * height + archTop;
+    const bow = (1 - u * u) * curveDepth * Math.max(0.25, wFrac);
+    const lz = front ? -bow : -bow + thick;
+    return toWorld(lx, ly, lz);
+  };
+
+  for (let vi = 0; vi < vSteps.length - 1; vi++) {
+    const vMid = (vSteps[vi]![0] + vSteps[vi + 1]![0]) * 0.5;
+    for (let ui = 0; ui < uCols.length - 1; ui++) {
+      const u0 = uCols[ui]!;
+      const u1 = uCols[ui + 1]!;
+      const uMid = (u0 + u1) * 0.5;
+      const isCross = Math.abs(uMid) < 0.16 || (vMid > 0.54 && vMid < 0.76);
+      const isOuterBand = vi === 0 || vi === vSteps.length - 2 || ui === 0 || ui === uCols.length - 2;
+
+      const f00 = ptAt(vi, u0, true);
+      const f10 = ptAt(vi, u1, true);
+      const f11 = ptAt(vi + 1, u1, true);
+      const f01 = ptAt(vi + 1, u0, true);
+      // Front face (faces outward -Z in local shield space)
+      const cFront = isCross ? colCross : colField;
+      const metalFront = isCross ? 0.65 : 0.06;
+      const roughFront = isCross ? 0.36 : 0.58;
+      const teamFront = isCross ? 0.0 : 0.92;
+      pushQuad(buf, f00, f01, f11, f10, cFront, metalFront, roughFront, teamFront, partVec);
+
+      // Dark oak wooden back face
+      const b00 = ptAt(vi, u0, false);
+      const b10 = ptAt(vi, u1, false);
+      const b11 = ptAt(vi + 1, u1, false);
+      const b01 = ptAt(vi + 1, u0, false);
+      pushQuad(buf, b00, b10, b11, b01, colWood, 0.0, 0.88, 0.0, partVec);
+
+      // Thin metallic steel edge bevel along the outer shield contour
+      if (isOuterBand) {
+        if (ui === 0) pushQuad(buf, b00, b01, f01, f00, colRim, 0.88, 0.34, 0.0, partVec);
+        if (ui === uCols.length - 2) pushQuad(buf, f10, f11, b11, b10, colRim, 0.88, 0.34, 0.0, partVec);
+        if (vi === vSteps.length - 2) pushQuad(buf, f01, b01, b11, f11, colRim, 0.88, 0.34, 0.0, partVec);
+      }
+    }
+  }
+
+  // Raised sculpted central steel boss (umbo) on the heraldic cross intersection
+  const bossY = height * 0.64;
+  const bossR = width * 0.13;
+  const apex = toWorld(0, bossY, -curveDepth - 0.042);
+  const segs = 6;
+  for (let s = 0; s < segs; s++) {
+    const a0 = (s / segs) * Math.PI * 2;
+    const a1 = ((s + 1) / segs) * Math.PI * 2;
+    const p0 = toWorld(Math.cos(a0) * bossR, bossY + Math.sin(a0) * bossR, -curveDepth - 0.004);
+    const p1 = toWorld(Math.cos(a1) * bossR, bossY + Math.sin(a1) * bossR, -curveDepth - 0.004);
+    pushTri(buf, p0, apex, p1, colRim, 0.92, 0.28, 0.0, partVec);
+  }
+}
+
+/**
+ * Sculpted 3D Medieval Knight's War Lance (or Light Cavalry Spear):
+ * 8-sided tapered ash-wood shaft tilted naturally forward, conical steel vamplate handguard,
+ * faceted 4-sided diamond steel spearpoint, and flowing curved swallowtail heraldic pennon!
+ */
+function pushWarLance(
+  buf: RawVertBuf,
+  gripX: number,
+  gripY: number,
+  gripZ: number,
+  poleLen: number,
+  heavy: boolean,
+  partVec: readonly [number, number, number, number],
+): void {
+  // Natural martial forward cant (~16 deg toward -Z) instead of a rigid vertical broomstick
+  const tiltRad = heavy ? 0.28 : 0.22;
+  const ct = Math.cos(tiltRad);
+  const st = Math.sin(tiltRad);
+  // Local axis: s along lance shaft (0 = grip hand, positive = toward tip), lx = right, lz = perpendicular back
+  const toWorld = (lx: number, s: number, lz: number): [number, number, number] => [
+    gripX + lx,
+    gripY + s * ct + lz * st,
+    gripZ - s * st + lz * ct,
+  ];
+
+  const colWood = new Color(0x5d4129);
+  const colGrip = new Color(0x2e2118);
+  const colSteel = new Color(0xc8cdd4);
+  const colGold = new Color(0xd6ae46);
+  const colPennon = new Color(0xd0ccc4);
+
+  const pushFrustum = (
+    s0: number,
+    s1: number,
+    r0: number,
+    r1: number,
+    sides: number,
+    col: Color,
+    metal: number,
+    rough: number,
+  ) => {
+    for (let i = 0; i < sides; i++) {
+      const a0 = (i / sides) * Math.PI * 2;
+      const a1 = ((i + 1) / sides) * Math.PI * 2;
+      const c0 = Math.cos(a0);
+      const sn0 = Math.sin(a0);
+      const c1 = Math.cos(a1);
+      const sn1 = Math.sin(a1);
+      const p00 = toWorld(c0 * r0, s0, sn0 * r0);
+      const p10 = toWorld(c1 * r0, s0, sn1 * r0);
+      const p11 = toWorld(c1 * r1, s1, sn1 * r1);
+      const p01 = toWorld(c0 * r1, s1, sn0 * r1);
+      pushQuad(buf, p00, p10, p11, p01, col, metal, rough, 0.0, partVec);
+    }
+  };
+
+  const buttS = -poleLen * 0.26;
+  const tipBaseS = poleLen * 0.74;
+  // Counterbalance butt -> leather grip -> tapered fluted lance shaft -> steel socket ferrule
+  pushFrustum(buttS, -0.14, heavy ? 0.036 : 0.026, heavy ? 0.024 : 0.021, 7, colWood, 0.0, 0.85);
+  pushFrustum(-0.14, 0.14, heavy ? 0.022 : 0.020, heavy ? 0.022 : 0.020, 7, colGrip, 0.0, 0.90);
+  if (heavy) {
+    // Classic conical polished steel vamplate handguard in front of knight's gauntlet!
+    pushFrustum(0.14, 0.34, 0.115, 0.036, 8, colSteel, 0.94, 0.28);
+    // Vamplate rear rim disc
+    const rimCenter = toWorld(0, 0.14, 0);
+    for (let i = 0; i < 8; i++) {
+      const a0 = (i / 8) * Math.PI * 2;
+      const a1 = ((i + 1) / 8) * Math.PI * 2;
+      pushTri(
+        buf,
+        rimCenter,
+        toWorld(Math.cos(a1) * 0.115, 0.14, Math.sin(a1) * 0.115),
+        toWorld(Math.cos(a0) * 0.115, 0.14, Math.sin(a0) * 0.115),
+        colSteel,
+        0.92,
+        0.34,
+        0.0,
+        partVec,
+      );
+    }
+    pushFrustum(0.34, tipBaseS - 0.12, 0.034, 0.017, 7, colWood, 0.0, 0.82);
+  } else {
+    pushFrustum(0.14, tipBaseS - 0.10, 0.022, 0.015, 6, colWood, 0.0, 0.84);
+  }
+  // Polished steel ferrule collar
+  pushFrustum(tipBaseS - 0.12, tipBaseS, 0.018, 0.021, 6, colSteel, 0.92, 0.32);
+
+  // Faceted 4-sided diamond-section steel lancehead
+  const headLen = heavy ? 0.38 : 0.32;
+  const shoulderS = tipBaseS + 0.07;
+  const tipPt = toWorld(0, tipBaseS + headLen, 0);
+  const wB = heavy ? 0.034 : 0.028;
+  const dB = heavy ? 0.016 : 0.013;
+  const ring: [number, number, number][] = [
+    toWorld(wB, shoulderS, 0),
+    toWorld(0, shoulderS, dB),
+    toWorld(-wB, shoulderS, 0),
+    toWorld(0, shoulderS, -dB),
+  ];
+  const baseR: [number, number, number][] = [
+    toWorld(0.018, tipBaseS, 0),
+    toWorld(0, tipBaseS, 0.014),
+    toWorld(-0.018, tipBaseS, 0),
+    toWorld(0, tipBaseS, -0.014),
+  ];
+  for (let i = 0; i < 4; i++) {
+    const j = (i + 1) % 4;
+    pushQuad(buf, baseR[i]!, baseR[j]!, ring[j]!, ring[i]!, colSteel, 0.96, 0.24, 0.0, partVec);
+    pushTri(buf, ring[i]!, ring[j]!, tipPt, colSteel, 0.96, 0.22, 0.0, partVec);
+  }
+
+  // Flowing curved forked swallowtail heraldic pennon streaming behind the lancehead (+Z)
+  if (heavy) {
+    const pTop = tipBaseS - 0.04;
+    const pBot = pTop - 0.26;
+    const segs = 4;
+    const len = 0.72;
+    for (let k = 0; k < segs; k++) {
+      const f0 = k / segs;
+      const f1 = (k + 1) / segs;
+      const z0 = 0.02 + f0 * len;
+      const z1 = 0.02 + f1 * len;
+      const wave0 = Math.sin(f0 * Math.PI * 1.6) * 0.045;
+      const wave1 = Math.sin(f1 * Math.PI * 1.6) * 0.045;
+      const drop0 = f0 * 0.11;
+      const drop1 = f1 * 0.11;
+      const half0 = (pTop - pBot) * 0.5 * (1 - f0 * 0.52);
+      const half1 = (pTop - pBot) * 0.5 * (1 - f1 * 0.52);
+      const mid0 = (pTop + pBot) * 0.5 - drop0;
+      const mid1 = (pTop + pBot) * 0.5 - drop1;
+      if (k < segs - 1) {
+        const a = toWorld(wave0, mid0 + half0, z0);
+        const b = toWorld(wave1, mid1 + half1, z1);
+        const c = toWorld(wave1, mid1 - half1, z1);
+        const d = toWorld(wave0, mid0 - half0, z0);
+        pushQuad(buf, a, b, c, d, colPennon, 0.0, 0.72, 0.92, partVec);
+        // Subtle gold heraldic header stripe near socket
+        if (k === 0) {
+          const ga = toWorld(wave0 + 0.004, mid0 + half0 * 0.35, z0);
+          const gb = toWorld(wave1 + 0.004, mid1 + half1 * 0.35, z1);
+          const gc = toWorld(wave1 + 0.004, mid1 - half1 * 0.35, z1);
+          const gd = toWorld(wave0 + 0.004, mid0 - half0 * 0.35, z0);
+          pushQuad(buf, ga, gb, gc, gd, colGold, 0.55, 0.42, 0.0, partVec);
+        }
+      } else {
+        // Forked swallowtail twin tips!
+        const topA = toWorld(wave0, mid0 + half0, z0);
+        const midA = toWorld(wave0, mid0, z0);
+        const botA = toWorld(wave0, mid0 - half0, z0);
+        const tipUp = toWorld(wave1, mid1 + half1 * 0.95, z1 + 0.14);
+        const tipDn = toWorld(wave1, mid1 - half1 * 0.95, z1 + 0.14);
+        pushTri(buf, topA, tipUp, midA, colPennon, 0.0, 0.72, 0.92, partVec);
+        pushTri(buf, midA, tipDn, botA, colPennon, 0.0, 0.72, 0.92, partVec);
+      }
+    }
+  }
+}
+
+/** Sculpted medieval arming sword in dark leather scabbard with steel crossguard & wheel pommel. */
+function pushArmingSword(
+  buf: RawVertBuf,
+  x: number,
+  y: number,
+  z: number,
+  partVec: readonly [number, number, number, number],
+): void {
+  // Scabbard angled gently backward at left hip
+  pushBox(buf, x, y - 0.42, z + 0.08, 0.036, 0.78, 0.022, 0x35251a, 0.05, 0.84, 0.0, partVec);
+  // Steel scabbard chape & locket
+  pushBox(buf, x, y - 0.46, z + 0.08, 0.026, 0.06, 0.024, 0xbec4cc, 0.92, 0.34, 0.0, partVec);
+  // Crossguard, leather grip & brass wheel pommel
+  pushBox(buf, x, y + 0.36, z + 0.08, 0.17, 0.028, 0.034, 0xc2c7ce, 0.94, 0.30, 0.0, partVec);
+  pushBox(buf, x, y + 0.39, z + 0.08, 0.026, 0.14, 0.026, 0x2d1d14, 0.0, 0.88, 0.0, partVec);
+  pushBox(buf, x, y + 0.53, z + 0.08, 0.048, 0.048, 0.030, 0xcba648, 0.82, 0.32, 0.0, partVec);
 }
 
 /** Cuts a saddle blanket (lightCav) or full caparison with gilt hem (heavyCav) from the warhorse's own skinned mesh. */
@@ -421,8 +733,9 @@ function buildCaparison(horse: RiggedModel, heavy: boolean) {
         c.positions.push(horse.positions[v * 3]! + nx * out, y + ny * out, horse.positions[v * 3 + 2]! + nz * out);
         c.normals.push(nx, ny, nz);
         const hem = heavy && y < hemY;
-        c.colours.push(...(hem ? [0.62, 0.46, 0.14] : [0.85, 0.84, 0.8]));
-        c.surface.push(hem ? 0.5 : 0, hem ? 0.45 : 0.92, hem ? 0 : 0.88);
+        // Rich deep medieval wool/velvet base tint (avoids pastel pink washout in bright sunlight!)
+        c.colours.push(...(hem ? [0.64, 0.48, 0.14] : [0.56, 0.54, 0.50]));
+        c.surface.push(hem ? 0.55 : 0, hem ? 0.42 : 0.90, hem ? 0 : 0.88);
         for (let k = 0; k < 4; k++) {
           c.skin.push(horse.skin[v * 4 + k]!);
           c.weights.push(horse.weights[v * 4 + k]!);
@@ -528,21 +841,24 @@ function buildMountedPool(
   const shieldPart: readonly [number, number, number, number] = [shY, shZ, -0.15, 0];
   const weaponPart: readonly [number, number, number, number] = [shY - 0.5, shZ - 0.1, 0.12, 1];
 
-  // Shield on left arm
-  pushHeaterShield(extras, -0.36, sy - 0.12, sz - 0.17, heavy ? 0.52 : 0.44, heavy ? 0.76 : 0.64, shieldPart);
+  // Shield angled naturally along the rider's front-left shoulder/flank
+  pushHeaterShield(
+    extras,
+    -0.34,
+    sy - 0.04,
+    sz - 0.14,
+    heavy ? 0.44 : 0.36,
+    heavy ? 0.60 : 0.50,
+    shieldPart,
+    -0.62,
+  );
 
-  // Primary polearm: Heavy Knight = 3.4 m couched lance with pennant; Light Cavalry = 2.6 m cavalry pike/spear
-  const poleLen = heavy ? 3.4 : 2.6;
-  const poleBase = shY - 0.5 - poleLen * 0.3;
-  pushBox(extras, 0.34, poleBase, sz - 0.12, 0.05, poleLen, 0.05, 0x6a5038, 0.0, 0.9, 0.0, weaponPart);
-  pushBox(extras, 0.34, poleBase + poleLen, sz - 0.12, 0.08, 0.34, 0.03, 0xc4c5c8, 0.95, 0.35, 0.0, weaponPart);
-  if (heavy) {
-    // Heraldic lance pennant
-    pushBox(extras, 0.34, poleBase + poleLen - 0.5, sz - 0.02, 0.025, 0.28, 0.46, 0xffffff, 0.0, 0.7, 1.0, weaponPart);
-  }
-  // Side arming sword at hip (both lightCav and heavyCav carry pike/lance + sword + shield!)
-  pushBox(extras, -0.26, sy - 0.35, sz + 0.05, 0.04, 0.85, 0.03, 0xc4c5c8, 0.95, 0.38, 0.0, [0, 0, 0, 0]);
-  pushBox(extras, -0.26, sy + 0.48, sz + 0.05, 0.18, 0.04, 0.05, 0xc4c5c8, 0.95, 0.38, 0.0, [0, 0, 0, 0]);
+  // Primary polearm: Heavy Knight = 3.35 m sculpted war lance with steel vamplate & swallowtail pennon; Light Cav = 2.55 m spear
+  const poleLen = heavy ? 3.35 : 2.55;
+  pushWarLance(extras, 0.33, shY - 0.42, sz - 0.14, poleLen, heavy, weaponPart);
+
+  // Side arming sword in leather scabbard at left hip
+  pushArmingSword(extras, -0.25, sy + 0.06, sz + 0.04, [0, 0, 0, 0]);
 
   // Fitted surcoat over rider torso
   const coatTris: number[] = [];
@@ -1205,8 +1521,8 @@ export async function buildMarchlandUnits(
     ['archers', 'archer.json', false],
     ['crossbowmen', 'crossbowman.json', false],
     ['swordsmen', 'swordsman.json', false],
-    // Halberdiers (Lancknechci): full plate + long polearm + large heraldic shield!
-    ['halberdiers', 'halberdier.json', true],
+    // Halberdiers (Lancknechci): full plate + two-handed polearm (historically no shield!)
+    ['halberdiers', 'halberdier.json', false],
   ];
 
   await runLimited(footSpecs, 2, async ([kind, file, largeShield]) => {

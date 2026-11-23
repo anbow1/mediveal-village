@@ -43,16 +43,21 @@ import {
   cos,
   dot,
   float,
+  int,
   max,
   mix,
+  normalMap,
+  normalWorld,
   normalize,
   positionLocal,
   positionWorld,
   pow,
   sin,
+  smoothstep,
   texture,
   uniform,
   uv,
+  vec2,
   vec3,
 } from 'three/tsl';
 import { CALIBRATION, type QualityPreset } from '../config.ts';
@@ -267,7 +272,8 @@ function upgradeFoliageTranslucency(
   const V = normalize(cameraPosition.sub(positionWorld));
   const backDot = max(float(0.0), dot(V.negate(), skyUniforms.uSunDir));
   const sss = pow(backDot, float(3.0)).mul(float(strength));
-  const texRgb = texture(srcMat.map, uv(0)).rgb;
+  const texSample = texture(srcMat.map, uv(0));
+  const texRgb = texSample.rgb;
 
   // Gentle vertex-shader canopy wind sway (cycle-free local coords + dual-frequency gust & leaf flutter)
   const heightW = clamp(positionLocal.y.sub(0.8).div(5.5), float(0.0), float(1.0));
@@ -283,9 +289,11 @@ function upgradeFoliageTranslucency(
     .mul(cos(positionWorld.z.mul(0.21).sub(positionWorld.x.mul(0.13))))
     .mul(0.5)
     .add(0.5);
-  const leafTint = mix(vec3(0.84, 0.93, 0.85), vec3(1.14, 1.04, 0.82), treeVar);
+  const leafTint = mix(vec3(0.86, 0.94, 0.86), vec3(1.12, 1.03, 0.84), treeVar);
   const cloudShade = buildCloudShadowNode(positionWorld.xz, skyUniforms, 0.18);
-  mat.colorNode = leafTint.mul(cloudShade);
+  // IMPORTANT: in r186 NodeMaterial, colorNode overrides map RGB+A — always preserve texSample.rgb & texSample.a!
+  mat.colorNode = texRgb.mul(leafTint).mul(cloudShade);
+  mat.opacityNode = texSample.a;
 
   // Warm golden-olive transmitted leaf glow on backlit canopy edges
   mat.emissiveNode = texRgb.mul(skyUniforms.uSunGlowColor).mul(vec3(1.15, 1.05, 0.52)).mul(sss).mul(cloudShade);
@@ -1552,89 +1560,199 @@ export async function buildStage5World(
 
   const staticInstancedMeshes: InstancedMesh[] = [];
 
-  // 6b. Unmistakable 3D Stone & Iron Ore Outcrops (1 single InstancedMesh, sharp cleft quarry rock, 0 extra textures!)
+  // 6b. Sculpted PBR Stone Quarry & Metallic Iron Ore Outcrops (real KTX2 rock albedo/normal/ORM + moss + ore veins!)
   if (layout.outcrops.length > 0) {
-    const parts: BufferGeometry[] = [];
-    const specs: readonly [number, number, number, number, number, number, number, number][] = [
-      [0.0, 1.35, 0.0, 2.5, 2.15, 2.0, 0.25, 0.14],
-      [-2.1, 0.95, 0.75, 1.9, 1.45, 1.6, 1.05, -0.18],
-      [2.15, 1.05, -0.65, 2.0, 1.6, 1.65, 2.15, 0.12],
-      [0.45, 0.72, 2.05, 1.8, 1.15, 1.45, 0.85, -0.1],
-      [-1.25, 0.68, -1.95, 1.65, 1.1, 1.5, 2.55, 0.15],
-      [2.85, 0.52, 1.45, 1.35, 0.85, 1.25, 1.55, -0.12],
-      [-2.95, 0.48, -0.85, 1.25, 0.82, 1.2, 0.55, 0.1],
+    const buildCraggyRockCluster = (
+      specs: readonly [number, number, number, number, number, number, number, number][],
+      ridgeAmp: number,
+      seedOffset: number,
+    ): BufferGeometry => {
+      const parts: BufferGeometry[] = [];
+      specs.forEach(([tx, ty, tz, sx, sy, sz, ry, rx], idx) => {
+        // Detail 1 gives natural cleft rock ridges instead of faceted low-poly balls
+        const g = new DodecahedronGeometry(1.0, 1);
+        const pos = g.getAttribute('position');
+        for (let i = 0; i < pos.count; i++) {
+          let vx = pos.getX(i);
+          let vy = pos.getY(i);
+          let vz = pos.getZ(i);
+          // Stepped geological strata & craggy angular cleavage
+          const n1 = Math.sin(vx * 3.4 + idx * 1.9 + seedOffset) * Math.cos(vz * 3.1 - vy * 2.4);
+          const n2 = Math.sin(vy * 5.2 + vx * 2.1 - vz * 2.8) * 0.5;
+          const strata = Math.sin(vy * 7.5 + idx) * 0.08;
+          const rScale = 1.0 + (n1 * 0.65 + n2 * 0.35) * ridgeAmp + strata;
+          vx *= rScale * sx;
+          vy *= rScale * sy;
+          vz *= rScale * sz;
+          // Slightly flatten top quarry ledges & flare damp base into earth
+          if (vy > sy * 0.52) vy = sy * 0.52 + (vy - sy * 0.52) * 0.55;
+          if (vy < 0) {
+            vx *= 1.12;
+            vz *= 1.12;
+          }
+          pos.setXYZ(i, vx, vy, vz);
+        }
+        g.rotateX(rx);
+        g.rotateY(ry);
+        g.translate(tx, ty, tz);
+        const nonIdx = g.index ? g.toNonIndexed() : g;
+        nonIdx.computeVertexNormals();
+        // Box-projected UVs (world-metre scale) so Poly Haven KTX2 rock textures wrap cleanly with zero stretching!
+        const p2 = nonIdx.getAttribute('position');
+        const n2 = nonIdx.getAttribute('normal');
+        const uvs = new Float32Array(p2.count * 2);
+        for (let i = 0; i < p2.count; i++) {
+          const px = p2.getX(i);
+          const py = p2.getY(i);
+          const pz = p2.getZ(i);
+          const ax = Math.abs(n2.getX(i));
+          const ay = Math.abs(n2.getY(i));
+          const az = Math.abs(n2.getZ(i));
+          if (ay >= ax && ay >= az) {
+            uvs[i * 2] = px * 0.36;
+            uvs[i * 2 + 1] = pz * 0.36;
+          } else if (ax >= az) {
+            uvs[i * 2] = pz * 0.36;
+            uvs[i * 2 + 1] = py * 0.36;
+          } else {
+            uvs[i * 2] = px * 0.36;
+            uvs[i * 2 + 1] = py * 0.36;
+          }
+        }
+        nonIdx.setAttribute('uv', new Float32BufferAttribute(uvs, 2));
+        parts.push(nonIdx);
+        if (nonIdx !== g) g.dispose();
+      });
+      const merged = mergeGeometries(parts, false)!;
+      for (const p of parts) p.dispose();
+      return merged;
+    };
+
+    // Main quarry crag + flanking ledges + scattered loose quarried boulders around perimeter
+    const quarrySpecs: readonly [number, number, number, number, number, number, number, number][] = [
+      [0.0, 1.45, 0.0, 2.55, 2.35, 2.05, 0.25, 0.10],
+      [-2.15, 1.05, 0.72, 1.95, 1.55, 1.65, 1.05, -0.15],
+      [2.10, 1.12, -0.68, 2.05, 1.72, 1.68, 2.15, 0.12],
+      [0.48, 0.78, 2.05, 1.85, 1.20, 1.48, 0.85, -0.08],
+      [-1.32, 0.74, -1.95, 1.70, 1.18, 1.52, 2.55, 0.14],
+      [3.25, 0.42, 1.65, 1.15, 0.68, 0.95, 1.55, -0.10],
+      [-3.35, 0.38, -1.15, 1.08, 0.62, 0.92, 0.55, 0.12],
+      [1.85, 0.32, 3.10, 0.88, 0.52, 0.78, 2.10, -0.06],
+      [-1.95, 0.30, 2.95, 0.75, 0.46, 0.82, 0.95, 0.08],
     ];
-    for (const [tx, ty, tz, sx, sy, sz, ry, rx] of specs) {
-      // Detail 0 -> crisp angular quarried rock facets (never smooth snowballs!)
-      const g = new DodecahedronGeometry(1.0, 0);
-      g.scale(sx, sy, sz);
-      g.rotateX(rx);
-      g.rotateY(ry);
-      g.translate(tx, ty, tz);
-      const nonIdx = g.index ? g.toNonIndexed() : g;
-      nonIdx.computeVertexNormals();
-      parts.push(nonIdx);
-      if (nonIdx !== g) g.dispose();
+    const stoneOutcropGeo = buildCraggyRockCluster(quarrySpecs, 0.20, 1.3);
+    disposableGeos.push(stoneOutcropGeo);
+
+    const oreSpecs: readonly [number, number, number, number, number, number, number, number][] = [
+      [0.0, 1.65, 0.0, 2.35, 2.65, 1.95, 0.45, 0.16],
+      [-1.95, 1.15, 0.85, 1.75, 1.85, 1.55, 1.35, -0.22],
+      [2.05, 1.25, -0.75, 1.85, 1.95, 1.58, 2.40, 0.18],
+      [0.55, 0.88, 1.95, 1.65, 1.35, 1.38, 0.95, -0.14],
+      [-1.25, 0.82, -1.85, 1.58, 1.32, 1.42, 2.75, 0.16],
+      [2.95, 0.48, 1.45, 1.10, 0.78, 0.95, 1.75, -0.12],
+      [-3.05, 0.44, -1.05, 1.02, 0.72, 0.88, 0.65, 0.14],
+    ];
+    const oreOutcropGeo = buildCraggyRockCluster(oreSpecs, 0.28, 7.9);
+    disposableGeos.push(oreOutcropGeo);
+
+    // 1) Textured Pale Limestone / Granite Stone Quarry Material (Poly Haven KTX2 rock + mossy crevices)
+    const stoneMat = new MeshStandardNodeMaterial({ roughness: 1.0, metalness: 0.0 });
+    stoneMat.name = 'MarchlandStoneOutcropMat';
+    {
+      const rUv = uv(0);
+      const alb = texture(surfaces.albedoArray, rUv).depth(int(8)).rgb;
+      const nor = texture(surfaces.normalArray, rUv).depth(int(8)).rgb;
+      const orm = texture(surfaces.ormArray, rUv).depth(int(8));
+      const strataBand = sin(positionLocal.y.mul(3.8).add(sin(positionLocal.x.mul(1.7)).mul(1.2))).mul(0.5).add(0.5);
+      const limestone = alb.mul(mix(vec3(0.92, 0.94, 0.96), vec3(1.18, 1.15, 1.08), strataBand));
+      // Natural moss & damp earth creeping up the lower rock skirt + upward-facing crevices
+      const mossMask = clamp(
+        float(1.0)
+          .sub(smoothstep(float(0.15), float(1.35), positionLocal.y))
+          .mul(0.75)
+          .add(smoothstep(float(0.62), float(0.92), normalWorld.y).mul(0.32)),
+        0.0,
+        0.65,
+      );
+      const mossy = mix(limestone, vec3(0.18, 0.25, 0.11), mossMask.mul(0.55));
+      const cloudShade = buildCloudShadowNode(positionWorld.xz, skyUniforms, 0.18);
+      stoneMat.colorNode = clamp(mossy.mul(mix(float(0.74), float(1.0), orm.r)).mul(cloudShade), vec3(0.03), vec3(0.82));
+      stoneMat.normalNode = normalMap(nor, vec2(1.15, 1.15));
+      stoneMat.roughnessNode = clamp(orm.g.mul(0.95), 0.58, 0.96);
+      stoneMat.metalnessNode = float(0.04);
     }
-    const outcropGeo = mergeGeometries(parts, false)!;
-    for (const p of parts) p.dispose();
-    disposableGeos.push(outcropGeo);
+    disposableMats.push(stoneMat);
 
-    const outcropMat = new MeshStandardNodeMaterial({ color: 0xffffff, roughness: 0.90, metalness: 0.12 });
-    outcropMat.name = 'MarchlandOutcropMat';
-    disposableMats.push(outcropMat);
+    // 2) Textured Dark Basalt & Gleaming Metallic Iron-Ore Vein Material (rust-ochre hematite + shiny iron seams!)
+    const oreMat = new MeshStandardNodeMaterial({ roughness: 1.0, metalness: 0.0 });
+    oreMat.name = 'MarchlandIronOreOutcropMat';
+    {
+      const rUv = uv(0);
+      const alb = texture(surfaces.albedoArray, rUv).depth(int(8)).rgb;
+      const nor = texture(surfaces.normalArray, rUv).depth(int(8)).rgb;
+      const orm = texture(surfaces.ormArray, rUv).depth(int(8));
+      // Diagonal metallic iron-ore veins & warm rust-ochre mineral bands streaking through dark ironstone
+      const veinField = sin(
+        positionLocal.x.mul(2.8).add(positionLocal.y.mul(3.6)).sub(positionLocal.z.mul(2.2))
+          .add(sin(positionLocal.z.mul(4.5).add(positionLocal.y.mul(2.1))).mul(1.1)),
+      )
+        .mul(0.5)
+        .add(0.5);
+      const metalVein = smoothstep(float(0.68), float(0.88), veinField);
+      const rustHalo = smoothstep(float(0.52), float(0.74), veinField).mul(float(1.0).sub(metalVein));
+      const basalt = alb.mul(vec3(0.34, 0.36, 0.40));
+      const withRust = mix(basalt, vec3(0.48, 0.21, 0.08), rustHalo.mul(0.85));
+      const withIron = mix(withRust, vec3(0.62, 0.66, 0.72), metalVein.mul(0.92));
+      const cloudShade = buildCloudShadowNode(positionWorld.xz, skyUniforms, 0.18);
+      oreMat.colorNode = clamp(withIron.mul(mix(float(0.72), float(1.0), orm.r)).mul(cloudShade), vec3(0.02), vec3(0.80));
+      oreMat.normalNode = normalMap(nor, vec2(1.25, 1.25));
+      oreMat.roughnessNode = mix(clamp(orm.g, 0.56, 0.94), float(0.26), metalVein);
+      oreMat.metalnessNode = mix(float(0.14), float(0.86), metalVein);
+    }
+    disposableMats.push(oreMat);
 
-    // 2 layered angular clusters per outcrop (weathered base + cleft granite/iron-vein crown)
-    const totalInstances = layout.outcrops.length * 2;
-    const outcropMesh = new InstancedMesh(outcropGeo, outcropMat, totalInstances);
-    outcropMesh.name = 'MarchlandOutcrops';
-    outcropMesh.castShadow = true;
-    outcropMesh.receiveShadow = true;
-    outcropMesh.frustumCulled = false;
-    markStaticInstances(outcropMesh);
+    const stoneOutcrops = layout.outcrops.filter((o) => o.kind === 'stone');
+    const oreOutcrops = layout.outcrops.filter((o) => o.kind !== 'stone');
 
-    const colStoneBase = new Color(0x7c838a);
-    const colStoneCrown = new Color(0xa5acb3);
-    const colOreBase = new Color(0x3c4148);
-    const colOreVein = new Color(0xb85e27);
-    let cursor = 0;
-    layout.outcrops.forEach((o, i) => {
-      const y = terrain.heightAt(o.x, o.z) - 0.18;
-      const yaw = (i * 1.9 + 0.3) % (Math.PI * 2);
-      if (o.kind === 'stone') {
+    if (stoneOutcrops.length > 0) {
+      const stoneMesh = new InstancedMesh(stoneOutcropGeo, stoneMat, stoneOutcrops.length);
+      stoneMesh.name = 'MarchlandStoneOutcrops';
+      stoneMesh.castShadow = true;
+      stoneMesh.receiveShadow = true;
+      stoneMesh.frustumCulled = false;
+      markStaticInstances(stoneMesh);
+      stoneOutcrops.forEach((o, i) => {
+        const y = terrain.heightAt(o.x, o.z) - 0.24;
+        const yaw = (i * 1.9 + 0.3) % (Math.PI * 2);
         TEMP_POS.set(o.x, y, o.z);
         TEMP_QUAT.setFromAxisAngle(UP_AXIS, yaw);
-        TEMP_SCALE.set(1.12, 0.96, 1.12);
-        outcropMesh.setMatrixAt(cursor, TEMP_MAT.compose(TEMP_POS, TEMP_QUAT, TEMP_SCALE));
-        outcropMesh.setColorAt(cursor, colStoneBase);
-        cursor++;
+        TEMP_SCALE.set(1.12, 1.0, 1.12);
+        stoneMesh.setMatrixAt(i, TEMP_MAT.compose(TEMP_POS, TEMP_QUAT, TEMP_SCALE));
+      });
+      stoneMesh.instanceMatrix.needsUpdate = true;
+      scene.add(stoneMesh);
+      staticInstancedMeshes.push(stoneMesh);
+    }
 
-        TEMP_POS.set(o.x + 0.25, y + 0.55, o.z - 0.2);
-        TEMP_QUAT.setFromAxisAngle(UP_AXIS, yaw + 1.35);
-        TEMP_SCALE.set(0.76, 1.05, 0.72);
-        outcropMesh.setMatrixAt(cursor, TEMP_MAT.compose(TEMP_POS, TEMP_QUAT, TEMP_SCALE));
-        outcropMesh.setColorAt(cursor, colStoneCrown);
-        cursor++;
-      } else {
+    if (oreOutcrops.length > 0) {
+      const oreMesh = new InstancedMesh(oreOutcropGeo, oreMat, oreOutcrops.length);
+      oreMesh.name = 'MarchlandIronOreOutcrops';
+      oreMesh.castShadow = true;
+      oreMesh.receiveShadow = true;
+      oreMesh.frustumCulled = false;
+      markStaticInstances(oreMesh);
+      oreOutcrops.forEach((o, i) => {
+        const y = terrain.heightAt(o.x, o.z) - 0.24;
+        const yaw = (i * 2.3 + 0.9) % (Math.PI * 2);
         TEMP_POS.set(o.x, y, o.z);
         TEMP_QUAT.setFromAxisAngle(UP_AXIS, yaw);
-        TEMP_SCALE.set(1.08, 1.12, 1.08);
-        outcropMesh.setMatrixAt(cursor, TEMP_MAT.compose(TEMP_POS, TEMP_QUAT, TEMP_SCALE));
-        outcropMesh.setColorAt(cursor, colOreBase);
-        cursor++;
-
-        TEMP_POS.set(o.x + 0.15, y + 1.38, o.z - 0.1);
-        TEMP_QUAT.setFromAxisAngle(UP_AXIS, yaw + 1.1);
-        TEMP_SCALE.set(0.48, 0.58, 0.48);
-        outcropMesh.setMatrixAt(cursor, TEMP_MAT.compose(TEMP_POS, TEMP_QUAT, TEMP_SCALE));
-        outcropMesh.setColorAt(cursor, colOreVein);
-        cursor++;
-      }
-    });
-    outcropMesh.instanceMatrix.needsUpdate = true;
-    if (outcropMesh.instanceColor) outcropMesh.instanceColor.needsUpdate = true;
-    scene.add(outcropMesh);
-    staticInstancedMeshes.push(outcropMesh);
+        TEMP_SCALE.set(1.10, 1.08, 1.10);
+        oreMesh.setMatrixAt(i, TEMP_MAT.compose(TEMP_POS, TEMP_QUAT, TEMP_SCALE));
+      });
+      oreMesh.instanceMatrix.needsUpdate = true;
+      scene.add(oreMesh);
+      staticInstancedMeshes.push(oreMesh);
+    }
   }
 
   // 7. Poly Haven CC0 Siege Field Cannons (multi-LOD instanced!)

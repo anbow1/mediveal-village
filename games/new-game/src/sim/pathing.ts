@@ -114,12 +114,11 @@ export class NavGrid {
       this.stampRoad(rd.x0, rd.z0, rd.x1, rd.z1, rd.widthM);
     }
 
-    // 3. Buildings block interior cells (leave doorway apron passable)
+    // 3. Buildings block interior cells (leave doorway apron & narrow town alleys walkable for A*)
     for (const b of buildings) {
       if (b.hp <= 0) continue;
-      if (b.type === 'gate') continue;
-      // Keep interior footprint slightly smaller than visual radius so narrow town lanes stay walkable
-      const rM = b.type === 'keep' ? 5.2 : b.type === 'well' ? 1.8 : 2.8;
+      if (b.type === 'gate' || b.type === 'ruin') continue;
+      const rM = b.type === 'keep' ? 5.6 : b.type === 'well' ? 1.8 : 2.9;
       this.stampCircleFlag(b.x, b.z, rM, CELL_BLOCKED);
     }
 
