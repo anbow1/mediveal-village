@@ -30,7 +30,7 @@ import {
   type Scene,
 } from 'three/webgpu';
 import { abs, attribute, cos, Fn, int, ivec2, mix, normalLocal, sin, textureLoad, vec3, vec4 } from 'three/tsl';
-import { UNIT_DEFS, type BuildingTypeId, type QualityPreset, type UnitTypeId } from '../config.ts';
+import { BUILDING_DEFS, UNIT_DEFS, type BuildingTypeId, type GoodId, type QualityPreset, type UnitTypeId } from '../config.ts';
 import type { RegimentEntity, SimWorldState, SoldierEntity } from '../sim/types.ts';
 
 interface ClipSpec {
@@ -169,8 +169,64 @@ const TEMP_QUAT = new Quaternion();
 const TEMP_SCALE = new Vector3(1, 1, 1);
 const UP = new Vector3(0, 1, 0);
 
+const GOODS_CAP = 128;
 const DIGGER_BUILDINGS: ReadonlySet<BuildingTypeId> = new Set(['quarry', 'ironMine']);
 const HARVEST_BUILDINGS: ReadonlySet<BuildingTypeId> = new Set(['farm', 'vineyard']);
+const CHOP_BUILDINGS: ReadonlySet<BuildingTypeId> = new Set(['woodcutter', 'forester', 'sawmill', 'butcher']);
+const HAMMER_BUILDINGS: ReadonlySet<BuildingTypeId> = new Set(['smithy', 'armourer', 'smelter', 'gunFoundry']);
+
+type GoodPropKind = 'lumber' | 'stone' | 'sack' | 'barrel' | 'bread' | 'meat' | 'arrows' | 'crate';
+const GOOD_PROP_KINDS: readonly GoodPropKind[] = [
+  'lumber',
+  'stone',
+  'sack',
+  'barrel',
+  'bread',
+  'meat',
+  'arrows',
+  'crate',
+];
+const GOOD_PROP_SCALES: Record<GoodPropKind, { readonly carry: number; readonly yard: number }> = {
+  lumber: { carry: 0.62, yard: 1.05 },
+  stone: { carry: 0.42, yard: 0.78 },
+  sack: { carry: 0.55, yard: 0.9 },
+  barrel: { carry: 0.42, yard: 0.72 },
+  bread: { carry: 0.46, yard: 0.78 },
+  meat: { carry: 0.46, yard: 0.78 },
+  arrows: { carry: 0.34, yard: 0.58 },
+  crate: { carry: 0.44, yard: 0.74 },
+};
+
+function mapGoodToProp(g: GoodId): GoodPropKind {
+  switch (g) {
+    case 'timber':
+    case 'planks':
+      return 'lumber';
+    case 'stone':
+    case 'ironOre':
+    case 'iron':
+      return 'stone';
+    case 'grain':
+    case 'flour':
+    case 'hides':
+    case 'grapes':
+      return 'sack';
+    case 'wine':
+    case 'ale':
+    case 'fish':
+      return 'barrel';
+    case 'bread':
+      return 'bread';
+    case 'meat':
+    case 'sausages':
+      return 'meat';
+    case 'bows':
+    case 'weapons':
+      return 'arrows';
+    default:
+      return 'crate';
+  }
+}
 
 function interleave(g: BufferGeometry, parts: readonly [name: string, size: number, data: ArrayLike<number>][]): void {
   const stride = parts.reduce((sum, [, size]) => sum + size, 0);
@@ -1324,7 +1380,17 @@ function buildFolkPool(scene: Scene, name: string, model: RiggedModel): FolkPool
   return { mesh, place, side, frame, boneTex, material, clips, count: 0 };
 }
 
-function buildPropMesh(scene: Scene, name: string, model: PropModel, dx: number, dy: number, dz: number, scale: number, tipBarrow = false): InstancedMesh {
+function buildPropMesh(
+  scene: Scene,
+  name: string,
+  model: PropModel,
+  dx: number,
+  dy: number,
+  dz: number,
+  scale: number,
+  tipBarrow = false,
+  cap = CART_CAP,
+): InstancedMesh {
   const n = model.triangles.length;
   const pos = new Float32Array(n * 3);
   const nor = new Float32Array(n * 3);
@@ -1371,7 +1437,7 @@ function buildPropMesh(scene: Scene, name: string, model: PropModel, dx: number,
 
   const mat = new MeshStandardNodeMaterial({ vertexColors: true, roughness: 0.85, metalness: 0.05, side: DoubleSide });
   mat.name = `${name}_Mat`;
-  const mesh = new InstancedMesh(g, mat, CART_CAP);
+  const mesh = new InstancedMesh(g, mat, cap);
   mesh.name = name;
   mesh.instanceMatrix.setUsage(DynamicDrawUsage);
   mesh.setMatrixAt(0, ZERO_MAT);
@@ -1473,6 +1539,7 @@ export async function buildMarchlandUnits(
   const unitPools = new Map<UnitTypeId, SkinnedUnitPool>();
   const engines = new Map<'cannon' | 'mortar', EnginePool>();
   const folkPools: FolkPool[] = [];
+  const goodMeshes = new Map<GoodPropKind, InstancedMesh>();
   let handcartMesh: InstancedMesh | null = null;
   let wagonMesh: InstancedMesh | null = null;
   let pigMesh: InstancedMesh | null = null;
@@ -1495,7 +1562,7 @@ export async function buildMarchlandUnits(
             'townswoman-worker.json',
           ];
 
-  const totalSteps = 6 + 2 + 5 + folkFiles.length;
+  const totalSteps = 6 + 2 + 6 + folkFiles.length;
   let doneSteps = 0;
   const stepDone = () => {
     doneSteps++;
@@ -1549,19 +1616,25 @@ export async function buildMarchlandUnits(
     draftHorsePool = buildDraftHorsePool(scene, warhorseM);
   }
 
-  // Small prop JSONs (cannons, mortars, handcarts, wagons, livestock pigs)
-  const [cannonM, mortarM, handcartM, wagonM, pigM] = await Promise.all([
+  // Small prop JSONs (cannons, mortars, handcarts, wagons, livestock pigs + 8 real 3D goods bundles)
+  const [cannonM, mortarM, handcartM, wagonM, pigM, goodsModels] = await Promise.all([
     fetchJson<PropModel>(`${base}/props/cannon.json`).finally(stepDone),
     fetchJson<PropModel>(`${base}/props/mortar.json`).finally(stepDone),
     fetchJson<PropModel>(`${base}/props/handcart.json`).finally(stepDone),
     fetchJson<PropModel>(`${base}/props/wagon.json`).finally(stepDone),
     fetchJson<PropModel>(`${base}/props/pig.json`).finally(stepDone),
+    Promise.all(GOOD_PROP_KINDS.map((kind) => fetchJson<PropModel>(`${base}/props/goods/${kind}.json`))).finally(stepDone),
   ]);
   if (cannonM) engines.set('cannon', buildEnginePool(scene, 'ML_Engine_cannon', cannonM));
   if (mortarM) engines.set('mortar', buildEnginePool(scene, 'ML_Engine_mortar', mortarM));
   if (handcartM) handcartMesh = buildPropMesh(scene, 'ML_Handcarts', handcartM, 0, 0, 0, 1.2, true);
   if (wagonM) wagonMesh = buildPropMesh(scene, 'ML_Wagons', wagonM, 1.0, 0, -0.3, 1.0, false);
   if (pigM) pigMesh = buildPropMesh(scene, 'ML_LivestockPigs', pigM, 0, 0, 0, 1.0, false);
+  for (let gi = 0; gi < GOOD_PROP_KINDS.length; gi++) {
+    const kind = GOOD_PROP_KINDS[gi]!;
+    const gm = goodsModels[gi];
+    if (gm) goodMeshes.set(kind, buildPropMesh(scene, `ML_Good_${kind}`, gm, 0, 0, 0, 1.0, false, GOODS_CAP));
+  }
 
   // Townsfolk models (2 MB each): load 2 at a time so peak JS heap stays tiny on 3 GB iPads
   const builtFolks: (FolkPool | null)[] = new Array(folkFiles.length).fill(null);
@@ -1649,7 +1722,9 @@ export async function buildMarchlandUnits(
       const h = pool.horse;
       const loop = (c: Clip): number => cycle(c, simClockS / (c.frames / pool.fps) + s.slotIndex * 0.37);
       if (!s.alive) return pool.deaths[0] ? at(pool.deaths[0], s.deadS ?? 0, pool.fps) : h.idle.start;
-      if (speed > GALLOP_FROM_MS) return cycle(h.gallop, strideM / GALLOP_CYCLE_M);
+      if (speed > GALLOP_FROM_MS) {
+        return cycle(h.gallop, strideM / ((h.gallop.travelM ?? 0) > 0.5 ? h.gallop.travelM! : GALLOP_CYCLE_M));
+      }
       if (isMoving) return cycle(h.walk, strideM / Math.max(0.5, h.walk.travelM ?? 1));
       const hurtS = simClockS - (s.hurtAtS ?? -1e9);
       const atEase = reg.outOfCombatS > AT_EASE_AFTER_S && (s.sinceAttackS ?? 99) > AT_EASE_AFTER_S && hurtS > AT_EASE_AFTER_S;
@@ -1683,7 +1758,7 @@ export async function buildMarchlandUnits(
     const def = UNIT_DEFS[reg.unitType];
     if (isMoving) {
       if (pool.run && speed > (def.walkSpeedMs + def.runSpeedMs) * 0.5) {
-        return cycle(pool.run, strideM / RUN_CYCLE_M);
+        return cycle(pool.run, strideM / ((pool.run.travelM ?? 0) > 0.5 ? pool.run.travelM! : RUN_CYCLE_M));
       }
       if (pool.walk) {
         return cycle(pool.walk, strideM / ((pool.walk.travelM ?? 0) > 0.5 ? pool.walk.travelM! : WALK_CYCLE_M));
@@ -1794,7 +1869,12 @@ export async function buildMarchlandUnits(
 
         aArr[idx * 4] = ((strideM / (pool.mounted ? 3.2 : 1.5)) % 1) * Math.PI * 2;
         aArr[idx * 4 + 1] = pool.walk ? 0 : Math.min(1, speed / Math.max(0.5, def.walkSpeedMs * 0.9));
-        aArr[idx * 4 + 2] = strikeAmt * STRIKE_RAD;
+        // Couched war-lance charge: lower cavalry lances smoothly forward during gallop!
+        const couchRad =
+          pool.mounted && s.alive && speed > GALLOP_FROM_MS
+            ? Math.min(1, (speed - GALLOP_FROM_MS) / 2.2) * 1.12
+            : 0;
+        aArr[idx * 4 + 2] = Math.min(1.52, couchRad + strikeAmt * (STRIKE_RAD - couchRad * 0.5));
         aArr[idx * 4 + 3] = fall;
 
         sArr[idx] = reg.side;
@@ -1899,11 +1979,33 @@ export async function buildMarchlandUnits(
       ep.side.needsUpdate = true;
     }
 
-    // 2. Townsfolk (carriers, builders, workers) + Transport L2 Handcarts + L3 Wagons & Draft Horses!
+    // 2. Townsfolk (carriers, builders, workers) + Transport L2 Handcarts + L3 Wagons & Draft Horses + Real 3D Goods!
     for (const fp of folkPools) fp.count = 0;
     let handcartCount = 0;
     let wagonCount = 0;
     let draftHorseCount = 0;
+    const goodCounts: Record<GoodPropKind, number> = {
+      lumber: 0,
+      stone: 0,
+      sack: 0,
+      barrel: 0,
+      bread: 0,
+      meat: 0,
+      arrows: 0,
+      crate: 0,
+    };
+    const pushGood = (good: GoodId, wx: number, wy: number, wz: number, yawRad: number, scale: number): void => {
+      const kind = mapGoodToProp(good);
+      const mesh = goodMeshes.get(kind);
+      const cnt = goodCounts[kind];
+      if (!mesh || cnt >= GOODS_CAP) return;
+      TEMP_POS.set(wx, wy, wz);
+      TEMP_QUAT.setFromAxisAngle(UP, yawRad);
+      TEMP_SCALE.set(scale, scale, scale);
+      TEMP_MAT.compose(TEMP_POS, TEMP_QUAT, TEMP_SCALE);
+      mesh.setMatrixAt(cnt, TEMP_MAT);
+      goodCounts[kind] = cnt + 1;
+    };
 
     for (const c of state.citizens) {
       if (folkPools.length === 0) break;
@@ -1925,22 +2027,24 @@ export async function buildMarchlandUnits(
 
       const tLvl = state.sides[c.side].transportLevel ?? 1;
       const isCarrier = c.role === 'carrier';
-      const carrying = isCarrier && c.carryingGood !== null;
+      const carrying = c.carryingGood !== null;
+      const pushingCart = isCarrier && c.carryJob !== null && tLvl === 2;
+      const handsForward = (carrying && (!isCarrier || tLvl === 1)) || pushingCart;
       const pathHint = c.path.length > 0 ? 1.0 : 0;
       const ctr = updateTracker(citizenMotion, c.id, c.x, c.z, pathHint, simClockS, 0.12, 0.05);
       const moving = ctr.moving;
       const strideM = Math.max(c.travelM, ctr.strideM);
       const bType = c.assignedBuildingId !== null ? bldById.get(c.assignedBuildingId) : undefined;
+      const workingNow = (c.role === 'builder' || c.role === 'worker') && c.workPhase === 'working' && ctr.smoothSpeed < 0.45;
 
       let frameVal: number;
-      if (moving) {
-        const wClip = carrying && tLvl === 1 ? clips.boxwalk : clips.walk;
-        frameVal = cycle(wClip, strideM / Math.max(0.6, wClip.travelM ?? WALK_CYCLE_M));
-      } else if (c.role === 'builder' && c.workPhase === 'working') {
+      if (workingNow && c.role === 'builder') {
         frameVal = cycle(clips.swing, simClockS / (clips.swing.frames / clips.swing.fps) + c.id * 0.23);
-      } else if (c.role === 'worker' && c.workPhase === 'working') {
-        if (bType === 'woodcutter' || bType === 'forester') {
+      } else if (workingNow && c.role === 'worker') {
+        if (bType && CHOP_BUILDINGS.has(bType)) {
           frameVal = cycle(clips.chop, simClockS / (clips.chop.frames / clips.chop.fps) + c.id * 0.19);
+        } else if (bType && HAMMER_BUILDINGS.has(bType)) {
+          frameVal = cycle(clips.swing, simClockS / (clips.swing.frames / clips.swing.fps) + c.id * 0.21);
         } else if (bType && DIGGER_BUILDINGS.has(bType)) {
           frameVal = cycle(clips.digging, simClockS / (clips.digging.frames / clips.digging.fps) + c.id * 0.29);
         } else if (bType && HARVEST_BUILDINGS.has(bType)) {
@@ -1948,14 +2052,47 @@ export async function buildMarchlandUnits(
         } else if (bType === 'fisher') {
           frameVal = cycle(clips.fishing, simClockS / (clips.fishing.frames / clips.fishing.fps) + c.id * 0.17);
         } else {
-          frameVal = cycle(clips.pickup, simClockS / (clips.pickup.frames / clips.pickup.fps) + c.id * 0.13);
+          const pickS = clips.pickup.frames / clips.pickup.fps;
+          const putS = clips.putdown.frames / clips.putdown.fps;
+          const t = (simClockS + c.id * 0.73) % (pickS + putS);
+          frameVal =
+            t < pickS
+              ? clips.pickup.start + Math.min(clips.pickup.frames - 1, Math.floor(t * clips.pickup.fps))
+              : clips.putdown.start + Math.min(clips.putdown.frames - 1, Math.floor((t - pickS) * clips.putdown.fps));
         }
+      } else if (moving) {
+        const wClip = handsForward ? clips.boxwalk : clips.walk;
+        frameVal = cycle(wClip, strideM / Math.max(0.6, wClip.travelM ?? WALK_CYCLE_M));
       } else {
-        const iClip = carrying && tLvl === 1 ? clips.boxidle : clips.idle;
+        const iClip = handsForward ? clips.boxidle : clips.idle;
         frameVal = cycle(iClip, simClockS / (iClip.frames / iClip.fps) + c.id * 0.37);
       }
       fArr[idx] = frameVal;
       fp.count++;
+
+      const cosY = Math.cos(c.yawRad);
+      const sinY = Math.sin(c.yawRad);
+
+      // Render real 3D carried resource bundle (in arms, L2 handcart bed, or L3 wagon bed!)
+      if (c.carryingGood !== null) {
+        const gKind = mapGoodToProp(c.carryingGood);
+        const baseScale = GOOD_PROP_SCALES[gKind].carry;
+        if (isCarrier && c.carryJob !== null && tLvl === 2) {
+          pushGood(c.carryingGood, c.x + sinY * 1.18, y + 0.56, c.z + cosY * 1.18, c.yawRad, baseScale * 1.15);
+        } else if (isCarrier && c.carryJob !== null && tLvl === 3) {
+          pushGood(
+            c.carryingGood,
+            c.x + 1.0 * cosY - 0.3 * sinY,
+            y + 0.92,
+            c.z - 1.0 * sinY - 0.3 * cosY,
+            c.yawRad,
+            baseScale * 1.35,
+          );
+        } else {
+          const bob = moving ? Math.abs(Math.sin(strideM * 3.8)) * 0.04 : 0;
+          pushGood(c.carryingGood, c.x + sinY * 0.4, y + 0.88 + bob, c.z + cosY * 0.4, c.yawRad, baseScale);
+        }
+      }
 
       // Render L2 Handcart or L3 Horse & Wagon for active carriers!
       if (isCarrier && c.carryJob !== null) {
@@ -1973,8 +2110,6 @@ export async function buildMarchlandUnits(
           wagonMesh.setMatrixAt(wagonCount++, TEMP_MAT);
 
           if (draftHorsePool && draftHorseCount < CART_CAP) {
-            const cosY = Math.cos(c.yawRad);
-            const sinY = Math.sin(c.yawRad);
             const hx = c.x + 1.0 * cosY + 1.3 * sinY;
             const hz = c.z - 1.0 * sinY + 1.3 * cosY;
             const dP = draftHorsePool.place.array as Float32Array;
@@ -1993,6 +2128,63 @@ export async function buildMarchlandUnits(
           }
         }
       }
+    }
+
+    // 2b. Real 3D resource stacks on workshop yard aprons & active construction sites!
+    for (const b of state.buildings) {
+      if (b.hp <= 0) continue;
+      const def = BUILDING_DEFS[b.type];
+      const cb = Math.cos(b.yawRad);
+      const sb = Math.sin(b.yawRad);
+      const frontDist = def.radiusM + 0.95;
+
+      if (b.buildProgress < 1) {
+        let slot = 0;
+        for (const [gKey, amt] of Object.entries(b.buildCostDelivered)) {
+          if (slot >= 2) break;
+          if (!amt || amt < 1) continue;
+          const good = gKey as GoodId;
+          const kind = mapGoodToProp(good);
+          const lx = (slot === 0 ? -0.95 : 0.95);
+          const wx = b.x + lx * cb + frontDist * sb;
+          const wz = b.z - lx * sb + frontDist * cb;
+          pushGood(good, wx, heightAt(wx, wz), wz, b.yawRad + (slot === 0 ? 0.25 : -0.35), GOOD_PROP_SCALES[kind].yard);
+          slot++;
+        }
+        continue;
+      }
+
+      let slot = 0;
+      for (const [gKey, amt] of Object.entries(b.yard)) {
+        if (slot >= 3) break;
+        if (!amt || amt < 1) continue;
+        const good = gKey as GoodId;
+        const kind = mapGoodToProp(good);
+        const bundles = Math.min(3 - slot, Math.max(1, Math.min(3, Math.ceil(amt / 3))));
+        for (let k = 0; k < bundles && slot < 3; k++) {
+          const lx = (slot - 1) * 1.05;
+          const wx = b.x + lx * cb + frontDist * sb;
+          const wz = b.z - lx * sb + frontDist * cb;
+          const yawJitter = (((b.id * 31 + slot * 17) % 11) - 5) * 0.12;
+          pushGood(good, wx, heightAt(wx, wz), wz, b.yawRad + yawJitter, GOOD_PROP_SCALES[kind].yard);
+          slot++;
+        }
+      }
+    }
+
+    for (const kind of GOOD_PROP_KINDS) {
+      const mesh = goodMeshes.get(kind);
+      if (!mesh) continue;
+      const cnt = goodCounts[kind];
+      if (cnt === 0) {
+        mesh.setMatrixAt(0, ZERO_MAT);
+        mesh.count = 1;
+        mesh.visible = false;
+      } else {
+        mesh.visible = true;
+        mesh.count = cnt;
+      }
+      mesh.instanceMatrix.needsUpdate = true;
     }
 
     // 3. Animated gun crewmen beside active cannons/mortars (FPS/marchland writeCrews: face forward & march smoothly while moving, load after firing!)
@@ -2221,6 +2413,11 @@ export async function buildMarchlandUnits(
       scene.remove(pigMesh);
       pigMesh.geometry.dispose();
       (pigMesh.material as MeshStandardNodeMaterial).dispose();
+    }
+    for (const gm of goodMeshes.values()) {
+      scene.remove(gm);
+      gm.geometry.dispose();
+      (gm.material as MeshStandardNodeMaterial).dispose();
     }
     if (draftHorsePool) {
       scene.remove(draftHorsePool.mesh);

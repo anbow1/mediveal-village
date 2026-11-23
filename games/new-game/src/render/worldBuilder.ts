@@ -18,8 +18,10 @@ import {
   DodecahedronGeometry,
   DoubleSide,
   DynamicDrawUsage,
+  Euler,
   Float32BufferAttribute,
   Group,
+  InstancedBufferAttribute,
   InstancedMesh,
   Matrix4,
   Mesh,
@@ -38,6 +40,7 @@ import {
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import {
   abs,
+  attribute,
   cameraPosition,
   clamp,
   cos,
@@ -1066,72 +1069,95 @@ interface AmbientBirdsHandles {
 
 /**
  * High-altitude soaring crows/hawks circling lazily above the medieval village & woods (Manor Lords atmosphere).
- * Strictly 1 instanced draw call (16 birds × 4 triangles = 64 triangles total), GPU vertex-shader wing flap!
+ * Strictly 1 instanced draw call (16 birds × 8 triangles = 128 triangles total):
+ *   - Sculpted body + head/beak + fanned tail + swept inner/outer wings
+ *   - Independent per-bird phase (`aBirdPhase`), intermittent wingbeat bursts + calm V-dihedral gliding
+ *   - Natural banking roll into turns + terrain-relative altitude (never clips mountain maps!)
  */
 function buildAmbientBirds(
   scene: Scene,
+  terrain: TerrainField,
   layout: MapLayoutSpec,
   skyUniforms: PhysicalSkyUniforms,
   disposableMats: Material[],
   disposableGeos: BufferGeometry[],
 ): AmbientBirdsHandles {
-  // Compact 4-triangle bird silhouette facing +Z (left/right swept wings + slim body/tail)
+  // 8-triangle bird silhouette facing +Z: slender torso/head, fanned wedge tail, swept inner & outer wings
   const positions = new Float32Array([
-    // Left inner + outer wing
-    0.0, 0.0, 0.28,  -0.55, 0.05, 0.02,   0.0, 0.0, -0.22,
-    -0.55, 0.05, 0.02,  -1.02, 0.0, -0.18,  -0.18, 0.0, -0.20,
-    // Right inner + outer wing
-    0.0, 0.0, 0.28,   0.0, 0.0, -0.22,    0.55, 0.05, 0.02,
-    0.55, 0.05, 0.02,  0.18, 0.0, -0.20,   1.02, 0.0, -0.18,
+    // Slender body & head (+Z nose)
+    0.0, 0.02, 0.44,   -0.09, 0.0, 0.08,    0.09, 0.0, 0.08,
+    -0.09, 0.0, 0.08,   0.0, -0.02, -0.26,  0.09, 0.0, 0.08,
+    // Fanned tail feathers (-Z)
+    -0.05, 0.0, -0.22, -0.18, 0.01, -0.52,  0.0, 0.01, -0.48,
+    0.05, 0.0, -0.22,   0.0, 0.01, -0.48,   0.18, 0.01, -0.52,
+    // Left inner + swept outer wing
+    -0.07, 0.01, 0.16, -0.54, 0.06, 0.04,  -0.06, 0.0, -0.18,
+    -0.54, 0.06, 0.04, -1.08, 0.02, -0.18, -0.22, 0.0, -0.16,
+    // Right inner + swept outer wing
+    0.07, 0.01, 0.16,   0.06, 0.0, -0.18,   0.54, 0.06, 0.04,
+    0.54, 0.06, 0.04,   0.22, 0.0, -0.16,   1.08, 0.02, -0.18,
   ]);
   const geo = new BufferGeometry();
   geo.setAttribute('position', new Float32BufferAttribute(positions, 3));
   geo.computeVertexNormals();
   disposableGeos.push(geo);
 
+  const count = 16;
+  const phaseArr = new Float32Array(count);
+  let seed = 9187;
+  const rand = (): number => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return seed / 4294967296;
+  };
+  for (let i = 0; i < count; i++) {
+    phaseArr[i] = rand() * Math.PI * 2;
+  }
+  geo.setAttribute('aBirdPhase', new InstancedBufferAttribute(phaseArr, 1));
+
   const mat = new MeshBasicNodeMaterial({
-    color: 0x1e1d1c,
+    color: 0x242220,
     side: DoubleSide,
     fog: true,
   });
   mat.name = 'MarchlandAmbientBirdsMat';
-  // Smooth gliding + periodic wing-flap animated on GPU (outer wing tips deflect by |x|^1.35)
+  // Per-bird independent phase + intermittent flap-then-glide bursts (3-4 beats -> 2-3 s dihedral glide!)
   const span = abs(positionLocal.x);
-  const flapCycle = sin(skyUniforms.uWaterTimeS.mul(5.8)).mul(0.24).mul(span).mul(span);
-  mat.positionNode = positionLocal.add(vec3(float(0.0), flapCycle, float(0.0)));
+  const bPhase = attribute('aBirdPhase', 'float');
+  const t = skyUniforms.uWaterTimeS;
+  const glideGate = smoothstep(float(0.05), float(0.55), sin(t.mul(0.68).add(bPhase.mul(2.3))));
+  const wingBeat = sin(t.mul(6.4).add(bPhase.mul(5.1))).mul(0.32).mul(glideGate);
+  const dihedralGlide = float(0.08).mul(float(1.0).sub(glideGate));
+  const wingY = wingBeat.add(dihedralGlide).mul(span).mul(span);
+  mat.positionNode = positionLocal.add(vec3(float(0.0), wingY, float(0.0)));
   disposableMats.push(mat);
 
   interface BirdOrbit {
     readonly cx: number;
     readonly cz: number;
     readonly radiusM: number;
-    readonly altM: number;
+    readonly baseAltM: number;
     readonly omega: number;
     readonly phase: number;
     readonly dir: 1 | -1;
     readonly scale: number;
   }
 
-  let seed = 9187;
-  const rand = (): number => {
-    seed = (seed * 1664525 + 1013904223) >>> 0;
-    return seed / 4294967296;
-  };
-
-  const count = 16;
   const orbits: BirdOrbit[] = [];
   for (let i = 0; i < count; i++) {
     const anchorX = i < 8 ? layout.playerKeepXZ[0] : (rand() - 0.5) * 260;
     const anchorZ = i < 8 ? layout.playerKeepXZ[1] : (rand() - 0.5) * 260;
+    const cx = Math.max(-210, Math.min(210, anchorX + (rand() - 0.5) * 90));
+    const cz = Math.max(-210, Math.min(210, anchorZ + (rand() - 0.5) * 90));
+    const groundY = Math.max(0, terrain.heightAt(cx, cz));
     orbits.push({
-      cx: anchorX + (rand() - 0.5) * 90,
-      cz: anchorZ + (rand() - 0.5) * 90,
-      radiusM: 28 + rand() * 58,
-      altM: 25 + rand() * 20,
-      omega: 0.14 + rand() * 0.13,
-      phase: rand() * Math.PI * 2,
+      cx,
+      cz,
+      radiusM: 28 + rand() * 54,
+      baseAltM: groundY + 24 + rand() * 18,
+      omega: 0.13 + rand() * 0.12,
+      phase: phaseArr[i]!,
       dir: rand() > 0.5 ? 1 : -1,
-      scale: 0.72 + rand() * 0.45,
+      scale: 0.68 + rand() * 0.36,
     });
   }
 
@@ -1145,10 +1171,10 @@ function buildAmbientBirds(
   scene.add(mesh);
 
   const bPos = new Vector3();
+  const bEuler = new Euler();
   const bQuat = new Quaternion();
   const bScale = new Vector3();
   const bMat = new Matrix4();
-  const upAxis = new Vector3(0, 1, 0);
 
   const update = (simTimeS: number): void => {
     for (let i = 0; i < count; i++) {
@@ -1156,13 +1182,17 @@ function buildAmbientBirds(
       const ang = o.phase + simTimeS * o.omega * o.dir;
       const x = o.cx + Math.cos(ang) * o.radiusM;
       const z = o.cz + Math.sin(ang) * o.radiusM;
-      const y = o.altM + Math.sin(ang * 2.0 + o.phase) * 2.4;
-      // Tangent heading along circular soaring track
+      const climbWave = Math.sin(ang * 2.0 + o.phase);
+      const y = o.baseAltM + climbWave * 2.6;
+      // Tangent heading along circular soaring track + natural inward banking roll + gentle climb pitch
       const tx = -Math.sin(ang) * o.dir;
       const tz = Math.cos(ang) * o.dir;
       const yaw = Math.atan2(tx, tz);
+      const bankRoll = -o.dir * (0.24 + 0.08 * Math.cos(ang * 2.0 + o.phase));
+      const pitch = -Math.cos(ang * 2.0 + o.phase) * 0.07;
       bPos.set(x, y, z);
-      bQuat.setFromAxisAngle(upAxis, yaw);
+      bEuler.set(pitch, yaw, bankRoll, 'YXZ');
+      bQuat.setFromEuler(bEuler);
       bScale.set(o.scale, o.scale, o.scale);
       bMat.compose(bPos, bQuat, bScale);
       mesh.setMatrixAt(i, bMat);
@@ -1223,7 +1253,7 @@ export async function buildStage5World(
 
   const horizonHandles = buildDistantHorizon(scene, disposableMats, disposableGeos);
   const bushMesh = buildForestUndergrowthBushes(scene, terrain, layout, quality, disposableMats, disposableGeos);
-  const ambientBirds = buildAmbientBirds(scene, layout, skyUniforms, disposableMats, disposableGeos);
+  const ambientBirds = buildAmbientBirds(scene, terrain, layout, skyUniforms, disposableMats, disposableGeos);
 
   const grass = buildGrassField(
     terrain,
@@ -1529,13 +1559,35 @@ export async function buildStage5World(
   }
 
   // 6. Poly Haven CC0 Photogrammetry Mossy Rocks & Boulders (multi-LOD instanced!)
+  // Also flanks every Stone Quarry & Iron Ore outcrop with real photogrammetry boulders at 0 extra draw calls!
   const rockTpls: Record<'rock_moss_a' | 'rock_moss_b' | 'boulder', LodTemplate> = {
     rock_moss_a: rockATpl,
     rock_moss_b: rockBTpl,
     boulder: boulderTpl,
   };
+  const outcropBoulders: { kind: 'rock_moss_a' | 'rock_moss_b' | 'boulder'; x: number; z: number; yawRad: number; scale: number }[] = [];
+  layout.outcrops.forEach((o, i) => {
+    const baseYaw = (i * 1.9 + 0.3) % (Math.PI * 2);
+    if (o.kind === 'stone') {
+      // 3 flanking photogrammetry boulders around each quarry crag for organic geological silhouette
+      outcropBoulders.push(
+        { kind: 'boulder', x: o.x + Math.cos(baseYaw + 0.5) * 3.1, z: o.z + Math.sin(baseYaw + 0.5) * 3.1, yawRad: baseYaw + 0.8, scale: 1.55 },
+        { kind: 'rock_moss_a', x: o.x + Math.cos(baseYaw + 2.6) * 3.4, z: o.z + Math.sin(baseYaw + 2.6) * 3.4, yawRad: baseYaw + 1.9, scale: 1.45 },
+        { kind: 'rock_moss_b', x: o.x + Math.cos(baseYaw + 4.5) * 2.9, z: o.z + Math.sin(baseYaw + 4.5) * 2.9, yawRad: baseYaw + 3.1, scale: 1.35 },
+      );
+    } else {
+      // 2 mossy rocks framing the dark metallic iron-ore seam
+      outcropBoulders.push(
+        { kind: 'rock_moss_b', x: o.x + Math.cos(baseYaw + 1.1) * 3.2, z: o.z + Math.sin(baseYaw + 1.1) * 3.2, yawRad: baseYaw + 0.4, scale: 1.35 },
+        { kind: 'boulder', x: o.x + Math.cos(baseYaw + 3.9) * 3.0, z: o.z + Math.sin(baseYaw + 3.9) * 3.0, yawRad: baseYaw + 2.2, scale: 1.25 },
+      );
+    }
+  });
   for (const rk of ['rock_moss_a', 'rock_moss_b', 'boulder'] as const) {
-    const list = layout.rocks.filter((r) => r.kind === rk);
+    const list = [
+      ...layout.rocks.filter((r) => r.kind === rk),
+      ...outcropBoulders.filter((r) => r.kind === rk),
+    ];
     if (list.length === 0) continue;
     const placements: InstancedPlacement[] = list.map((r) => {
       const y = terrain.heightAt(r.x, r.z) - 0.14 * r.scale;

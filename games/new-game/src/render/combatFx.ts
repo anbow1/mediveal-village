@@ -760,10 +760,11 @@ export function buildCombatFx(scene: Scene): CombatFxHandles {
       }
     }
 
-    // 2. Carried goods crates/sacks visibly held by Carriers + Building Entrance Direction Arrow & Farm/Vineyard Strip Previews!
+    // 2. Carried goods crates/sacks (skipped when marchlandUnits renders real 3D goods models!) + Entrance Arrows & Strip Previews
     let crateCount = 0;
-    for (const c of state.citizens) {
-      if (!c.carryingGood || crateCount >= 110) continue;
+    if (!skipProceduralUnits) {
+      for (const c of state.citizens) {
+        if (!c.carryingGood || crateCount >= 110) continue;
       const y = heightAt(c.x, c.z);
       const bob = Math.abs(Math.sin(c.travelM * 3.1)) * 0.08;
       const fx = Math.sin(c.yawRad) * 0.34;
@@ -781,7 +782,8 @@ export function buildCombatFx(scene: Scene): CombatFxHandles {
       } else {
         crateMesh.setColorAt(crateCount, COL_CRATE_DEFAULT);
       }
-      crateCount++;
+        crateCount++;
+      }
     }
 
     // Helper drawing a bold 4-piece 3D Entrance / Doorway Direction Arrow (threshold bar + shaft + twin chevron wings)
