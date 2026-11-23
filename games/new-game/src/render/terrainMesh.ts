@@ -41,6 +41,7 @@ import {
 import type { QualityPreset } from '../config.ts';
 import type { GroundWorksMap } from '../sim/groundWorks.ts';
 import type { TerrainField } from '../sim/terrain.ts';
+import { buildCloudShadowNode, type PhysicalSkyUniforms } from './sky.ts';
 import type { SurfaceLibrary } from './surfaces.ts';
 
 export interface TerrainRenderHandles {
@@ -63,6 +64,7 @@ export function buildTerrainMesh(
   groundWorks: GroundWorksMap,
   surfaces: SurfaceLibrary,
   quality: QualityPreset = 'high',
+  skyUniforms?: PhysicalSkyUniforms,
 ): TerrainRenderHandles {
   const n = terrain.config.gridResolution;
   const segs = n - 1;
@@ -106,7 +108,7 @@ export function buildTerrainMesh(
   groundWorksTexture.generateMipmaps = false;
   groundWorksTexture.needsUpdate = true;
 
-  const mat = createTerrainMaterial(terrain, groundWorks, groundWorksTexture, surfaces, quality);
+  const mat = createTerrainMaterial(terrain, groundWorks, groundWorksTexture, surfaces, quality, skyUniforms);
 
   const mesh = new Mesh(geo, mat);
   mesh.name = 'MarchlandTerrain';
@@ -137,6 +139,7 @@ function createTerrainMaterial(
   groundWorksTex: DataTexture,
   surfaces: SurfaceLibrary,
   quality: QualityPreset,
+  skyUniforms?: PhysicalSkyUniforms,
 ): MeshStandardNodeMaterial {
   const { albedoArray, normalArray, ormArray } = surfaces;
   const untile = quality === 'high';
@@ -303,25 +306,46 @@ function createTerrainMaterial(
   const edgeM = max(abs(wp.x), abs(wp.z));
   const borderFade = smoothstep(float(terrain.halfSizeM - 16), float(terrain.halfSizeM - 2), edgeM);
   const luma = dot(baseFinal, vec3(0.2126, 0.7152, 0.0722));
-  const finalCol = mix(baseFinal, mix(baseFinal, vec3(luma), float(0.38)).mul(0.68), borderFade);
+  const borderedCol = mix(baseFinal, mix(baseFinal, vec3(luma), float(0.38)).mul(0.68), borderFade);
+
+  // Manor Lords-style damp cart-track ruts & rain puddles (High & Low presets — 0 extra textures):
+  // puddles pool naturally in flat wheel ruts & muddy yards above water and reflect the sky PMREM probe!
+  const puddleNoise = sin(xz.x.mul(0.62).add(sin(xz.y.mul(0.57)).mul(1.7)))
+    .mul(cos(xz.y.mul(0.71).sub(xz.x.mul(0.49))))
+    .mul(0.5)
+    .add(0.5);
+  const flatGround = float(1.0).sub(smoothstep(float(0.025), float(0.08), slope));
+  const aboveWater = smoothstep(float(0.25), float(0.75), hAboveWater);
+  const puddleZone = clamp(rutBand.mul(1.15).add(dirtSharp.mul(0.45)), 0.0, 1.0);
+  const puddleMask =
+    quality !== 'minimal'
+      ? smoothstep(float(0.66), float(0.84), puddleNoise).mul(puddleZone).mul(flatGround).mul(aboveWater)
+      : float(0.0);
+
+  // Drifting cloud shadows across the valley (synchronized with sky uCloudDrift & uCloudCoverage)
+  const cloudShade = skyUniforms ? buildCloudShadowNode(xz, skyUniforms, 0.22) : float(1.0);
+  const puddleDarkened = mix(borderedCol, borderedCol.mul(vec3(0.54, 0.56, 0.58)), puddleMask.mul(0.72));
+  const finalCol = puddleDarkened.mul(cloudShade);
 
   mat.colorNode = clamp(finalCol, vec3(0.02), vec3(0.76));
 
-  // Blend tangent-space normals and fade bump amplitude with distance to eliminate far-field shimmer!
+  // Blend tangent-space normals, flatten inside glossy puddles, and fade bump amplitude with distance!
   const n1 = mix(grassNor, litterNor, litterW);
   const n2 = mix(n1, dirtNor, dirtSharp);
   const n3 = mix(n2, rockNor, clamp(rockW, 0.0, 0.92));
-  const finalNor = mix(n3, cobbleNor, cobbleSharp);
+  const dryNor = mix(n3, cobbleNor, cobbleSharp);
+  const finalNor = mix(dryNor, vec3(0.5, 0.5, 1.0), puddleMask.mul(0.92));
   const norScale = float(0.88).mul(float(1.0).sub(farFade.mul(0.72)));
   mat.normalNode = normalMap(finalNor, vec2(norScale, norScale));
 
-  // Roughness & distance-faded micro-AO
+  // Roughness (glossy sky-reflecting puddles ~0.09, damp shore ~0.46, dry earth 0.55–0.96) & distance-faded AO
   const r1 = mix(grassOrm.g, litterOrm.g, litterW);
   const r2 = mix(r1, dirtOrm.g, dirtSharp);
   const r3 = mix(r2, rockOrm.g, clamp(rockW, 0.0, 0.92));
   const dryRough = mix(r3, cobbleOrm.g, cobbleSharp);
-  const finalRough = mix(dryRough, float(0.46), wetSiltMask.mul(0.85));
-  mat.roughnessNode = clamp(finalRough, 0.42, 0.96);
+  const shoreRough = mix(dryRough, float(0.42), wetSiltMask.mul(0.85));
+  const finalRough = mix(shoreRough, float(0.09), puddleMask);
+  mat.roughnessNode = clamp(finalRough, 0.08, 0.96);
 
   const a1 = mix(grassOrm.r, litterOrm.r, litterW);
   const a2 = mix(a1, dirtOrm.r, dirtSharp);

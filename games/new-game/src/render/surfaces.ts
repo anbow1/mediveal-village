@@ -19,9 +19,12 @@ import {
   clamp,
   dot,
   float,
+  floor,
+  fract,
   int,
   mix,
   normalMap,
+  normalWorld,
   positionLocal,
   positionWorld,
   round,
@@ -36,6 +39,7 @@ import {
 } from 'three/tsl';
 import type { QualityPreset } from '../config.ts';
 import type { AssetLoader, ByteProgressTracker } from './assetLoader.ts';
+import { buildCloudShadowNode, type PhysicalSkyUniforms } from './sky.ts';
 
 export const SURFACE_LAYERS = [
   'grass',    // 0: forrest_ground_01
@@ -160,6 +164,7 @@ export async function loadSurfaceLibrary(
   anisotropy: number,
   tracker?: ByteProgressTracker,
   quality: QualityPreset = 'high',
+  skyUniforms?: PhysicalSkyUniforms,
 ): Promise<SurfaceLibrary> {
   const albedoUrls = SURFACE_LAYERS.map((id) => `assets/surfaces/${id}_albedo.ktx2`);
   const normalUrls = SURFACE_LAYERS.map((id) => `assets/surfaces/${id}_normal.ktx2`);
@@ -180,8 +185,8 @@ export async function loadSurfaceLibrary(
     photoPromise,
   ]);
 
-  const buildingMaterial = createBuildingSurfaceMaterial(albedoArray, normalArray, ormArray, false);
-  const siteBuildingMaterial = createBuildingSurfaceMaterial(albedoArray, normalArray, ormArray, true);
+  const buildingMaterial = createBuildingSurfaceMaterial(albedoArray, normalArray, ormArray, false, skyUniforms);
+  const siteBuildingMaterial = createBuildingSurfaceMaterial(albedoArray, normalArray, ormArray, true, skyUniforms);
   const groundMaterial = createVillageGroundMaterial(albedoArray, normalArray, ormArray);
 
   return {
@@ -211,6 +216,7 @@ function createBuildingSurfaceMaterial(
   normalArray: CompressedArrayTexture | DataArrayTexture,
   ormArray: CompressedArrayTexture | DataArrayTexture,
   constructionSite: boolean,
+  skyUniforms?: PhysicalSkyUniforms,
 ): MeshStandardNodeMaterial {
   const mat = new MeshStandardNodeMaterial({
     roughness: 1.0,
@@ -253,7 +259,23 @@ function createBuildingSurfaceMaterial(
   const mossTint = mix(vec3(0.42, 0.40, 0.34), vec3(0.30, 0.36, 0.22), footNoise);
   const weatheredAlb = mix(baseAlb, baseAlb.mul(mossTint), dampMask.mul(0.58));
 
-  const finalColor = clamp(weatheredAlb.mul(vcol).mul(microAo), vec3(0.015), vec3(0.82));
+  // Per-building organic patina variation (Manor Lords style: neighboring cottages never share identical tint!)
+  const plotCell = floor(positionWorld.xz.div(10.5));
+  const plotHash = fract(sin(dot(plotCell, vec2(127.1, 311.7))).mul(43758.5453));
+  const plotHashB = fract(sin(dot(plotCell, vec2(269.5, 183.3))).mul(43758.5453));
+  const patinaTint = mix(vec3(0.93, 0.95, 0.97), vec3(1.06, 1.02, 0.95), plotHash).mul(
+    float(0.94).add(plotHashB.mul(0.11)),
+  );
+  // Roof eave & overhang underside cavity darkening (normalWorld.y < 0) sharpens medieval architecture
+  const eaveAo = float(1.0).sub(smoothstep(float(0.12), float(-0.58), normalWorld.y).mul(0.24));
+  // Synced drifting cloud shadow across rooftops & walls
+  const cloudShade = skyUniforms ? buildCloudShadowNode(positionWorld.xz, skyUniforms, 0.16) : float(1.0);
+
+  const finalColor = clamp(
+    weatheredAlb.mul(patinaTint).mul(vcol).mul(microAo).mul(eaveAo).mul(cloudShade),
+    vec3(0.015),
+    vec3(0.82),
+  );
   if (constructionSite) {
     // Course-by-course construction clipping (FPS/marchland townView.ts): discards geometry above `userData.cutY`
     // and washes out unbuilt courses slightly grey until the last course is laid!

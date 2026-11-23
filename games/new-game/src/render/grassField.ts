@@ -41,6 +41,7 @@ import {
 import type { QualityPreset } from '../config.ts';
 import type { GroundWorksMap } from '../sim/groundWorks.ts';
 import type { TerrainField } from '../sim/terrain.ts';
+import { buildCloudShadowNode, type PhysicalSkyUniforms } from './sky.ts';
 
 /** Roberts R2 2D quasirandom sequence constants (Martin Roberts 2018; any prefix is evenly distributed). */
 const R2_G = 1.324717957244746;
@@ -183,6 +184,7 @@ export function buildGrassField(
   heightTexture: DataTexture,
   groundWorksTexture: DataTexture,
   quality: QualityPreset,
+  skyUniforms?: PhysicalSkyUniforms,
 ): GrassFieldHandles {
   if (quality === 'minimal') {
     return {
@@ -360,7 +362,8 @@ export function buildGrassField(
     const tipDry = vec3(0.35, 0.33, 0.105);
     const bladeTip = mix(tipGreen, tipDry, clamp(aBlade.w.sub(0.84).mul(0.85), float(0.0), float(0.45)));
     const shadeCanopy = mix(float(1.0), float(0.68), canopyW);
-    const bladeCol = mix(rootTint, bladeTip, sqrt(clamp(t, float(0.0), float(1.0)))).mul(shadeCanopy);
+    const cloudShade = skyUniforms ? buildCloudShadowNode(rootXZ, skyUniforms, 0.20) : float(1.0);
+    const bladeCol = mix(rootTint, bladeTip, sqrt(clamp(t, float(0.0), float(1.0)))).mul(shadeCanopy).mul(cloudShade);
     mat.colorNode = bladeCol;
 
     return mat;

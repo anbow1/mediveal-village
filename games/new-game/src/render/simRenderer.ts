@@ -12,21 +12,25 @@ import {
   CanvasTexture,
   Color,
   DoubleSide,
+  DynamicDrawUsage,
   Float32BufferAttribute,
   IcosahedronGeometry,
   InstancedMesh,
   LinearMipmapLinearFilter,
   Matrix4,
   Mesh,
+  MeshBasicNodeMaterial,
   MeshStandardNodeMaterial,
   Object3D,
+  PlaneGeometry,
   Quaternion,
   SRGBColorSpace,
   Vector3,
   type Material,
   type Scene,
 } from 'three/webgpu';
-import { BUILDING_DEFS } from '../config.ts';
+import { abs, clamp, float, length, max, smoothstep, uv, vec2, vec3 } from 'three/tsl';
+import { BUILDING_DEFS, type QualityPreset } from '../config.ts';
 import { computeBuildingStripTransform } from '../sim/economy.ts';
 import type { GroundWorksMap } from '../sim/groundWorks.ts';
 import type { BuildingKind } from '../sim/maps.ts';
@@ -34,6 +38,7 @@ import type { TerrainField } from '../sim/terrain.ts';
 import type { BuildingEntity, SimWorldState } from '../sim/types.ts';
 import type { PlacementGhostPreview } from './combatFx.ts';
 import type { MarchlandBuildingLevelKey } from './marchlandBuildings.ts';
+import type { PhysicalSkyUniforms } from './sky.ts';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { markStaticInstances } from './instancing.ts';
 
@@ -378,6 +383,9 @@ export function buildSimWorldRenderer(opts: {
   readonly groundWorks: GroundWorksMap;
   readonly syncGroundWorks: () => void;
   readonly syncDynamicFarms?: (buildings: readonly BuildingEntity[]) => void;
+  readonly syncDynamicChimneys?: (positions: readonly Vector3[]) => void;
+  readonly skyUniforms?: PhysicalSkyUniforms;
+  readonly quality?: QualityPreset;
   readonly buildingMaterial: Material;
   readonly siteBuildingMaterial?: Material;
   readonly buildingTemplates: ReadonlyMap<BuildingKind, SimBuildingTemplate>;
@@ -395,6 +403,9 @@ export function buildSimWorldRenderer(opts: {
     groundWorks,
     syncGroundWorks,
     syncDynamicFarms,
+    syncDynamicChimneys,
+    skyUniforms,
+    quality = 'high',
     buildingMaterial,
     siteBuildingMaterial,
     buildingTemplates,
@@ -595,6 +606,93 @@ export function buildSimWorldRenderer(opts: {
   const treeHookBySpecies = new Map<string, TreeBatchHook>();
   for (const th of treeHooks) treeHookBySpecies.set(th.species, th);
 
+  // 5. Pre-warmed Dynamic Grounding Contact Shadows (1 draw call for built structures + 1 on Minimal for units!)
+  // Ensures newly built player/AI houses, towers, and walls stay visually anchored in overcast & low/minimal modes.
+  const contactQuadGeo = new PlaneGeometry(1, 1);
+  contactQuadGeo.rotateX(-Math.PI / 2);
+  disposableGeos.push(contactQuadGeo);
+
+  const contactGainNode = skyUniforms ? skyUniforms.uContactShadowGain : float(0.45);
+  const bldContactMat = new MeshBasicNodeMaterial({
+    transparent: true,
+    depthWrite: false,
+    fog: true,
+    polygonOffset: true,
+    polygonOffsetFactor: 2,
+    polygonOffsetUnits: 2,
+  });
+  bldContactMat.name = 'MarchlandDynBuildingContactMat';
+  {
+    const lp = uv(0).mul(2.0).sub(vec2(1.0));
+    const inner = float(0.62);
+    const excess = max(abs(lp).sub(vec2(inner)), vec2(0.0));
+    const d = length(excess).div(float(1.0).sub(inner));
+    const fall = float(1.0).sub(smoothstep(float(0.0), float(1.0), d));
+    bldContactMat.colorNode = vec3(0.025, 0.02, 0.015);
+    bldContactMat.opacityNode = clamp(fall.mul(fall).mul(contactGainNode).mul(0.88), 0.0, 0.56);
+  }
+  const DYN_BLD_CONTACT_CAP = 240;
+  const dynBldContactMesh = new InstancedMesh(contactQuadGeo, bldContactMat, DYN_BLD_CONTACT_CAP);
+  dynBldContactMesh.name = 'DynBuildingContactShadows';
+  dynBldContactMesh.castShadow = false;
+  dynBldContactMesh.receiveShadow = false;
+  dynBldContactMesh.frustumCulled = false;
+  dynBldContactMesh.renderOrder = 2;
+  markStaticInstances(dynBldContactMesh);
+  dynBldContactMesh.setMatrixAt(0, ZERO_MAT);
+  dynBldContactMesh.count = 1;
+  dynBldContactMesh.instanceMatrix.needsUpdate = true;
+  scene.add(dynBldContactMesh);
+  allMeshes.push(dynBldContactMesh);
+
+  let unitContactMat: MeshBasicNodeMaterial | null = null;
+  let dynUnitContactMesh: InstancedMesh | null = null;
+  const DYN_UNIT_CONTACT_CAP = 320;
+  if (quality === 'minimal') {
+    // On Minimal preset (iPad 7, shadow maps OFF), soft radial ground shadows under troops & villagers
+    // eliminate floating silhouettes at just 1 tiny instanced draw call!
+    unitContactMat = new MeshBasicNodeMaterial({
+      transparent: true,
+      depthWrite: false,
+      fog: true,
+      polygonOffset: true,
+      polygonOffsetFactor: 2,
+      polygonOffsetUnits: 2,
+    });
+    unitContactMat.name = 'MarchlandMinimalUnitContactMat';
+    const lp = uv(0).mul(2.0).sub(vec2(1.0));
+    const fall = float(1.0).sub(smoothstep(float(0.15), float(1.0), length(lp)));
+    unitContactMat.colorNode = vec3(0.02, 0.018, 0.014);
+    unitContactMat.opacityNode = clamp(fall.mul(fall).mul(0.46), 0.0, 0.46);
+
+    dynUnitContactMesh = new InstancedMesh(contactQuadGeo, unitContactMat, DYN_UNIT_CONTACT_CAP);
+    dynUnitContactMesh.name = 'DynMinimalUnitContactShadows';
+    dynUnitContactMesh.castShadow = false;
+    dynUnitContactMesh.receiveShadow = false;
+    dynUnitContactMesh.frustumCulled = false;
+    dynUnitContactMesh.renderOrder = 2;
+    dynUnitContactMesh.instanceMatrix.setUsage(DynamicDrawUsage);
+    markStaticInstances(dynUnitContactMesh);
+    dynUnitContactMesh.setMatrixAt(0, ZERO_MAT);
+    dynUnitContactMesh.count = 1;
+    dynUnitContactMesh.instanceMatrix.needsUpdate = true;
+    scene.add(dynUnitContactMesh);
+    allMeshes.push(dynUnitContactMesh);
+  }
+
+  const CHIMNEY_TYPES = new Set<string>([
+    'keep',
+    'house',
+    'bakery',
+    'tavern',
+    'brewery',
+    'ironSmelter',
+    'armourer',
+    'weaponsmith',
+    'butcher',
+  ]);
+  const chimneyEmitters: Vector3[] = [];
+
   // Track which static animated Stage 5 buildings (windmill, gate) exist at boot so we never double-render them
   const matchStaticBuilding = (x: number, z: number): StaticBuildingHook | null => {
     for (const sb of staticBuildings) {
@@ -621,6 +719,34 @@ export function buildSimWorldRenderer(opts: {
           if (sg.leafR) sg.leafR.rotation.y = swing;
         }
       }
+    }
+
+    // Minimal preset (no shadow maps): keep soft grounding discs under live troops & villagers every frame
+    if (dynUnitContactMesh) {
+      let uc = 0;
+      TEMP_QUAT.identity();
+      for (const reg of state.regiments) {
+        if (reg.garrisonedInBuildingId !== null) continue;
+        const isBig = reg.unitType === 'lightCav' || reg.unitType === 'heavyCav' || reg.unitType === 'cannon' || reg.unitType === 'mortar';
+        const rad = isBig ? 2.15 : 1.15;
+        for (const s of reg.soldiers) {
+          if (!s.alive || uc >= DYN_UNIT_CONTACT_CAP) continue;
+          const y = terrain.heightAt(s.x, s.z);
+          TEMP_POS.set(s.x, y + 0.04, s.z);
+          TEMP_SCALE.set(rad, 1, rad);
+          TEMP_MAT.compose(TEMP_POS, TEMP_QUAT, TEMP_SCALE);
+          dynUnitContactMesh.setMatrixAt(uc++, TEMP_MAT);
+        }
+      }
+      for (const v of state.citizens) {
+        if (uc >= DYN_UNIT_CONTACT_CAP) break;
+        const y = terrain.heightAt(v.x, v.z);
+        TEMP_POS.set(v.x, y + 0.04, v.z);
+        TEMP_SCALE.set(1.05, 1, 1.05);
+        TEMP_MAT.compose(TEMP_POS, TEMP_QUAT, TEMP_SCALE);
+        dynUnitContactMesh.setMatrixAt(uc++, TEMP_MAT);
+      }
+      commitPool([dynUnitContactMesh], uc);
     }
 
     // Check if any building is currently constructing/upgrading, if farm/vineyard crops grew, or if placementGhost moved!
@@ -944,6 +1070,35 @@ export function buildSimWorldRenderer(opts: {
       syncDynamicFarms(state.buildings);
     }
 
+    // Sync dynamic grounding contact shadows for all active built buildings + dynamic chimney smoke emitters!
+    let bldContactCount = 0;
+    chimneyEmitters.length = 0;
+    for (const b of state.buildings) {
+      if (b.hp <= 0 || b.type === 'ruin') continue;
+      if (b.buildProgress >= 0.25 && bldContactCount < DYN_BLD_CONTACT_CAP && !matchStaticBuilding(b.x, b.z)) {
+        const rad = BUILDING_DEFS[b.type].radiusM;
+        const span = Math.max(3.4, rad * 2.25);
+        const y = terrain.heightAt(b.x, b.z);
+        TEMP_POS.set(b.x, y + 0.035, b.z);
+        TEMP_QUAT.setFromAxisAngle(UP, b.yawRad);
+        TEMP_SCALE.set(span, 1, span);
+        TEMP_MAT.compose(TEMP_POS, TEMP_QUAT, TEMP_SCALE);
+        dynBldContactMesh.setMatrixAt(bldContactCount++, TEMP_MAT);
+      }
+      if (b.buildProgress >= 1 && CHIMNEY_TYPES.has(b.type) && chimneyEmitters.length < 48) {
+        const y = terrain.heightAt(b.x, b.z);
+        const roofH = b.type === 'keep' ? 9.2 : b.type === 'tavern' ? 7.0 : b.level >= 2 ? 6.6 : 5.4;
+        const off = b.type === 'keep' ? 1.8 : 0.95;
+        chimneyEmitters.push(
+          new Vector3(b.x + Math.cos(b.yawRad) * off, y + roofH, b.z - Math.sin(b.yawRad) * off),
+        );
+      }
+    }
+    commitPool([dynBldContactMesh], bldContactCount);
+    if (syncDynamicChimneys) {
+      syncDynamicChimneys(chimneyEmitters);
+    }
+
     // 4. All active walls (player/AI built + Campaign fortress walls; slightly overlapped 1.06x along local X so zero cracks!)
     if (dynWallMeshes.length > 0) {
       let wCount = 0;
@@ -1006,6 +1161,8 @@ export function buildSimWorldRenderer(opts: {
       vineLeafMat.dispose();
       vineGrapeMat.dispose();
       vineLeafTex.dispose();
+      bldContactMat.dispose();
+      unitContactMat?.dispose();
     },
   };
 }

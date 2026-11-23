@@ -177,15 +177,28 @@ export class RenderStage {
       const sharpened = clamp(c.add(c.sub(localAvg).mul(amp).mul(this.uSharpenStrength.mul(1.8))), 0.0, 1.0);
       const baseCol = mix(c, sharpened, clamp(this.uSharpenStrength.mul(4.0), 0.0, 1.0));
 
-      // Neutral-preserving photographic vibrance recovers ACES Filmic mid-tone chroma loss
-      // uniformly across all 4 lighting scenarios without clipping highlights or shifting 18% grey.
+      // Restrained European photographic grading (Manor Lords / Kingdom Come palette):
+      // gentle vibrance recovery without oversaturated neon greens, subtle cool-shadow / warm-sun
+      // split-toning, soft S-curve contrast, and a very gentle optical lens vignette.
       const lum = dot(baseCol, vec3(0.2126, 0.7152, 0.0722));
       const maxCh = max(baseCol.r, max(baseCol.g, baseCol.b));
       const minCh = min(baseCol.r, min(baseCol.g, baseCol.b));
       const chroma = maxCh.sub(minCh);
-      const satGain = float(1.22).add(float(0.32).mul(float(1.0).sub(chroma)));
-      const vivid = clamp(vec3(lum).add(baseCol.sub(vec3(lum)).mul(satGain)), 0.0, 1.0);
-      const graded = mix(vivid, smoothstep(vec3(0.0), vec3(1.0), vivid), float(0.14));
+      const satGain = float(1.06).add(float(0.14).mul(float(1.0).sub(chroma)));
+      const balanced = clamp(vec3(lum).add(baseCol.sub(vec3(lum)).mul(satGain)), 0.0, 1.0);
+      // Cool sky tint in deep shadows, subtle golden warmth in sunlit highlights
+      const shadowW = float(1.0).sub(smoothstep(float(0.05), float(0.38), lum));
+      const highW = smoothstep(float(0.45), float(0.92), lum);
+      const splitToned = clamp(
+        balanced.add(vec3(-0.008, -0.002, 0.012).mul(shadowW)).add(vec3(0.012, 0.006, -0.007).mul(highW)),
+        0.0,
+        1.0,
+      );
+      const contrasted = mix(splitToned, smoothstep(vec3(0.0), vec3(1.0), splitToned), float(0.10));
+      // Subtle optical edge vignette (~8% at corners) focuses the eye on the village/battlefield
+      const vc = uv0.sub(vec2(0.5));
+      const vig = float(1.0).sub(smoothstep(float(0.18), float(0.56), dot(vc, vc)).mul(0.09));
+      const graded = contrasted.mul(vig);
       return vec4(graded, float(1.0));
     });
 

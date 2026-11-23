@@ -301,6 +301,26 @@ export function createSkyProbeMaterial(u: PhysicalSkyUniforms): MeshBasicNodeMat
 }
 
 /**
+ * Ultra-cheap drifting cloud-shadow multiplier in [1 - strength .. 1.0] (Manor Lords / Total War style).
+ * Uses 2 rotated drifting trig octaves synchronized with `uCloudDrift` and `uCloudCoverage` so terrain,
+ * grass, and roofs share one cohesive moving sunlight/cloud field at ~6 ALU ops and 0 texture fetches!
+ */
+export function buildCloudShadowNode(worldXZ: Vec2Node, u: PhysicalSkyUniforms, strength = 0.22) {
+  // Drift slowly across the 560 m valley (scale ~0.0085 rad/m -> broad ~120 m organic cloud patches)
+  const drift = u.uCloudDrift.mul(6.5);
+  const p = worldXZ.mul(0.0095).add(vec2(drift, drift.mul(0.38)));
+  const w1 = sin(p.x.add(sin(p.y.mul(0.82)).mul(1.35))).mul(cos(p.y.mul(0.91).sub(p.x.mul(0.46))));
+  const w2 = sin(p.x.mul(1.73).sub(p.y.mul(1.29)).add(1.7)).mul(cos(p.y.mul(1.58).add(p.x.mul(0.84))));
+  const raw = w1.mul(0.65).add(w2.mul(0.35)).mul(0.5).add(0.5);
+  // Modulate contrast by cloud coverage: soft dappled patches on clear/autumn/golden, gentle overcast
+  const band = smoothstep(float(0.38), float(0.76), raw);
+  const contrast = smoothstep(float(0.10), float(0.42), u.uCloudCoverage).mul(
+    float(1.0).sub(smoothstep(float(0.72), float(0.95), u.uCloudCoverage).mul(0.55)),
+  );
+  return float(1.0).sub(band.mul(contrast).mul(float(strength)));
+}
+
+/**
  * Height-integrated physical aerial perspective node (`scene.fogNode`).
  * Formula from docs/graphics-playbook.md §4 #4:
  *   tau = rho0 * d * exp(-f * h0) * (1 - exp(-f * (h1 - h0))) / (f * (h1 - h0))

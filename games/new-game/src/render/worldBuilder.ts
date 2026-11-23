@@ -17,11 +17,13 @@ import {
   Color,
   DodecahedronGeometry,
   DoubleSide,
+  DynamicDrawUsage,
   Float32BufferAttribute,
   Group,
   InstancedMesh,
   Matrix4,
   Mesh,
+  MeshBasicNodeMaterial,
   MeshStandardMaterial,
   MeshStandardNodeMaterial,
   Object3D,
@@ -35,11 +37,14 @@ import {
 } from 'three/webgpu';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import {
+  abs,
   cameraPosition,
   clamp,
+  cos,
   dot,
   float,
   max,
+  mix,
   normalize,
   positionLocal,
   positionWorld,
@@ -91,7 +96,7 @@ import {
   type StaticBuildingHook,
   type TreeBatchHook,
 } from './simRenderer.ts';
-import type { PhysicalSkyUniforms } from './sky.ts';
+import { buildCloudShadowNode, type PhysicalSkyUniforms } from './sky.ts';
 import { buildChimneySmoke, type ChimneySmokeHandles } from './smokeFx.ts';
 import { loadSurfaceLibrary, type SurfaceLibrary } from './surfaces.ts';
 import { buildTerrainMesh, type TerrainRenderHandles } from './terrainMesh.ts';
@@ -263,8 +268,27 @@ function upgradeFoliageTranslucency(
   const backDot = max(float(0.0), dot(V.negate(), skyUniforms.uSunDir));
   const sss = pow(backDot, float(3.0)).mul(float(strength));
   const texRgb = texture(srcMat.map, uv(0)).rgb;
+
+  // Gentle vertex-shader canopy wind sway (cycle-free local coords + dual-frequency gust & leaf flutter)
+  const heightW = clamp(positionLocal.y.sub(0.8).div(5.5), float(0.0), float(1.0));
+  const tWind = skyUniforms.uWaterTimeS;
+  const gust = sin(tWind.mul(1.12).add(positionLocal.x.mul(0.82)).add(positionLocal.z.mul(0.64))).mul(0.11);
+  const flutter = cos(tWind.mul(2.75).add(positionLocal.y.mul(1.85)).sub(positionLocal.x.mul(1.35))).mul(0.032);
+  mat.positionNode = positionLocal.add(
+    vec3(gust.add(flutter).mul(heightW), float(0.0), gust.mul(0.62).sub(flutter.mul(0.7)).mul(heightW)),
+  );
+
+  // Subtle per-tree organic hue variation (rich deep forest green <-> warm late-summer olive/gold) + cloud shadow
+  const treeVar = sin(positionWorld.x.mul(0.19).add(cos(positionWorld.z.mul(0.17)).mul(1.8)))
+    .mul(cos(positionWorld.z.mul(0.21).sub(positionWorld.x.mul(0.13))))
+    .mul(0.5)
+    .add(0.5);
+  const leafTint = mix(vec3(0.84, 0.93, 0.85), vec3(1.14, 1.04, 0.82), treeVar);
+  const cloudShade = buildCloudShadowNode(positionWorld.xz, skyUniforms, 0.18);
+  mat.colorNode = leafTint.mul(cloudShade);
+
   // Warm golden-olive transmitted leaf glow on backlit canopy edges
-  mat.emissiveNode = texRgb.mul(skyUniforms.uSunGlowColor).mul(vec3(1.15, 1.05, 0.52)).mul(sss);
+  mat.emissiveNode = texRgb.mul(skyUniforms.uSunGlowColor).mul(vec3(1.15, 1.05, 0.52)).mul(sss).mul(cloudShade);
   disposables.push(mat);
   return mat;
 }
@@ -1027,6 +1051,121 @@ function buildForestUndergrowthBushes(
   return mesh;
 }
 
+interface AmbientBirdsHandles {
+  readonly mesh: InstancedMesh;
+  readonly update: (simTimeS: number) => void;
+}
+
+/**
+ * High-altitude soaring crows/hawks circling lazily above the medieval village & woods (Manor Lords atmosphere).
+ * Strictly 1 instanced draw call (16 birds × 4 triangles = 64 triangles total), GPU vertex-shader wing flap!
+ */
+function buildAmbientBirds(
+  scene: Scene,
+  layout: MapLayoutSpec,
+  skyUniforms: PhysicalSkyUniforms,
+  disposableMats: Material[],
+  disposableGeos: BufferGeometry[],
+): AmbientBirdsHandles {
+  // Compact 4-triangle bird silhouette facing +Z (left/right swept wings + slim body/tail)
+  const positions = new Float32Array([
+    // Left inner + outer wing
+    0.0, 0.0, 0.28,  -0.55, 0.05, 0.02,   0.0, 0.0, -0.22,
+    -0.55, 0.05, 0.02,  -1.02, 0.0, -0.18,  -0.18, 0.0, -0.20,
+    // Right inner + outer wing
+    0.0, 0.0, 0.28,   0.0, 0.0, -0.22,    0.55, 0.05, 0.02,
+    0.55, 0.05, 0.02,  0.18, 0.0, -0.20,   1.02, 0.0, -0.18,
+  ]);
+  const geo = new BufferGeometry();
+  geo.setAttribute('position', new Float32BufferAttribute(positions, 3));
+  geo.computeVertexNormals();
+  disposableGeos.push(geo);
+
+  const mat = new MeshBasicNodeMaterial({
+    color: 0x1e1d1c,
+    side: DoubleSide,
+    fog: true,
+  });
+  mat.name = 'MarchlandAmbientBirdsMat';
+  // Smooth gliding + periodic wing-flap animated on GPU (outer wing tips deflect by |x|^1.35)
+  const span = abs(positionLocal.x);
+  const flapCycle = sin(skyUniforms.uWaterTimeS.mul(5.8)).mul(0.24).mul(span).mul(span);
+  mat.positionNode = positionLocal.add(vec3(float(0.0), flapCycle, float(0.0)));
+  disposableMats.push(mat);
+
+  interface BirdOrbit {
+    readonly cx: number;
+    readonly cz: number;
+    readonly radiusM: number;
+    readonly altM: number;
+    readonly omega: number;
+    readonly phase: number;
+    readonly dir: 1 | -1;
+    readonly scale: number;
+  }
+
+  let seed = 9187;
+  const rand = (): number => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return seed / 4294967296;
+  };
+
+  const count = 16;
+  const orbits: BirdOrbit[] = [];
+  for (let i = 0; i < count; i++) {
+    const anchorX = i < 8 ? layout.playerKeepXZ[0] : (rand() - 0.5) * 260;
+    const anchorZ = i < 8 ? layout.playerKeepXZ[1] : (rand() - 0.5) * 260;
+    orbits.push({
+      cx: anchorX + (rand() - 0.5) * 90,
+      cz: anchorZ + (rand() - 0.5) * 90,
+      radiusM: 28 + rand() * 58,
+      altM: 25 + rand() * 20,
+      omega: 0.14 + rand() * 0.13,
+      phase: rand() * Math.PI * 2,
+      dir: rand() > 0.5 ? 1 : -1,
+      scale: 0.72 + rand() * 0.45,
+    });
+  }
+
+  const mesh = new InstancedMesh(geo, mat, count);
+  mesh.name = 'MarchlandAmbientBirds';
+  mesh.castShadow = false;
+  mesh.receiveShadow = false;
+  mesh.frustumCulled = false;
+  mesh.instanceMatrix.setUsage(DynamicDrawUsage);
+  markStaticInstances(mesh);
+  scene.add(mesh);
+
+  const bPos = new Vector3();
+  const bQuat = new Quaternion();
+  const bScale = new Vector3();
+  const bMat = new Matrix4();
+  const upAxis = new Vector3(0, 1, 0);
+
+  const update = (simTimeS: number): void => {
+    for (let i = 0; i < count; i++) {
+      const o = orbits[i]!;
+      const ang = o.phase + simTimeS * o.omega * o.dir;
+      const x = o.cx + Math.cos(ang) * o.radiusM;
+      const z = o.cz + Math.sin(ang) * o.radiusM;
+      const y = o.altM + Math.sin(ang * 2.0 + o.phase) * 2.4;
+      // Tangent heading along circular soaring track
+      const tx = -Math.sin(ang) * o.dir;
+      const tz = Math.cos(ang) * o.dir;
+      const yaw = Math.atan2(tx, tz);
+      bPos.set(x, y, z);
+      bQuat.setFromAxisAngle(upAxis, yaw);
+      bScale.set(o.scale, o.scale, o.scale);
+      bMat.compose(bPos, bQuat, bScale);
+      mesh.setMatrixAt(i, bMat);
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+  };
+  update(0);
+
+  return { mesh, update };
+}
+
 export async function buildStage5World(
   scene: Scene,
   loader: AssetLoader,
@@ -1060,10 +1199,10 @@ export async function buildStage5World(
   const tracker = createByteProgressTracker(manifest.totalBytes, onProgress);
 
   // 1. Load 12-layer KTX2 surface library (zero extra textures for all 18 buildings & terrain!)
-  const surfaces = await loadSurfaceLibrary(loader, anisotropy, tracker, quality);
+  const surfaces = await loadSurfaceLibrary(loader, anisotropy, tracker, quality, skyUniforms);
 
-  // 2. Terrain mesh (untiled on High) + physical lakes/rivers (refracted on High, PMREM+shadows on Low) + 3-ring grass + 360° horizon hills
-  const terrainHandles: TerrainRenderHandles = buildTerrainMesh(terrain, groundWorks, surfaces, quality);
+  // 2. Terrain mesh (untiled on High, puddles & cloud shadows) + physical lakes/rivers + 3-ring grass + 360° horizon hills
+  const terrainHandles: TerrainRenderHandles = buildTerrainMesh(terrain, groundWorks, surfaces, quality, skyUniforms);
   scene.add(terrainHandles.mesh);
 
   const waterHandles: LakeWaterHandles = buildLakeWater(terrain, skyUniforms, terrainHandles.heightGrid, quality);
@@ -1076,6 +1215,7 @@ export async function buildStage5World(
 
   const horizonHandles = buildDistantHorizon(scene, disposableMats, disposableGeos);
   const bushMesh = buildForestUndergrowthBushes(scene, terrain, layout, quality, disposableMats, disposableGeos);
+  const ambientBirds = buildAmbientBirds(scene, layout, skyUniforms, disposableMats, disposableGeos);
 
   const grass = buildGrassField(
     terrain,
@@ -1083,6 +1223,7 @@ export async function buildStage5World(
     terrainHandles.heightTexture,
     terrainHandles.groundWorksTexture,
     quality,
+    skyUniforms,
   );
   for (const gm of grass.meshes) scene.add(gm);
 
@@ -1801,6 +1942,9 @@ export async function buildStage5World(
     groundWorks,
     syncGroundWorks: () => terrainHandles.syncGroundWorks(),
     syncDynamicFarms: (blds) => wheat.syncDynamicFarms(blds),
+    syncDynamicChimneys: (pts) => smokeHandles.setDynamicEmitters(pts),
+    skyUniforms,
+    quality,
     buildingMaterial: surfaces.buildingMaterial,
     siteBuildingMaterial: surfaces.siteBuildingMaterial,
     buildingTemplates,
@@ -1892,6 +2036,7 @@ export async function buildStage5World(
       waterHandles.dispose();
       for (const hm of horizonHandles.meshes) scene.remove(hm);
       if (bushMesh) scene.remove(bushMesh);
+      scene.remove(ambientBirds.mesh);
       for (const gm of grass.meshes) scene.remove(gm);
       grass.dispose();
       scene.remove(wheat.mesh);
