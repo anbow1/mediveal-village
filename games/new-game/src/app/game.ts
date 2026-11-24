@@ -6,6 +6,7 @@
 import { Vector3, type PerspectiveCamera, type Scene, type WebGPURenderer } from 'three/webgpu';
 import {
   BENCH,
+  BUILDING_DEFS,
   GOVERNOR_STEPS,
   QUALITY_PRESETS,
   SIM,
@@ -73,6 +74,8 @@ export interface BootOptions {
 interface DebugApi {
   readonly place: (v: DebugPlaceArgs) => void;
   readonly spot: (name: string) => void;
+  /** Puts the RTS orbit camera on a goal at once and returns where its eye ended up (close-up and roof checks). */
+  readonly orbit: (goal: { targetX: number; targetZ: number; distanceM: number; yawRad: number; pitchRad: number }) => { x: number; y: number; z: number };
   readonly step: (seconds: number) => number;
   readonly setLighting: (preset: LightingPresetId) => void;
   readonly startBench: (fast?: boolean) => void;
@@ -196,6 +199,8 @@ export class Game {
     // FPS/marchland controls: when troops are selected, right-drag rotates target formation instead of orbiting camera!
     this.camCtrl.canRightDragRotate = () =>
       this.inputCtrl.selectedRegimentIds.size === 0 && this.inputCtrl.placementTool === null;
+    // Up close the camera rides over roofs and the keep (ported from FPS/marchland worldView.roofsUnder).
+    this.camCtrl.obstacleTopAt = (x, z) => roofsUnder(this.sim.state.buildings, (bx, bz) => this.world.terrain.heightAt(bx, bz), x, z);
     // Tablet touch controls: when `⌖ Ustaw pozycję` (regimentPose) is active, 1-finger drag aims facing instead of panning!
     this.camCtrl.canSingleTouchPan = () => this.inputCtrl.placementTool?.kind !== 'regimentPose';
 
@@ -590,6 +595,13 @@ export class Game {
         this.camCtrl.applySpotCamera(findBenchSpot(name, this.benchSpots).camera);
         this.syncVisualFrame(0, true);
       },
+      orbit: (goal) => {
+        this.camCtrl.applySpotCamera({ mode: 'rts', goal });
+        this.camCtrl.syncCamera();
+        this.syncVisualFrame(0, true);
+        const p = this.stage.camera.position;
+        return { x: p.x, y: p.y, z: p.z };
+      },
       step: (seconds) => {
         const res = this.loop.stepSeconds(seconds);
         this.syncVisualFrame(0, false);
@@ -980,4 +992,24 @@ export class Game {
     this.assetLoader.dispose();
     this.stage.dispose();
   }
+}
+
+/** Ridge heights the camera must clear, sloping off over the last 6 m outside a building's footprint. */
+const ROOF_M = 11;
+const KEEP_ROOF_M = 22;
+function roofsUnder(
+  buildings: readonly { type: keyof typeof BUILDING_DEFS; x: number; z: number }[],
+  heightAt: (x: number, z: number) => number,
+  x: number,
+  z: number,
+): number {
+  let top = -Infinity;
+  for (const b of buildings) {
+    const r = BUILDING_DEFS[b.type].radiusM;
+    const d = Math.hypot(x - b.x, z - b.z);
+    if (d > r + 6) continue;
+    const t = Math.min(1, (r + 6 - d) / 6);
+    top = Math.max(top, heightAt(b.x, b.z) + (b.type === 'keep' ? KEEP_ROOF_M : ROOF_M) * t * t * (3 - 2 * t));
+  }
+  return top;
 }

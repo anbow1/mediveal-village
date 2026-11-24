@@ -2,6 +2,12 @@
 
 > Newest entries first (`GUIDE.md` §1, §6). Every measurement includes date, commit, exact method (script, preset, view, alternating before/after runs), Before | After table (pipelines, draw calls / triangles, texture memory, ready / GPU idle, build size), screenshot comparison crops in `games/new-game/results/<date>/`, and the decision + number behind it. Reverted attempts are logged too.
 
+## 2026-11-24 · Close camera rides over roofs (ported from anbow1/FPS marchland)
+
+- **What:** the RTS orbit eye (`src/app/rtsCamera.ts` `syncCamera`) now stays at least 2.5 m above the ground under it and half-way to its target, and above any building it passes over (`obstacleTopAt`, set in `game.ts` from `BUILDING_DEFS[type].radiusM`: an 11 m ridge, 22 m for the keep, easing off over the 6 m outside the footprint). Free bench spots are untouched.
+- **Why:** at the 8 m minimum and a flat pitch the eye went inside houses and roofs (the `building` spot shows the inside of a roof; the same happens orbiting through a town). FPS/marchland had the same fault when it allowed 9 m and fixed it this way (`worldView.ts` `roofsUnder`).
+- **Measured how:** `window.__debug.orbit(goal)` (new: applies an RTS goal at once and returns the eye) with the eye placed straight over the player's first house at 8 m, pitch 0.16: eye y = **15.15 m** (ground 1.65 + 11 + 2.5); before, ground + 1.3 m, inside the house. Minimal preset, SwiftShader WebGL2. `npx tsc --noEmit` 0 errors; `npx vitest run` 65/66 under load, the one failure (save/load determinism, 27 s) is a timeout that passes alone (14 s) and fails the same way without this change.
+
 ## 2026-11-20 · Stage 6.3 — 17 New Distinct 3D Buildings (All 31 Types Unique), Realistic Quarry & Iron Mine, Placement Entrance Arrow & 12 Field Strips, Dynamic Farm Wheat & Vineyard Trellises, Watertight Walls, Upgrades & 21-Resource HUD (`docs/` Sync)
 
 - **Measured how:** Production build (`vite build --base ./`, `3.88 s`, `32.5 MB` total, `235` binary assets = `30.52 MB`) served via `tools/measure/serve.mjs dist 4173`. Verified via `npx tsc --noEmit` (`0` errors), `npx vitest run` (`13` files / `56/56` tests passing, including new upgrade/strip/worker-animation and watertight-wall tests), and headless Chrome WebGPU High (`verify_playtest_s63.mjs`, `1280×720`) inspecting all 10 playtest fixes and runtime pipeline tracer (`126 / 0` pipelines, `newPipelines: []`, `0` errors).

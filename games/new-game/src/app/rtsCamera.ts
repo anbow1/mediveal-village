@@ -16,6 +16,9 @@ import {
 import type { InputBindings } from './bindings.ts';
 import type { BenchSpotCamera } from './bench.ts';
 
+/** The orbit eye never goes nearer the ground, or a roof under it, than this. */
+const CAMERA_CLEARANCE_M = 2.5;
+
 export interface DebugPlaceArgs {
   x?: number;
   y?: number;
@@ -57,6 +60,12 @@ export class RtsCameraController {
   canRightDragRotate: () => boolean = () => true;
   /** When false, 1-finger touch drag is reserved for regiment pose facing rotation (2-finger zoom/rotate still works). */
   canSingleTouchPan: () => boolean = () => true;
+
+  /**
+   * Height of whatever stands at (x, z) that the orbit eye must clear (roof ridges, the keep), or -Infinity.
+   * Set by the game; up close the eye rides over buildings instead of ending up inside a wall or roof.
+   */
+  obstacleTopAt: (x: number, z: number) => number = () => -Infinity;
 
   private readonly cleanupFns: (() => void)[] = [];
 
@@ -312,7 +321,19 @@ export class RtsCameraController {
     const pose = this.freePose
       ? freeCameraPose(this.freePose)
       : rtsCameraPose(this.current, this.groundHeightAt(this.current.targetX, this.current.targetZ));
-    this.camera.position.set(pose.eyeX, pose.eyeY, pose.eyeZ);
+    let eyeY = pose.eyeY;
+    if (!this.freePose) {
+      // Up close and level the eye could dip into a slope or a house behind it: keep it above both.
+      const midX = (pose.eyeX + pose.lookX) / 2;
+      const midZ = (pose.eyeZ + pose.lookZ) / 2;
+      const floor = Math.max(
+        this.groundHeightAt(pose.eyeX, pose.eyeZ),
+        this.groundHeightAt(midX, midZ),
+        this.obstacleTopAt(pose.eyeX, pose.eyeZ),
+      );
+      eyeY = Math.max(eyeY, floor + CAMERA_CLEARANCE_M);
+    }
+    this.camera.position.set(pose.eyeX, eyeY, pose.eyeZ);
     this.camera.lookAt(pose.lookX, pose.lookY, pose.lookZ);
     this.camera.updateMatrixWorld();
   }
