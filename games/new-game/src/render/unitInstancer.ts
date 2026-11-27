@@ -65,8 +65,8 @@ export type UnitAnimClip = 'idle' | 'walk' | 'attack';
 
 export interface InstancedUnitSpawn {
   readonly archetype: UnitArchetype;
-  /** 0 = Marchland Cobalt, 1 = Enemy Feudal Crimson */
-  readonly team: 0 | 1;
+  /** 0 = Marchland Cobalt, 1 = Enemy Feudal Crimson, 2 = Ochre Gold */
+  readonly team: 0 | 1 | 2;
   x: number;
   y: number;
   z: number;
@@ -657,7 +657,7 @@ export async function buildUnitInstancer(
 
     const pushActor = (
       arch: UnitArchetype,
-      team: 0 | 1,
+      team: 0 | 1 | 2,
       x: number,
       y: number,
       z: number,

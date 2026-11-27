@@ -47,3 +47,33 @@
   **Leonardo Carvalho** (Sketchfab), licensed **CC BY 4.0**; the crossbow is the game's own. Motion from
   Mixamo ("Firing Rifle" for the shot, "Rifle Down To Aim" to raise it, "Rifle Walk" and the sword-and-shield
   set).
+- `lineman.json` — the line infantry, and `rifleman.json` — the riflemen, made by `rigged.py --arms bayonet` and
+  `--arms musket` (its own musket left out with `--drop musket`) from **"Infantry - rigged for UE4/5 - free
+  download"** by **Andy woodhead** (https://sketchfab.com/3d-models/infantry-rigged-for-ue45-free-download-771050587ce248498178aee2c2f88f36),
+  licensed **CC BY 4.0**: thinned to about 3 450 triangles, colours from its textures, the coat (line) or the
+  trousers (riflemen) in the side's colour; the musket and bayonet are the game's own. Motion from Mixamo
+  ("Firing Rifle", "Rifle Down To Aim", "Rifle Walk" and the sword-and-shield set).
+- `hussar_rider.json` — the hussars' rider, made by `rigged.py --seated` from **"Hussar - rigged for UE4/5 - free
+  download"** by **Andy woodhead** (https://sketchfab.com/3d-models/hussar-rigged-for-ue45-free-download-aa5a353357974d2dbd4b18d34ec9a7bc),
+  licensed **CC BY 4.0**: thinned to about 3 200 triangles, colours from its textures, the dolman in the side's colour.
+- `musketeer.json` — the musketeers, made by `tools/blender/autorig.py` (a skeleton for a model that has none)
+  and `rigged.py --arms musket` from **"European Soldier 17th Century"** by **haiphucpham221102**
+  (https://sketchfab.com/3d-models/european-soldier-17th-century-7fc4d303a8654908aa56711c6e3078d8), licensed
+  **CC BY 4.0**: thinned to about 3 450 triangles, colours from its textures, its darkest cloth (hat,
+  stockings) in the side's colour; the musket is the game's own. Motion from Mixamo, as the line infantry's.
+- `cuirassier_rider.json` — the cuirassiers' rider, made by `autorig.py` and `rigged.py --seated` from **"Private
+  soldier of the Glukhovsky cuirassier reg"** by **1812panorama**
+  (https://sketchfab.com/3d-models/private-soldier-of-the-glukhovsky-cuirassier-reg-b7f6029b2baa4c47b63bdcf6f0cd3747),
+  licensed **CC BY 4.0**: thinned to about 3 700 triangles, colours from its texture.
+- `dragoon_rider.json` — the dragoons' rider, made by `autorig.py` and `rigged.py --seated` from **"1700th-ish century
+  Soldier"** by **Christoffer Eriksson** (https://sketchfab.com/3d-models/1700th-ish-century-soldier-bfeb4a6d570b446a8ac710890b541371),
+  licensed **CC BY 4.0**: thinned to about 3 200 triangles, its darkest cloth in the side's colour.
+- `artilleryman.json` — the crews of the third age's guns, made by `rigged.py --arms none --drop ramrod` from
+  **"Artillery crew 1815 - rigged for UE4/5"** by **Andy woodhead**
+  (https://sketchfab.com/3d-models/artillery-crew-1815-rigged-for-ue45-98747e8ba0e547eaba65136919734bf2), licensed
+  **CC BY 4.0**: thinned to about 1 600 triangles, the jacket in the side's colour. Motion from Mixamo (a standing
+  idle, Walking, Picking Up, Putting Down), as the townsmen who serve the older guns.
+- `knight_rider.json` — the knights (heavy cavalry), made by `rigged.py --seated` from **"Hospitaler Talking"** by
+  **putns** (https://sketchfab.com/3d-models/hospitaler-talking-a640ec0a01c1480d8d9531e1c26e4777), licensed
+  **CC BY 4.0**: thinned to about 3 200 triangles, the surcoat in the side's colour (over the order's cross: the
+  game's sides are invented); his flag left out.

@@ -1,7 +1,7 @@
 // Desktop + Touch RTS camera controller with free-camera debug override for exact view placement.
 
 import type { PerspectiveCamera } from 'three/webgpu';
-import { CAMERA } from '../config.ts';
+import { CAMERA, WORLD } from '../config.ts';
 import {
   clamp,
   clampRtsGoal,
@@ -74,9 +74,14 @@ export class RtsCameraController {
     private readonly element: HTMLElement,
     private readonly bindings: InputBindings,
     private readonly groundHeightAt: (x: number, z: number) => number = () => 0,
+    private readonly halfMapM: number = WORLD.halfSizeM,
   ) {
     this.attachEvents();
     this.syncCamera();
+  }
+
+  private clampGoal(g: RtsCameraGoal): RtsCameraGoal {
+    return clampRtsGoal(g, this.halfMapM);
   }
 
   private attachEvents(): void {
@@ -108,13 +113,13 @@ export class RtsCameraController {
       if (this.dragMode === 'pan') {
         const scale = (this.goal.distanceM / Math.max(1, el.clientHeight)) * 1.15;
         const delta = groundPanDelta(this.goal.yawRad, -dx, dy, scale);
-        this.goal = clampRtsGoal({
+        this.goal = this.clampGoal({
           ...this.goal,
           targetX: this.goal.targetX + delta.dx,
           targetZ: this.goal.targetZ + delta.dz,
         });
       } else if (this.dragMode === 'rotate') {
-        this.goal = clampRtsGoal({
+        this.goal = this.clampGoal({
           ...this.goal,
           yawRad: this.goal.yawRad - dx * 0.006,
           pitchRad: this.goal.pitchRad + dy * 0.0045,
@@ -129,7 +134,7 @@ export class RtsCameraController {
       this.freePose = null;
       const dir = Math.sign(e.deltaY);
       const factor = 1 + dir * CAMERA.wheelZoomFactor;
-      this.goal = clampRtsGoal({ ...this.goal, distanceM: this.goal.distanceM * factor });
+      this.goal = this.clampGoal({ ...this.goal, distanceM: this.goal.distanceM * factor });
     };
 
     // Touch controls: 1-finger pan, 2-finger pinch zoom + twist rotate + drag pan.
@@ -154,7 +159,7 @@ export class RtsCameraController {
           const dy = cur.y - prevSingle.y;
           const scale = (this.goal.distanceM / Math.max(1, el.clientHeight)) * 1.25;
           const delta = groundPanDelta(this.goal.yawRad, -dx, dy, scale);
-          this.goal = clampRtsGoal({
+          this.goal = this.clampGoal({
             ...this.goal,
             targetX: this.goal.targetX + delta.dx,
             targetZ: this.goal.targetZ + delta.dz,
@@ -174,7 +179,7 @@ export class RtsCameraController {
             const dAngle = wrapAngleRad(angle - this.prevPinchAngle);
             const scale = (this.goal.distanceM / Math.max(1, el.clientHeight)) * 1.1;
             const delta = groundPanDelta(this.goal.yawRad, -(midX - this.prevPinchMidX), midY - this.prevPinchMidY, scale);
-            this.goal = clampRtsGoal({
+            this.goal = this.clampGoal({
               ...this.goal,
               targetX: this.goal.targetX + delta.dx,
               targetZ: this.goal.targetZ + delta.dz,
@@ -231,13 +236,13 @@ export class RtsCameraController {
 
   rotateBy(deltaYawRad: number): void {
     this.freePose = null;
-    this.goal = clampRtsGoal({ ...this.goal, yawRad: this.goal.yawRad + deltaYawRad });
+    this.goal = this.clampGoal({ ...this.goal, yawRad: this.goal.yawRad + deltaYawRad });
   }
 
   /** Smoothly pans RTS camera to focus on world (x, z) (used by minimap, alerts, bottlenecks, Home). */
   jumpTo(x: number, z: number, immediate = false): void {
     this.freePose = null;
-    this.goal = clampRtsGoal({ ...this.goal, targetX: x, targetZ: z });
+    this.goal = this.clampGoal({ ...this.goal, targetX: x, targetZ: z });
     if (immediate) {
       this.current = { ...this.goal };
       this.syncCamera();
@@ -250,13 +255,13 @@ export class RtsCameraController {
 
   applyBookmark(bm: RtsCameraGoal): void {
     this.freePose = null;
-    this.goal = clampRtsGoal({ ...bm });
+    this.goal = this.clampGoal({ ...bm });
   }
 
   applySpotCamera(cam: BenchSpotCamera): void {
     if (cam.mode === 'rts') {
       this.freePose = null;
-      this.goal = clampRtsGoal(cam.goal);
+      this.goal = this.clampGoal(cam.goal);
       this.current = { ...this.goal };
     } else {
       this.freePose = { ...cam.pose };
@@ -268,7 +273,7 @@ export class RtsCameraController {
   place(v: DebugPlaceArgs): void {
     if (v.distance !== undefined || (v.y === undefined && (v.x !== undefined || v.z !== undefined))) {
       this.freePose = null;
-      this.goal = clampRtsGoal({
+      this.goal = this.clampGoal({
         targetX: v.x ?? this.goal.targetX,
         targetZ: v.z ?? this.goal.targetZ,
         distanceM: v.distance ?? this.goal.distanceM,
@@ -304,7 +309,7 @@ export class RtsCameraController {
       const distFactor = Math.max(0.25, this.goal.distanceM / 50);
       const speed = CAMERA.panSpeedAt50mMs * distFactor * dtS;
       const delta = groundPanDelta(this.goal.yawRad, right, forward, speed);
-      this.goal = clampRtsGoal({
+      this.goal = this.clampGoal({
         ...this.goal,
         targetX: this.goal.targetX + delta.dx,
         targetZ: this.goal.targetZ + delta.dz,

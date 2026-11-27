@@ -13,6 +13,11 @@ for the game). All licensed **CC BY 4.0**.
 
 - `cannon.json` — the field gun (and the gun on show before the foundry): **"Cannon"** by **Lyskilde**
   (https://sketchfab.com/3d-models/cannon-84d7315b51c9473cb3cfd1501a5e5e03).
+- `fieldgun.json` — the third age's guns (field guns, and smaller the horse guns): **"British field cannon - 1815 -
+  free download"** by **Andy woodhead** (https://sketchfab.com/3d-models/british-field-cannon-1815-free-download-c027cb2e6e764f4196f27c94b5f770d5).
+  Darkened for the game (`prop.py --gain 0.35 --pale 0.22,0.18,0.14`: its pale wheels and carriage read as silver in
+  the sun), about 4 000 triangles so the wheels keep their spokes. The second age's falconets and culverins are
+  `cannon.json`, smaller and larger, until models of their own.
 - `mortar.json` — the mortar: **"Medieval Mortier"** by **ViktorKom**
   (https://sketchfab.com/3d-models/medieval-mortier-a931843c33b048359019263b70168207).
 

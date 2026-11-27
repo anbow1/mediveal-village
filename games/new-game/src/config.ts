@@ -86,9 +86,12 @@ export const SIM = {
 } as const;
 
 export const WORLD = {
-  /** Playable square battlefield side length (m). Source: docs/GAMEPLAY.md 2026-11-13. */
+  /** Playable square battlefield side length (m). Standard 2-lord maps use 560 m; Three Lords ('triangle') uses 860 m. */
   sizeM: 560,
   halfSizeM: 280,
+  triangleSizeM: 860,
+  triangleHalfSizeM: 430,
+  triangleRadiusM: 320,
   /** Physical constants (SI). Source: GUIDE.md §4, NUMBERS.md. */
   gravityMs2: 9.81,
   airDensityKgM3: 1.225,
@@ -97,12 +100,12 @@ export const WORLD = {
 
 export const CAMERA = {
   fovDeg: 45,
-  /** Reversed depth handles near 0.25 m .. far 1800 m cleanly without z-fighting. */
+  /** Reversed depth handles near 0.25 m .. far 2400 m cleanly without z-fighting. */
   nearM: 0.25,
-  farM: 1800,
+  farM: 2400,
   minDistanceM: 8,
-  /** High enough to frame the full 560 m map in strategic overview. */
-  maxDistanceM: 520,
+  /** High enough to frame the full 860 m Three Lords map in strategic overview. */
+  maxDistanceM: 820,
   defaultDistanceM: 52,
   /** ~45 deg downward RTS pitch. */
   defaultPitchRad: 0.76,
@@ -327,7 +330,9 @@ export type GoodId =
   | 'leatherArmour'
   | 'mail'
   | 'bows'
-  | 'horses';
+  | 'horses'
+  | 'muskets'
+  | 'powder';
 
 export const ALL_GOODS: readonly GoodId[] = [
   'gold',
@@ -351,6 +356,8 @@ export const ALL_GOODS: readonly GoodId[] = [
   'mail',
   'bows',
   'horses',
+  'muskets',
+  'powder',
 ];
 
 export const FOOD_GOODS: readonly GoodId[] = ['bread', 'fish', 'sausages'];
@@ -380,6 +387,8 @@ export const GOOD_VALUE_GOLD: Record<GoodId, number> = {
   mail: 14,
   bows: 8,
   horses: 16,
+  muskets: 14,
+  powder: 4,
 };
 
 /** Food ration value per unit (bread = 1, fish = 1, sausages = 2 per docs/ECONOMY.md §4). */
@@ -389,13 +398,53 @@ export const FOOD_RATIONS_PER_UNIT: Partial<Record<GoodId, number>> = {
   sausages: 2,
 };
 
+/** Three Ages (ported from anbow1/marchland docs/AGES.md): Middle Ages (Keep 1-3), Early Modern (Keep 4), 19th Century (Keep 5). */
+export type EraNumber = 1 | 2 | 3;
+export const MEDIEVAL_MAX_LEVEL = 3;
+export const MAX_BUILDING_LEVEL = 5;
+
+export const ERAS = [
+  { era: 1 as EraNumber, keepLevel: 1 as const, name: 'middleAges' as const },
+  { era: 2 as EraNumber, keepLevel: 4 as const, name: 'earlyModern' as const },
+  { era: 3 as EraNumber, keepLevel: 5 as const, name: 'industrial' as const },
+] as const;
+
+/** Extra starting warehouse stock when launching a skirmish in Era 2 or Era 3 (marchland START_AGE). */
+export const START_AGE = {
+  stock: [
+    {} as ResourceMap,
+    { gold: 1500, timber: 300, planks: 200, stone: 400, iron: 60, grain: 60, bread: 40, muskets: 24, powder: 48 } as ResourceMap,
+    { gold: 2200, timber: 400, planks: 300, stone: 600, iron: 120, grain: 80, bread: 60, muskets: 36, powder: 72 } as ResourceMap,
+  ] as readonly ResourceMap[],
+} as const;
+
+/** Great Building permanent town bonuses (unique: one of each per side; marchland GREAT). */
+export const GREAT = {
+  cathedralMorale: 8,
+  cathedralGrowthMultiplier: 0.75,
+  townHallGoldMultiplier: 1.25,
+  manufactoryWorkSpeedMultiplier: 1.2,
+} as const;
+
+/** Three-lord & Ages AI tuning constants (marchland AI). */
+export const AI_AGES = {
+  /** In a standard Era 1 match, AI begins saving for Era 2/3 after 50 minutes (immediately if startAge >= 2). */
+  agesAfterS: 50 * 60,
+  /** Fast Ages mode: AI starts saving for Era 2/3 after 25 minutes and Keep L4/L5 cost & duration are 0.65x. */
+  fastAgesAfterS: 25 * 60,
+  fastAgesCostMul: 0.65,
+  fastAgesTimeMul: 0.65,
+  /** On Three Lords ('triangle'), a side another AI is already attacking counts as this many men stronger. */
+  sharedFoeMen: 40,
+} as const;
+
 export const ECONOMY = {
   /** Starting stock per side (docs/ECONOMY.md §9). */
   startingStock: { gold: 340, timber: 90, stone: 40, bread: 40 } as ResourceMap,
   /** Starting Keep household residents. */
   keepResidents: 8,
-  /** House capacity per level 1–3. */
-  houseCapacityByLevel: [8, 12, 16] as readonly [number, number, number],
+  /** House capacity per level 1–5 (marchland PEOPLE.houseResidents). */
+  houseCapacityByLevel: [8, 12, 16, 20, 24] as readonly [number, number, number, number, number],
   /** Seconds between newcomers into a fed house with room. */
   newcomerIntervalS: 30,
   /** Wine speeds house growth to 60% of normal time. */
@@ -439,17 +488,19 @@ export const ECONOMY = {
   /** Worker threat flee distance & return delay (s). */
   workerFleeRadiusM: 32,
   workerReturnDelayS: 6,
-  /** Building level multipliers & upgrade builder-seconds. */
-  levelCostMul: [1.0, 1.5, 2.5] as readonly [number, number, number],
-  levelSpeedMul: [1.0, 1.6, 2.3] as readonly [number, number, number],
+  /** Building level multipliers (L1–L5; L4–L5 require matching Keep era) & upgrade builder-seconds. */
+  levelCostMul: [1.0, 1.5, 2.5, 3.5, 5.0] as readonly [number, number, number, number, number],
+  levelSpeedMul: [1.0, 1.6, 2.3, 2.9, 3.5] as readonly [number, number, number, number, number],
   upgradeBuilderS: 15,
   buildBaseBuilderS: 14,
   demolishRefundFrac: 0.5,
-  /** Keep L1–3 parameters (docs/BUILDINGS.md). */
+  /** Keep L1–5 parameters (L1–3 Middle Ages, L4 Early Modern, L5 19th Century; marchland KEEP_LEVELS). */
   keepLevels: [
     { level: 1, reachM: 280, farmReachM: 340, maxBarracksLevel: 1, maxHp: 1800, arrowIntervalS: 1.0, arrowRangeM: 55, arrowDamage: 9, cost: {} as ResourceMap, upgradeS: 0 },
     { level: 2, reachM: 330, farmReachM: 390, maxBarracksLevel: 2, maxHp: 2600, arrowIntervalS: 0.75, arrowRangeM: 55, arrowDamage: 9, cost: { gold: 250, timber: 60, stone: 120 } as ResourceMap, upgradeS: 60 },
     { level: 3, reachM: 380, farmReachM: 440, maxBarracksLevel: 3, maxHp: 3600, arrowIntervalS: 0.5, arrowRangeM: 55, arrowDamage: 9, cost: { gold: 500, timber: 100, stone: 240 } as ResourceMap, upgradeS: 60 },
+    { level: 4, reachM: 420, farmReachM: 480, maxBarracksLevel: 4, maxHp: 4800, arrowIntervalS: 0.4, arrowRangeM: 55, arrowDamage: 9, cost: { gold: 1200, planks: 200, stone: 400, iron: 40 } as ResourceMap, upgradeS: 180 },
+    { level: 5, reachM: 460, farmReachM: 520, maxBarracksLevel: 5, maxHp: 6000, arrowIntervalS: 0.3, arrowRangeM: 55, arrowDamage: 9, cost: { gold: 2200, planks: 300, stone: 600, iron: 120 } as ResourceMap, upgradeS: 240 },
   ] as const,
   /** Placement rules (docs/ECONOMY.md §7). */
   ownBuildingExtendM: 70,
@@ -489,7 +540,7 @@ export const ECONOMY = {
   farmGrowS: 60,
   farmHarvestS: 6,
   farmGrainPerStrip: 6,
-  farmStripsByLevel: [4, 8, 12] as readonly [number, number, number],
+  farmStripsByLevel: [4, 8, 12, 12, 12] as readonly [number, number, number, number, number],
   vineyardPlantS: 15,
   vineyardGrowS: 110,
   vineyardHarvestS: 7,
@@ -529,6 +580,11 @@ export type BuildingTypeId =
   | 'stable'
   | 'barracks'
   | 'gunFoundry'
+  | 'gunsmith'
+  | 'powderMill'
+  | 'cathedral'
+  | 'townHall'
+  | 'manufactory'
   | 'watchtower'
   | 'gate'
   | 'ruin'
@@ -599,44 +655,55 @@ export interface BuildingDef {
   readonly anywhereOnMap?: boolean;
   /** True if farm/vineyard gets +60 m keep reach bonus. */
   readonly farmReachBonus?: boolean;
-  readonly maxLevel: 1 | 3;
+  /** Minimum Keep level required to construct this building (Era 2–3 workshops & Great Buildings). */
+  readonly keepLevel?: number;
+  /** One per side (Great Building of an Era). */
+  readonly unique?: boolean;
+  /** Optional custom builder-seconds override for monumental Great Buildings. */
+  readonly buildBuilderS?: number;
+  readonly maxLevel: 1 | 3 | 5;
   readonly buildable: boolean;
   readonly recipe?: BuildingRecipe;
 }
 
-/** All 31 gameplay buildings + Gate, Ruin, Camp Tent matching docs/BUILDINGS.md — each with its own bespoke 3D model! */
+/** All 36 gameplay buildings + Gate, Ruin, Camp Tent (including Era 2-3 Gunsmith, Powder Mill & 3 Great Buildings). */
 export const BUILDING_DEFS: Record<BuildingTypeId, BuildingDef> = {
-  keep:        { id: 'keep',        branch: 'town',      modelKind: 'keep_l1',        cost: {}, maxHp: 1800, workers: 0, radiusM: 7.5, terrainReq: 'any', maxLevel: 3, buildable: false },
-  house:       { id: 'house',       branch: 'town',      modelKind: 'house_l1',       cost: { gold: 40, timber: 10 }, maxHp: 250, workers: 0, radiusM: 4.5, terrainReq: 'any', maxLevel: 3, buildable: true },
-  storehouse:  { id: 'storehouse',  branch: 'town',      modelKind: 'storehouse_l1',  cost: { gold: 60, timber: 40, stone: 10 }, maxHp: 400, workers: 1, radiusM: 5.5, terrainReq: 'any', maxLevel: 3, buildable: true },
-  market:      { id: 'market',      branch: 'town',      modelKind: 'market_l1',      cost: { gold: 80, timber: 40, stone: 20 }, maxHp: 400, workers: 1, radiusM: 6.0, terrainReq: 'any', maxLevel: 3, buildable: true },
-  tavern:      { id: 'tavern',      branch: 'town',      modelKind: 'tavern_l1',      cost: { gold: 80, timber: 30, stone: 10 }, maxHp: 300, workers: 1, radiusM: 5.0, terrainReq: 'any', maxLevel: 3, buildable: true, recipe: { inputs: { ale: 1 }, outputs: { gold: 2 }, cycleS: 5 } },
-  chapel:      { id: 'chapel',      branch: 'town',      modelKind: 'chapel_l1',      cost: { gold: 120, timber: 20, stone: 50 }, maxHp: 450, workers: 1, radiusM: 5.8, terrainReq: 'any', maxLevel: 3, buildable: true },
-  well:        { id: 'well',        branch: 'town',      modelKind: 'well_l1',        cost: { gold: 25, stone: 15 }, maxHp: 200, workers: 1, radiusM: 2.8, terrainReq: 'any', maxLevel: 3, buildable: true },
-  woodcutter:  { id: 'woodcutter',  branch: 'materials', modelKind: 'woodcutter_l1',  cost: { gold: 30 }, maxHp: 250, workers: 1, radiusM: 4.5, terrainReq: 'forest', terrainReqDistM: 26, anywhereOnMap: true, maxLevel: 3, buildable: true },
-  sawmill:     { id: 'sawmill',     branch: 'materials', modelKind: 'sawmill_l1',     cost: { gold: 60, timber: 30, stone: 10 }, maxHp: 300, workers: 1, radiusM: 5.0, terrainReq: 'any', maxLevel: 3, buildable: true, recipe: { inputs: { timber: 2 }, outputs: { planks: 2 }, cycleS: 6 } },
-  forester:    { id: 'forester',    branch: 'materials', modelKind: 'forester_l1',    cost: { gold: 35, timber: 10 }, maxHp: 250, workers: 1, radiusM: 4.2, terrainReq: 'forest', terrainReqDistM: 26, maxLevel: 3, buildable: true },
-  hunter:      { id: 'hunter',      branch: 'food',      modelKind: 'hunter_l1',      cost: { gold: 40, timber: 10 }, maxHp: 250, workers: 1, radiusM: 4.2, terrainReq: 'forest', terrainReqDistM: 26, maxLevel: 3, buildable: true, recipe: { inputs: {}, outputs: { meat: 1, hides: 1 }, cycleS: 14 } },
-  quarry:      { id: 'quarry',      branch: 'materials', modelKind: 'quarry_l1',      cost: { gold: 40, timber: 10 }, maxHp: 300, workers: 1, radiusM: 4.8, terrainReq: 'stone', terrainReqDistM: 15, anywhereOnMap: true, maxLevel: 3, buildable: true, recipe: { inputs: {}, outputs: { stone: 1 }, cycleS: 4.8 } },
-  farm:        { id: 'farm',        branch: 'food',      modelKind: 'farm_l1',        cost: { gold: 40, timber: 10 }, maxHp: 250, workers: 1, radiusM: 5.2, terrainReq: 'openRear', farmReachBonus: true, maxLevel: 3, buildable: true },
-  fisher:      { id: 'fisher',      branch: 'food',      modelKind: 'fisher_l1',      cost: { gold: 40, timber: 10 }, maxHp: 250, workers: 1, radiusM: 4.5, terrainReq: 'lake', terrainReqDistM: 16, maxLevel: 3, buildable: true },
-  windmill:    { id: 'windmill',    branch: 'food',      modelKind: 'windmill_l1',    cost: { gold: 70, timber: 30 }, maxHp: 300, workers: 1, radiusM: 4.6, terrainReq: 'any', maxLevel: 3, buildable: true, recipe: { inputs: { grain: 2 }, outputs: { flour: 2 }, cycleS: 6 } },
-  bakery:      { id: 'bakery',      branch: 'food',      modelKind: 'bakery_l1',      cost: { gold: 50, timber: 15, stone: 5 }, maxHp: 300, workers: 1, radiusM: 4.8, terrainReq: 'any', maxLevel: 3, buildable: true, recipe: { inputs: { flour: 1 }, outputs: { bread: 1 }, cycleS: 5 } },
-  brewery:     { id: 'brewery',     branch: 'food',      modelKind: 'brewery_l1',     cost: { gold: 60, timber: 25, stone: 10 }, maxHp: 300, workers: 1, radiusM: 4.8, terrainReq: 'any', maxLevel: 3, buildable: true, recipe: { inputs: { grain: 2 }, outputs: { ale: 2 }, cycleS: 8 } },
-  pigFarm:     { id: 'pigFarm',     branch: 'food',      modelKind: 'pig_farm_l1',    cost: { gold: 60, timber: 20 }, maxHp: 250, workers: 1, radiusM: 5.0, terrainReq: 'any', maxLevel: 3, buildable: true, recipe: { inputs: { grain: 1 }, outputs: { meat: 2, hides: 1 }, cycleS: 12 } },
-  butcher:     { id: 'butcher',     branch: 'food',      modelKind: 'butcher_l1',     cost: { gold: 60, timber: 15, stone: 10 }, maxHp: 300, workers: 1, radiusM: 4.6, terrainReq: 'any', maxLevel: 3, buildable: true, recipe: { inputs: { meat: 1 }, outputs: { sausages: 1 }, cycleS: 5 } },
-  vineyard:    { id: 'vineyard',    branch: 'food',      modelKind: 'vineyard_l1',    cost: { gold: 70, timber: 20 }, maxHp: 250, workers: 1, radiusM: 5.2, terrainReq: 'openRear', farmReachBonus: true, maxLevel: 3, buildable: true },
-  winery:      { id: 'winery',      branch: 'food',      modelKind: 'winery_l1',      cost: { gold: 90, timber: 20, stone: 20 }, maxHp: 300, workers: 1, radiusM: 5.0, terrainReq: 'any', maxLevel: 3, buildable: true, recipe: { inputs: { grapes: 3 }, outputs: { wine: 2 }, cycleS: 12 } },
-  tannery:     { id: 'tannery',     branch: 'craft',     modelKind: 'tannery_l1',     cost: { gold: 60, timber: 15, stone: 10 }, maxHp: 300, workers: 1, radiusM: 4.8, terrainReq: 'any', maxLevel: 3, buildable: true, recipe: { inputs: { hides: 1 }, outputs: { leatherArmour: 1 }, cycleS: 8 } },
-  ironMine:    { id: 'ironMine',    branch: 'materials', modelKind: 'iron_mine_l1',   cost: { gold: 80, timber: 25 }, maxHp: 300, workers: 1, radiusM: 4.8, terrainReq: 'ore', terrainReqDistM: 15, anywhereOnMap: true, maxLevel: 3, buildable: true, recipe: { inputs: {}, outputs: { ironOre: 1 }, cycleS: 6 } },
-  smelter:     { id: 'smelter',     branch: 'craft',     modelKind: 'smelter_l1',     cost: { gold: 90, timber: 20, stone: 30 }, maxHp: 350, workers: 1, radiusM: 5.0, terrainReq: 'any', maxLevel: 3, buildable: true, recipe: { inputs: { timber: 1, ironOre: 2 }, outputs: { iron: 2 }, cycleS: 9 } },
-  smithy:      { id: 'smithy',      branch: 'craft',     modelKind: 'smithy_l1',      cost: { gold: 80, timber: 20, stone: 20 }, maxHp: 350, workers: 1, radiusM: 5.0, terrainReq: 'any', maxLevel: 3, buildable: true, recipe: { inputs: { timber: 1, iron: 1 }, outputs: { weapons: 1 }, cycleS: 7 } },
-  armourer:    { id: 'armourer',    branch: 'craft',     modelKind: 'armourer_l1',    cost: { gold: 120, timber: 20, stone: 40 }, maxHp: 350, workers: 1, radiusM: 5.0, terrainReq: 'any', maxLevel: 3, buildable: true, recipe: { inputs: { iron: 2 }, outputs: { mail: 1 }, cycleS: 12 } },
-  fletcher:    { id: 'fletcher',    branch: 'craft',     modelKind: 'fletcher_l1',    cost: { gold: 60, timber: 20 }, maxHp: 250, workers: 1, radiusM: 4.5, terrainReq: 'any', maxLevel: 3, buildable: true, recipe: { inputs: { timber: 1 }, outputs: { bows: 1 }, cycleS: 8 } },
-  stable:      { id: 'stable',      branch: 'craft',     modelKind: 'stable_l1',      cost: { gold: 100, timber: 40, stone: 10 }, maxHp: 300, workers: 1, radiusM: 5.8, terrainReq: 'any', maxLevel: 3, buildable: true, recipe: { inputs: { grain: 3 }, outputs: { horses: 1 }, cycleS: 25 } },
-  barracks:    { id: 'barracks',    branch: 'military',  modelKind: 'barracks_l1',    cost: { gold: 100, timber: 30, stone: 30 }, maxHp: 450, workers: 0, radiusM: 6.5, terrainReq: 'any', maxLevel: 3, buildable: true },
-  gunFoundry:  { id: 'gunFoundry',  branch: 'military',  modelKind: 'gun_foundry_l1', cost: { gold: 150, timber: 40, stone: 60 }, maxHp: 500, workers: 1, radiusM: 6.0, terrainReq: 'any', maxLevel: 3, buildable: true },
-  watchtower:  { id: 'watchtower',  branch: 'military',  modelKind: 'watchtower_l1',  cost: { gold: 40, timber: 15, stone: 60 }, maxHp: 900, workers: 0, radiusM: 3.4, terrainReq: 'any', anywhereOnMap: true, maxLevel: 3, buildable: true },
+  keep:        { id: 'keep',        branch: 'town',      modelKind: 'keep_l1',        cost: {}, maxHp: 1800, workers: 0, radiusM: 7.5, terrainReq: 'any', maxLevel: 5, buildable: false },
+  house:       { id: 'house',       branch: 'town',      modelKind: 'house_l1',       cost: { gold: 40, timber: 10 }, maxHp: 250, workers: 0, radiusM: 4.5, terrainReq: 'any', maxLevel: 5, buildable: true },
+  storehouse:  { id: 'storehouse',  branch: 'town',      modelKind: 'storehouse_l1',  cost: { gold: 60, timber: 40, stone: 10 }, maxHp: 400, workers: 1, radiusM: 5.5, terrainReq: 'any', maxLevel: 5, buildable: true },
+  market:      { id: 'market',      branch: 'town',      modelKind: 'market_l1',      cost: { gold: 80, timber: 40, stone: 20 }, maxHp: 400, workers: 1, radiusM: 6.0, terrainReq: 'any', maxLevel: 5, buildable: true },
+  tavern:      { id: 'tavern',      branch: 'town',      modelKind: 'tavern_l1',      cost: { gold: 80, timber: 30, stone: 10 }, maxHp: 300, workers: 1, radiusM: 5.0, terrainReq: 'any', maxLevel: 5, buildable: true, recipe: { inputs: { ale: 1 }, outputs: { gold: 2 }, cycleS: 5 } },
+  chapel:      { id: 'chapel',      branch: 'town',      modelKind: 'chapel_l1',      cost: { gold: 120, timber: 20, stone: 50 }, maxHp: 450, workers: 1, radiusM: 5.8, terrainReq: 'any', maxLevel: 5, buildable: true },
+  well:        { id: 'well',        branch: 'town',      modelKind: 'well_l1',        cost: { gold: 25, stone: 15 }, maxHp: 200, workers: 1, radiusM: 2.8, terrainReq: 'any', maxLevel: 5, buildable: true },
+  cathedral:   { id: 'cathedral',   branch: 'town',      modelKind: 'chapel_l1',      cost: { gold: 900, planks: 120, stone: 500 }, maxHp: 2400, workers: 0, radiusM: 7.2, terrainReq: 'any', keepLevel: 3, unique: true, buildBuilderS: 240, maxLevel: 1, buildable: true },
+  townHall:    { id: 'townHall',    branch: 'town',      modelKind: 'market_l1',      cost: { gold: 1500, planks: 200, stone: 500, iron: 40 }, maxHp: 2600, workers: 0, radiusM: 6.8, terrainReq: 'any', keepLevel: 4, unique: true, buildBuilderS: 240, maxLevel: 1, buildable: true },
+  manufactory: { id: 'manufactory', branch: 'town',      modelKind: 'smelter_l1',     cost: { gold: 2400, planks: 300, stone: 600, iron: 160 }, maxHp: 2800, workers: 0, radiusM: 7.2, terrainReq: 'any', keepLevel: 5, unique: true, buildBuilderS: 300, maxLevel: 1, buildable: true },
+  woodcutter:  { id: 'woodcutter',  branch: 'materials', modelKind: 'woodcutter_l1',  cost: { gold: 30 }, maxHp: 250, workers: 1, radiusM: 4.5, terrainReq: 'forest', terrainReqDistM: 26, anywhereOnMap: true, maxLevel: 5, buildable: true },
+  sawmill:     { id: 'sawmill',     branch: 'materials', modelKind: 'sawmill_l1',     cost: { gold: 60, timber: 30, stone: 10 }, maxHp: 300, workers: 1, radiusM: 5.0, terrainReq: 'any', maxLevel: 5, buildable: true, recipe: { inputs: { timber: 2 }, outputs: { planks: 2 }, cycleS: 6 } },
+  forester:    { id: 'forester',    branch: 'materials', modelKind: 'forester_l1',    cost: { gold: 35, timber: 10 }, maxHp: 250, workers: 1, radiusM: 4.2, terrainReq: 'forest', terrainReqDistM: 26, maxLevel: 5, buildable: true },
+  hunter:      { id: 'hunter',      branch: 'food',      modelKind: 'hunter_l1',      cost: { gold: 40, timber: 10 }, maxHp: 250, workers: 1, radiusM: 4.2, terrainReq: 'forest', terrainReqDistM: 26, maxLevel: 5, buildable: true, recipe: { inputs: {}, outputs: { meat: 1, hides: 1 }, cycleS: 14 } },
+  quarry:      { id: 'quarry',      branch: 'materials', modelKind: 'quarry_l1',      cost: { gold: 40, timber: 10 }, maxHp: 300, workers: 1, radiusM: 4.8, terrainReq: 'stone', terrainReqDistM: 15, anywhereOnMap: true, maxLevel: 5, buildable: true, recipe: { inputs: {}, outputs: { stone: 1 }, cycleS: 4.8 } },
+  farm:        { id: 'farm',        branch: 'food',      modelKind: 'farm_l1',        cost: { gold: 40, timber: 10 }, maxHp: 250, workers: 1, radiusM: 5.2, terrainReq: 'openRear', farmReachBonus: true, maxLevel: 5, buildable: true },
+  fisher:      { id: 'fisher',      branch: 'food',      modelKind: 'fisher_l1',      cost: { gold: 40, timber: 10 }, maxHp: 250, workers: 1, radiusM: 4.5, terrainReq: 'lake', terrainReqDistM: 16, maxLevel: 5, buildable: true },
+  windmill:    { id: 'windmill',    branch: 'food',      modelKind: 'windmill_l1',    cost: { gold: 70, timber: 30 }, maxHp: 300, workers: 1, radiusM: 4.6, terrainReq: 'any', maxLevel: 5, buildable: true, recipe: { inputs: { grain: 2 }, outputs: { flour: 2 }, cycleS: 6 } },
+  bakery:      { id: 'bakery',      branch: 'food',      modelKind: 'bakery_l1',      cost: { gold: 50, timber: 15, stone: 5 }, maxHp: 300, workers: 1, radiusM: 4.8, terrainReq: 'any', maxLevel: 5, buildable: true, recipe: { inputs: { flour: 1 }, outputs: { bread: 1 }, cycleS: 5 } },
+  brewery:     { id: 'brewery',     branch: 'food',      modelKind: 'brewery_l1',     cost: { gold: 60, timber: 25, stone: 10 }, maxHp: 300, workers: 1, radiusM: 4.8, terrainReq: 'any', maxLevel: 5, buildable: true, recipe: { inputs: { grain: 2 }, outputs: { ale: 2 }, cycleS: 8 } },
+  pigFarm:     { id: 'pigFarm',     branch: 'food',      modelKind: 'pig_farm_l1',    cost: { gold: 60, timber: 20 }, maxHp: 250, workers: 1, radiusM: 5.0, terrainReq: 'any', maxLevel: 5, buildable: true, recipe: { inputs: { grain: 1 }, outputs: { meat: 2, hides: 1 }, cycleS: 12 } },
+  butcher:     { id: 'butcher',     branch: 'food',      modelKind: 'butcher_l1',     cost: { gold: 60, timber: 15, stone: 10 }, maxHp: 300, workers: 1, radiusM: 4.6, terrainReq: 'any', maxLevel: 5, buildable: true, recipe: { inputs: { meat: 1 }, outputs: { sausages: 1 }, cycleS: 5 } },
+  vineyard:    { id: 'vineyard',    branch: 'food',      modelKind: 'vineyard_l1',    cost: { gold: 70, timber: 20 }, maxHp: 250, workers: 1, radiusM: 5.2, terrainReq: 'openRear', farmReachBonus: true, maxLevel: 5, buildable: true },
+  winery:      { id: 'winery',      branch: 'food',      modelKind: 'winery_l1',      cost: { gold: 90, timber: 20, stone: 20 }, maxHp: 300, workers: 1, radiusM: 5.0, terrainReq: 'any', maxLevel: 5, buildable: true, recipe: { inputs: { grapes: 3 }, outputs: { wine: 2 }, cycleS: 12 } },
+  tannery:     { id: 'tannery',     branch: 'craft',     modelKind: 'tannery_l1',     cost: { gold: 60, timber: 15, stone: 10 }, maxHp: 300, workers: 1, radiusM: 4.8, terrainReq: 'any', maxLevel: 5, buildable: true, recipe: { inputs: { hides: 1 }, outputs: { leatherArmour: 1 }, cycleS: 8 } },
+  ironMine:    { id: 'ironMine',    branch: 'materials', modelKind: 'iron_mine_l1',   cost: { gold: 80, timber: 25 }, maxHp: 300, workers: 1, radiusM: 4.8, terrainReq: 'ore', terrainReqDistM: 15, anywhereOnMap: true, maxLevel: 5, buildable: true, recipe: { inputs: {}, outputs: { ironOre: 1 }, cycleS: 6 } },
+  smelter:     { id: 'smelter',     branch: 'craft',     modelKind: 'smelter_l1',     cost: { gold: 90, timber: 20, stone: 30 }, maxHp: 350, workers: 1, radiusM: 5.0, terrainReq: 'any', maxLevel: 5, buildable: true, recipe: { inputs: { timber: 1, ironOre: 2 }, outputs: { iron: 2 }, cycleS: 9 } },
+  smithy:      { id: 'smithy',      branch: 'craft',     modelKind: 'smithy_l1',      cost: { gold: 80, timber: 20, stone: 20 }, maxHp: 350, workers: 1, radiusM: 5.0, terrainReq: 'any', maxLevel: 5, buildable: true, recipe: { inputs: { timber: 1, iron: 1 }, outputs: { weapons: 1 }, cycleS: 7 } },
+  armourer:    { id: 'armourer',    branch: 'craft',     modelKind: 'armourer_l1',    cost: { gold: 120, timber: 20, stone: 40 }, maxHp: 350, workers: 1, radiusM: 5.0, terrainReq: 'any', maxLevel: 5, buildable: true, recipe: { inputs: { iron: 2 }, outputs: { mail: 1 }, cycleS: 12 } },
+  fletcher:    { id: 'fletcher',    branch: 'craft',     modelKind: 'fletcher_l1',    cost: { gold: 60, timber: 20 }, maxHp: 250, workers: 1, radiusM: 4.5, terrainReq: 'any', maxLevel: 5, buildable: true, recipe: { inputs: { timber: 1 }, outputs: { bows: 1 }, cycleS: 8 } },
+  stable:      { id: 'stable',      branch: 'craft',     modelKind: 'stable_l1',      cost: { gold: 100, timber: 40, stone: 10 }, maxHp: 300, workers: 1, radiusM: 5.8, terrainReq: 'any', maxLevel: 5, buildable: true, recipe: { inputs: { grain: 3 }, outputs: { horses: 1 }, cycleS: 25 } },
+  gunsmith:    { id: 'gunsmith',    branch: 'craft',     modelKind: 'smithy_l1',      cost: { gold: 160, planks: 30, stone: 40 }, maxHp: 400, workers: 1, radiusM: 5.2, terrainReq: 'any', keepLevel: 4, buildBuilderS: 24, maxLevel: 5, buildable: true, recipe: { inputs: { iron: 1, timber: 1 }, outputs: { muskets: 1 }, cycleS: 10 } },
+  powderMill:  { id: 'powderMill',  branch: 'craft',     modelKind: 'windmill_l1',    cost: { gold: 140, planks: 30, stone: 30 }, maxHp: 300, workers: 1, radiusM: 5.2, terrainReq: 'any', keepLevel: 4, buildBuilderS: 22, maxLevel: 5, buildable: true, recipe: { inputs: { timber: 2, stone: 1 }, outputs: { powder: 2 }, cycleS: 9 } },
+  barracks:    { id: 'barracks',    branch: 'military',  modelKind: 'barracks_l1',    cost: { gold: 100, timber: 30, stone: 30 }, maxHp: 450, workers: 0, radiusM: 6.5, terrainReq: 'any', maxLevel: 5, buildable: true },
+  gunFoundry:  { id: 'gunFoundry',  branch: 'military',  modelKind: 'gun_foundry_l1', cost: { gold: 150, timber: 40, stone: 60 }, maxHp: 500, workers: 1, radiusM: 6.0, terrainReq: 'any', maxLevel: 5, buildable: true },
+  watchtower:  { id: 'watchtower',  branch: 'military',  modelKind: 'watchtower_l1',  cost: { gold: 40, timber: 15, stone: 60 }, maxHp: 900, workers: 0, radiusM: 3.4, terrainReq: 'any', anywhereOnMap: true, maxLevel: 5, buildable: true },
   gate:        { id: 'gate',        branch: 'military',  modelKind: 'gate_l1',        cost: { timber: 20, stone: 12 }, maxHp: 400, workers: 0, radiusM: 3.2, terrainReq: 'any', anywhereOnMap: true, maxLevel: 1, buildable: true },
   ruin:        { id: 'ruin',        branch: 'town',      modelKind: 'ruin_house',     cost: {}, maxHp: 150, workers: 0, radiusM: 4.5, terrainReq: 'any', maxLevel: 1, buildable: false },
   campTent:    { id: 'campTent',    branch: 'military',  modelKind: 'camp_tent_l1',   cost: {}, maxHp: 220, workers: 0, radiusM: 3.8, terrainReq: 'any', maxLevel: 1, buildable: false },
@@ -665,6 +732,8 @@ export const GOOD_TO_WORKSHOP: Partial<Record<GoodId, BuildingTypeId>> = {
   mail: 'armourer',
   leatherArmour: 'tannery',
   horses: 'stable',
+  muskets: 'gunsmith',
+  powder: 'powderMill',
 };
 
 export function isEquipmentWorkshop(type: BuildingTypeId): boolean {
@@ -675,6 +744,11 @@ export function isEquipmentWorkshop(type: BuildingTypeId): boolean {
     type === 'tannery' ||
     type === 'stable'
   );
+}
+
+/** Era 2+ blackpowder armament workshops: produce continuously when idle, and surge +25% faster when Barracks orders are queued. */
+export function isFirearmWorkshop(type: BuildingTypeId): boolean {
+  return type === 'gunsmith' || type === 'powderMill';
 }
 
 export interface TransportLevelDef {
@@ -698,10 +772,20 @@ export const TRANSPORT_LEVELS: readonly TransportLevelDef[] = [
   { level: 3, capacity: 20, pace: 1.35, keepLevel: 2, seconds: 60, cost: { gold: 260, timber: 100, horses: 6 } },
 ];
 
-/** Tactical stance bonuses imported from FPS/marchland (Shield Wall & Pike Wall). */
+/** Tactical stance bonuses imported from FPS/marchland (Shield Wall, Pike Wall, and Era 2–3 Volley Fire). */
 export const STANCES = {
   shieldWall: { arrowBlockMul: 2.0, speedMul: 0.65, defenceBonus: 1 },
   pikeWall: { antiCavMul: 2.0, defenceBonus: 3, speedMul: 0.35, negatesFrontalCharge: true },
+  volleyFire: { rangeMul: 0.9, moraleShockBonus: 1.2, cadenceStaggerFrac: 0.5, accuracyBonus: 1.08 },
+} as const;
+
+/** Hollow Infantry Square formation (360-degree anti-cavalry defense, slow movement, vulnerable to artillery). */
+export const SQUARE_FORMATION = {
+  speedMul: 0.35,
+  reloadMul: 1.54, // ~35% lower fire rate while packed in hollow square
+  antiCavMul: 1.8,
+  antiCavFlatBonus: 6,
+  siegeDamageMul: 1.4,
 } as const;
 
 /** Carrier goods priority weights, cart lane spacing, and Keep loading bays (FPS/marchland). */
@@ -722,9 +806,15 @@ export type UnitTypeId =
   | 'lightCav'
   | 'heavyCav'
   | 'cannon'
-  | 'mortar';
+  | 'mortar'
+  | 'musketeers'
+  | 'cuirassiers'
+  | 'dragoons'
+  | 'lineInfantry'
+  | 'riflemen'
+  | 'hussars';
 
-export const ALL_UNIT_TYPES: readonly UnitTypeId[] = [
+export const MEDIEVAL_UNIT_TYPES: readonly UnitTypeId[] = [
   'militia',
   'pikemen',
   'archers',
@@ -737,13 +827,23 @@ export const ALL_UNIT_TYPES: readonly UnitTypeId[] = [
   'mortar',
 ];
 
+export const ALL_UNIT_TYPES: readonly UnitTypeId[] = [
+  ...MEDIEVAL_UNIT_TYPES,
+  'musketeers',
+  'cuirassiers',
+  'dragoons',
+  'lineInfantry',
+  'riflemen',
+  'hussars',
+];
+
 export type UnitClass = 'infantry' | 'ranged' | 'cavalry' | 'siege';
 
 export interface UnitDef {
   readonly id: UnitTypeId;
   readonly unitClass: UnitClass;
   readonly visualArchetype: 'swordsman' | 'archer' | 'citizen';
-  /** Required Barracks level (0 = Keep, 1–3 = Barracks, gunFoundryLevel for artillery). */
+  /** Required Barracks level (0 = Keep, 1–3 = Era 1, 4 = Era 2, 5 = Era 3; gunFoundryLevel for artillery). */
   readonly barracksLevel: number;
   readonly gunFoundryLevel: number;
   /** Number of fighting models (guns for artillery) and townspeople crew drawn from town. */
@@ -766,13 +866,15 @@ export interface UnitDef {
   readonly runSpeedMs: number;
   /** Front-arc missile shield block probability (0..0.80). */
   readonly shieldBlock: number;
-  /** Bonus melee attack against cavalry (pikemen +8, halberdiers +6). */
+  /** Bonus melee attack against cavalry (pikemen +8, halberdiers +6, lineInfantry +6). */
   readonly antiCavBonus: number;
   /** Melee weapon reach (m). */
   readonly weaponReachM: number;
   /** Cavalry/infantry charge attack bonus & morale shock. */
   readonly chargeAttackBonus: number;
   readonly chargeMoraleShock: number;
+  /** True for firearm units (musket ball pierces shields & armour, gunshot & smoke FX). */
+  readonly firearm?: boolean;
   /** Ranged / siege weapon parameters (undefined for pure melee). */
   readonly ranged?: {
     readonly minRangeM: number;
@@ -783,22 +885,23 @@ export interface UnitDef {
     readonly splashRadiusM: number;
     readonly buildingDamage: number;
     readonly projectileSpeedMs: number;
-    readonly kind: 'arrow' | 'bolt' | 'cannonball' | 'mortar';
+    /** Accuracy multiplier relative to baseline firearm/ranged spread (< 1 = tighter aim, e.g. riflemen 0.6). */
+    readonly spreadFactor?: number;
+    readonly kind: 'arrow' | 'bolt' | 'cannonball' | 'mortar' | 'musketball';
   };
   /** Militia home-defence radius limit (115 m, no building attacks). */
   readonly homeDefenceRadiusM?: number;
-  /** Valid refit target types (docs/UNITS.md §5). */
+  /** Valid refit target types across all eras (marchland REARM.paths). */
   readonly refitTargets: readonly UnitTypeId[];
   /** Approximate gold-equivalent cost for balance-matrix cheaper-counter verification. */
   readonly valueGold: number;
 }
 
 /**
- * Canonical 10 Marchland regiment types (imported & tuned from FPS/marchland):
- *   a) Milicja: dzida i tarcza
- *   b) Jednostki skórzane: pikinierzy (pika i mniejsza tarcza), łucznicy, kusznicy, lekka jazda (piki, miecze i tarcze)
- *   c) Jednostki ciężkozbrojne: miecznicy (pełna zbroja, miecz i tarcza), halabardnicy/lancknechci (pełna zbroja, długa pika i duża tarcza), rycerze ciężkozbrojni (kopia, miecz i tarcza)
- *   + Artyleria: działo polowe, moździerz
+ * Canonical 16 Marchland regiment types across 3 Ages (imported & tuned from anbow1/marchland):
+ *   Era 1 (Middle Ages): militia, pikemen, archers, swordsmen, halberdiers, crossbowmen, lightCav, heavyCav, cannon, mortar
+ *   Era 2 (Early Modern, Barracks L4): musketeers, cuirassiers, dragoons
+ *   Era 3 (19th Century, Barracks L5): lineInfantry, riflemen, hussars
  */
 export const UNIT_DEFS: Record<UnitTypeId, UnitDef> = {
   militia: {
@@ -808,7 +911,7 @@ export const UNIT_DEFS: Record<UnitTypeId, UnitDef> = {
     hp: 24, attack: 4, defence: 5, shieldDefence: 1, armour: 0.0, meleeDamage: 4, morale: 45,
     walkSpeedMs: 1.4, runSpeedMs: 3.1, shieldBlock: 0.20, antiCavBonus: 0, weaponReachM: 1.6,
     chargeAttackBonus: 1, chargeMoraleShock: 1, homeDefenceRadiusM: 115,
-    refitTargets: ['pikemen', 'archers', 'swordsmen', 'halberdiers', 'crossbowmen'],
+    refitTargets: ['pikemen', 'archers', 'swordsmen', 'halberdiers', 'crossbowmen', 'musketeers', 'lineInfantry', 'riflemen'],
     valueGold: 54,
   },
   pikemen: {
@@ -818,7 +921,7 @@ export const UNIT_DEFS: Record<UnitTypeId, UnitDef> = {
     hp: 30, attack: 6, defence: 7, shieldDefence: 1.5, armour: 0.20, meleeDamage: 5, morale: 60,
     walkSpeedMs: 1.4, runSpeedMs: 2.9, shieldBlock: 0.35, antiCavBonus: 8, weaponReachM: 3.0,
     chargeAttackBonus: 1, chargeMoraleShock: 2,
-    refitTargets: ['halberdiers', 'swordsmen'],
+    refitTargets: ['halberdiers', 'swordsmen', 'musketeers', 'lineInfantry'],
     valueGold: 278,
   },
   archers: {
@@ -829,7 +932,7 @@ export const UNIT_DEFS: Record<UnitTypeId, UnitDef> = {
     walkSpeedMs: 1.4, runSpeedMs: 3.1, shieldBlock: 0.0, antiCavBonus: 0, weaponReachM: 1.4,
     chargeAttackBonus: 0, chargeMoraleShock: 0,
     ranged: { minRangeM: 6, maxRangeM: 80, damage: 20, armorPierce: 0.0, reloadS: 6, splashRadiusM: 0, buildingDamage: 1.5, projectileSpeedMs: 45, kind: 'arrow' },
-    refitTargets: ['crossbowmen'],
+    refitTargets: ['crossbowmen', 'musketeers', 'riflemen'],
     valueGold: 254,
   },
   swordsmen: {
@@ -839,7 +942,7 @@ export const UNIT_DEFS: Record<UnitTypeId, UnitDef> = {
     hp: 36, attack: 9, defence: 9, shieldDefence: 2, armour: 0.40, meleeDamage: 7, morale: 75,
     walkSpeedMs: 1.4, runSpeedMs: 2.7, shieldBlock: 0.35, antiCavBonus: 0, weaponReachM: 1.6,
     chargeAttackBonus: 2, chargeMoraleShock: 3,
-    refitTargets: ['halberdiers'],
+    refitTargets: ['halberdiers', 'musketeers', 'lineInfantry'],
     valueGold: 378,
   },
   halberdiers: {
@@ -849,7 +952,7 @@ export const UNIT_DEFS: Record<UnitTypeId, UnitDef> = {
     hp: 34, attack: 10, defence: 6, shieldDefence: 0, armour: 0.35, meleeDamage: 10, morale: 70,
     walkSpeedMs: 1.4, runSpeedMs: 2.7, shieldBlock: 0.0, antiCavBonus: 5, weaponReachM: 2.3,
     chargeAttackBonus: 2, chargeMoraleShock: 3,
-    refitTargets: ['swordsmen'],
+    refitTargets: ['swordsmen', 'musketeers', 'lineInfantry'],
     valueGold: 388,
   },
   crossbowmen: {
@@ -860,7 +963,7 @@ export const UNIT_DEFS: Record<UnitTypeId, UnitDef> = {
     walkSpeedMs: 1.4, runSpeedMs: 2.9, shieldBlock: 0.30, antiCavBonus: 0, weaponReachM: 1.4,
     chargeAttackBonus: 0, chargeMoraleShock: 0,
     ranged: { minRangeM: 6, maxRangeM: 70, damage: 30, armorPierce: 0.60, reloadS: 10, splashRadiusM: 0, buildingDamage: 2.0, projectileSpeedMs: 60, kind: 'bolt' },
-    refitTargets: [],
+    refitTargets: ['musketeers', 'riflemen'],
     valueGold: 308,
   },
   lightCav: {
@@ -870,7 +973,7 @@ export const UNIT_DEFS: Record<UnitTypeId, UnitDef> = {
     hp: 40, attack: 7, defence: 5, shieldDefence: 1, armour: 0.20, meleeDamage: 6, morale: 65,
     walkSpeedMs: 3.6, runSpeedMs: 8.5, shieldBlock: 0.20, antiCavBonus: 0, weaponReachM: 1.9,
     chargeAttackBonus: 8, chargeMoraleShock: 9,
-    refitTargets: ['heavyCav'],
+    refitTargets: ['heavyCav', 'dragoons', 'hussars'],
     valueGold: 380,
   },
   heavyCav: {
@@ -880,7 +983,7 @@ export const UNIT_DEFS: Record<UnitTypeId, UnitDef> = {
     hp: 52, attack: 10, defence: 9, shieldDefence: 2, armour: 0.45, meleeDamage: 8, morale: 85,
     walkSpeedMs: 3.6, runSpeedMs: 7.5, shieldBlock: 0.30, antiCavBonus: 0, weaponReachM: 2.1,
     chargeAttackBonus: 12, chargeMoraleShock: 15,
-    refitTargets: [],
+    refitTargets: ['cuirassiers', 'hussars'],
     valueGold: 480,
   },
   cannon: {
@@ -904,6 +1007,72 @@ export const UNIT_DEFS: Record<UnitTypeId, UnitDef> = {
     ranged: { minRangeM: 35, maxRangeM: 112, damage: 24, armorPierce: 0.50, reloadS: 17, splashRadiusM: 3.2, buildingDamage: 80, projectileSpeedMs: 50, kind: 'mortar' },
     refitTargets: [],
     valueGold: 294,
+  },
+  // ---- Era 2 · Early Modern (Keep 4, Barracks 4) ----
+  musketeers: {
+    id: 'musketeers', unitClass: 'ranged', visualArchetype: 'archer',
+    barracksLevel: 4, gunFoundryLevel: 0, count: 12, crewCount: 12,
+    cost: { gold: 110, muskets: 12, powder: 12, leatherArmour: 12 }, equipPerMan: { muskets: 1, powder: 1, leatherArmour: 1 },
+    hp: 28, attack: 5, defence: 5, armour: 0.20, meleeDamage: 4, morale: 60,
+    walkSpeedMs: 1.4, runSpeedMs: 3.0, shieldBlock: 0.0, antiCavBonus: 0, weaponReachM: 1.4,
+    chargeAttackBonus: 0, chargeMoraleShock: 0, firearm: true,
+    ranged: { minRangeM: 5, maxRangeM: 80, damage: 38, armorPierce: 0.75, reloadS: 12, splashRadiusM: 0, buildingDamage: 2.0, projectileSpeedMs: 150, spreadFactor: 1.3, kind: 'musketball' },
+    refitTargets: ['lineInfantry', 'riflemen'],
+    valueGold: 434,
+  },
+  cuirassiers: {
+    id: 'cuirassiers', unitClass: 'cavalry', visualArchetype: 'swordsman',
+    barracksLevel: 4, gunFoundryLevel: 0, count: 8, crewCount: 8,
+    cost: { gold: 190, horses: 8, weapons: 8, mail: 8, powder: 8 }, equipPerMan: { horses: 1, weapons: 1, mail: 1, powder: 1 },
+    hp: 54, attack: 10, defence: 9, armour: 0.45, meleeDamage: 8, morale: 85,
+    walkSpeedMs: 3.6, runSpeedMs: 7.6, shieldBlock: 0.25, antiCavBonus: 0, weaponReachM: 2.0,
+    chargeAttackBonus: 12, chargeMoraleShock: 14,
+    refitTargets: ['hussars'],
+    valueGold: 542,
+  },
+  dragoons: {
+    id: 'dragoons', unitClass: 'cavalry', visualArchetype: 'swordsman',
+    barracksLevel: 4, gunFoundryLevel: 0, count: 10, crewCount: 10,
+    cost: { gold: 130, horses: 10, muskets: 10, powder: 10, leatherArmour: 10 }, equipPerMan: { horses: 1, muskets: 1, powder: 1, leatherArmour: 1 },
+    hp: 44, attack: 7, defence: 6, armour: 0.20, meleeDamage: 5, morale: 70,
+    walkSpeedMs: 3.6, runSpeedMs: 8.0, shieldBlock: 0.0, antiCavBonus: 0, weaponReachM: 1.9,
+    chargeAttackBonus: 7, chargeMoraleShock: 6, firearm: true,
+    ranged: { minRangeM: 5, maxRangeM: 75, damage: 36, armorPierce: 0.70, reloadS: 11, splashRadiusM: 0, buildingDamage: 1.0, projectileSpeedMs: 150, spreadFactor: 1.4, kind: 'musketball' },
+    refitTargets: ['hussars'],
+    valueGold: 560,
+  },
+  // ---- Era 3 · 19th Century (Keep 5, Barracks 5) ----
+  lineInfantry: {
+    id: 'lineInfantry', unitClass: 'ranged', visualArchetype: 'archer',
+    barracksLevel: 5, gunFoundryLevel: 0, count: 12, crewCount: 12,
+    cost: { gold: 120, muskets: 12, powder: 12 }, equipPerMan: { muskets: 1, powder: 1 },
+    hp: 32, attack: 8, defence: 7, armour: 0.05, meleeDamage: 6, morale: 72,
+    walkSpeedMs: 1.4, runSpeedMs: 3.0, shieldBlock: 0.0, antiCavBonus: 6, weaponReachM: 1.9,
+    chargeAttackBonus: 2, chargeMoraleShock: 3, firearm: true,
+    ranged: { minRangeM: 5, maxRangeM: 90, damage: 36, armorPierce: 0.85, reloadS: 10, splashRadiusM: 0, buildingDamage: 2.0, projectileSpeedMs: 170, spreadFactor: 1.2, kind: 'musketball' },
+    refitTargets: ['riflemen'],
+    valueGold: 336,
+  },
+  riflemen: {
+    id: 'riflemen', unitClass: 'ranged', visualArchetype: 'archer',
+    barracksLevel: 5, gunFoundryLevel: 0, count: 12, crewCount: 12,
+    cost: { gold: 150, muskets: 12, powder: 12, iron: 12 }, equipPerMan: { muskets: 1, powder: 1, iron: 1 },
+    hp: 26, attack: 3, defence: 3, armour: 0.05, meleeDamage: 4, morale: 50,
+    walkSpeedMs: 1.4, runSpeedMs: 3.2, shieldBlock: 0.0, antiCavBonus: 0, weaponReachM: 1.4,
+    chargeAttackBonus: 0, chargeMoraleShock: 0, firearm: true,
+    ranged: { minRangeM: 5, maxRangeM: 130, damage: 36, armorPierce: 0.85, reloadS: 20, splashRadiusM: 0, buildingDamage: 1.0, projectileSpeedMs: 200, spreadFactor: 0.6, kind: 'musketball' },
+    refitTargets: ['lineInfantry'],
+    valueGold: 450,
+  },
+  hussars: {
+    id: 'hussars', unitClass: 'cavalry', visualArchetype: 'swordsman',
+    barracksLevel: 5, gunFoundryLevel: 0, count: 8, crewCount: 8,
+    cost: { gold: 150, horses: 8, weapons: 8 }, equipPerMan: { horses: 1, weapons: 1 },
+    hp: 46, attack: 10, defence: 7, armour: 0.10, meleeDamage: 7, morale: 90,
+    walkSpeedMs: 3.8, runSpeedMs: 9.2, shieldBlock: 0.0, antiCavBonus: 0, weaponReachM: 1.9,
+    chargeAttackBonus: 12, chargeMoraleShock: 12,
+    refitTargets: [],
+    valueGold: 358,
   },
 };
 
@@ -948,6 +1117,18 @@ export const COMBAT = {
   missileBaseAccuracy: 0.27,
   missileLooseReduction: 0.40,
   missileForestCover: 0.35,
+  /** Riflemen skirmishers ignore forest accuracy penalties and gain +15% cover when standing in woods. */
+  riflemenForestCoverBonus: 0.15,
+  /** Field blackpowder logistics (8 full volleys carried; auto-resupplied within 55 m of Keep/Storehouse/Barracks or via town powder stock). */
+  firearmMaxAmmoVolleys: 8,
+  firearmResupplyRadiusM: 55,
+  firearmResupplyIntervalS: 8,
+  firearmLowAmmoReloadMul: 1.8,
+  /** Dismounted Dragoons fight as steady foot musketeers (no anti-cav vulnerability, +25% accuracy, -20% reload time). */
+  dragoonDismountedWalkMs: 1.5,
+  dragoonDismountedRunMs: 3.1,
+  dragoonDismountedAccMul: 1.25,
+  dragoonDismountedReloadMul: 0.8,
   /** Morale recovery, rout & rally thresholds. */
   routThresholdMorale: 10,
   rallyThresholdMorale: 36,
@@ -973,13 +1154,13 @@ export const COMBAT = {
   /** Guard stance response radius (m) & Skirmish kite distance (m). */
   guardRadiusM: 12,
   skirmishKeepDistM: 32,
-  /** Strategic capture points (docs/GAMEPLAY.md §5). */
+  /** Strategic capture points (docs/GAMEPLAY.md §5 & marchland RULES.md §2). */
   captureRadiusM: 30,
   captureTimeS: 20,
   captureIncomePerMin: {
-    mine: { ironOre: 8 } as ResourceMap,
-    quarry: { stone: 10 } as ResourceMap,
-    village: { gold: 15, grain: 6 } as ResourceMap,
+    mine: { ironOre: 8, gold: 6 } as ResourceMap,
+    quarry: { stone: 10, gold: 6 } as ResourceMap,
+    village: { gold: 18, grain: 6 } as ResourceMap,
   },
 } as const;
 
@@ -1006,6 +1187,9 @@ export const CAMPAIGN = {
   m5ReliefTimeS: 900,
   m5BarracksSpawnS: 300,
   m5BreachStarTimeS: 600,
+  /** Mission 6: The Gunpowder Bastion (Era 2 siege & counter-battery). */
+  m6ReliefTimeS: 660,
+  m6BarracksSpawnS: 270,
   /** Defence mode: 25 min prep to first wave, escalating waves every 5 min (10 waves -> win at 75 min). */
   defenceFirstWaveS: 1500,
   defenceWaveIntervalS: 300,

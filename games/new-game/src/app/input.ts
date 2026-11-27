@@ -7,7 +7,7 @@
 // - Control groups (Ctrl+1..9 / 1..9 + double-tap center) and Camera bookmarks (Ctrl+F5..F8 / F5..F8)!
 
 import { Raycaster, Vector2, Vector3, type PerspectiveCamera } from 'three/webgpu';
-import { BUILDING_DEFS, UNIT_DEFS, WORLD, type BuildingTypeId } from '../config.ts';
+import { BUILDING_DEFS, UNIT_DEFS, type BuildingTypeId } from '../config.ts';
 import type { FormationGhostPreview, FormationGhostUnitPreview, PlacementGhostPreview } from '../render/combatFx.ts';
 import { countAliveSoldiers } from '../sim/combat.ts';
 import type { SimEngine } from '../sim/engine.ts';
@@ -354,7 +354,7 @@ export class RtsInputController {
         }
         const fx = origin.x + direction.x * hi;
         const fz = origin.z + direction.z * hi;
-        if (Math.abs(fx) > WORLD.halfSizeM || Math.abs(fz) > WORLD.halfSizeM) return null;
+        if (Math.abs(fx) > terrain.halfSizeM || Math.abs(fz) > terrain.halfSizeM) return null;
         return { x: fx, z: fz };
       }
       prevT = t;
@@ -372,12 +372,13 @@ export class RtsInputController {
     };
   }
 
-  private pickNearestRegiment(wx: number, wz: number, sideFilter?: 0 | 1, radiusM = 7.5): RegimentEntity | null {
+  private pickNearestRegiment(wx: number, wz: number, sideFilter?: 0 | 'enemy', radiusM = 7.5): RegimentEntity | null {
     const sim = this.cb.getSim();
     let best: RegimentEntity | null = null;
     let bestD = radiusM;
     for (const r of sim.state.regiments) {
-      if (sideFilter !== undefined && r.side !== sideFilter) continue;
+      if (sideFilter === 0 && r.side !== 0) continue;
+      if (sideFilter === 'enemy' && r.side === 0) continue;
       if (r.garrisonedInBuildingId !== null || countAliveSoldiers(r) === 0) continue;
       const d = Math.hypot(r.x - wx, r.z - wz);
       if (d < bestD) {
@@ -388,13 +389,14 @@ export class RtsInputController {
     return best;
   }
 
-  private pickNearestBuilding(wx: number, wz: number, sideFilter?: 0 | 1): number | null {
+  private pickNearestBuilding(wx: number, wz: number, sideFilter?: 0 | 'enemy'): number | null {
     const sim = this.cb.getSim();
     let bestId: number | null = null;
     let bestD = Infinity;
     for (const b of sim.state.buildings) {
       if (b.hp <= 0) continue;
-      if (sideFilter !== undefined && b.side !== sideFilter) continue;
+      if (sideFilter === 0 && b.side !== 0) continue;
+      if (sideFilter === 'enemy' && b.side === 0) continue;
       const rad = BUILDING_DEFS[b.type].radiusM + 2.5;
       const d = Math.hypot(b.x - wx, b.z - wz);
       if (d <= rad && d < bestD) {
@@ -412,7 +414,7 @@ export class RtsInputController {
     const ids = [...this.selectedRegimentIds];
 
     // 1. Enemy regiment under cursor -> attack / cavalry charge!
-    const enemyReg = this.pickNearestRegiment(wx, wz, 1, 8.5);
+    const enemyReg = this.pickNearestRegiment(wx, wz, 'enemy', 8.5);
     if (enemyReg) {
       for (const id of ids) {
         const reg = sim.state.regiments.find((r) => r.id === id);
@@ -431,7 +433,7 @@ export class RtsInputController {
     }
 
     // 2. Enemy building or wall under cursor -> siege attack!
-    const enemyBldId = this.pickNearestBuilding(wx, wz, 1);
+    const enemyBldId = this.pickNearestBuilding(wx, wz, 'enemy');
     if (enemyBldId !== null) {
       const b = sim.state.buildings.find((x) => x.id === enemyBldId)!;
       this.cb.onExecute({
@@ -446,8 +448,8 @@ export class RtsInputController {
     }
 
     const enemyWall =
-      sim.state.walls.find((w) => w.side === 1 && !w.destroyed && Math.hypot(w.x - wx, w.z - wz) < 5) ??
-      sim.state.gates.find((g) => g.side === 1 && !g.destroyed && Math.hypot(g.x - wx, g.z - wz) < 5);
+      sim.state.walls.find((w) => w.side !== 0 && !w.destroyed && Math.hypot(w.x - wx, w.z - wz) < 5) ??
+      sim.state.gates.find((g) => g.side !== 0 && !g.destroyed && Math.hypot(g.x - wx, g.z - wz) < 5);
     if (enemyWall) {
       this.cb.onExecute({
         type: 'issueOrder',
@@ -1239,7 +1241,7 @@ export class RtsInputController {
 
       // If troops are selected and user taps an enemy regiment directly, prioritize attacking it over nearby buildings
       if (this.selectedRegimentIds.size > 0) {
-        const enemyReg = this.pickNearestRegiment(pt.x, pt.z, 1, 10.0);
+        const enemyReg = this.pickNearestRegiment(pt.x, pt.z, 'enemy', 10.0);
         if (enemyReg) {
           this.issueContextOrderAt(enemyReg.x, enemyReg.z, false, false);
           return;

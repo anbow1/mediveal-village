@@ -10,8 +10,11 @@ import {
   CAMPAIGN,
   DIFFICULTY_SETTINGS,
   ECONOMY,
+  ERAS,
   SIM,
+  START_AGE,
   type BuildingTypeId,
+  type EraNumber,
   type GoodId,
 } from '../config.ts';
 import { getAiProductionMultiplier, getAiReactionIntervalS, stepAiForSide } from './ai.ts';
@@ -24,7 +27,9 @@ import { NavGrid } from './pathing.ts';
 import { TerrainField } from './terrain.ts';
 import { ForestGrid } from './trees.ts';
 import type {
+  AiPersonality,
   BuildingEntity,
+  BuildingLevel,
   CommandResult,
   Difficulty,
   PlacementRejectionReason,
@@ -169,7 +174,7 @@ export class SimEngine {
 
     if (restoredState) {
       this.state = structuredClone(restoredState);
-      this.forest = new ForestGrid(this.state.trees);
+      this.forest = new ForestGrid(this.state.trees, this.layout.terrainConfig.sizeM);
       this.rebuildNav();
       return;
     }
@@ -179,6 +184,16 @@ export class SimEngine {
     const missionId = mode === 'campaign' ? (options.missionId ?? 1) : null;
     const difficulty = options.difficulty ?? 'normal';
     const aiPersonality = options.aiPersonality ?? (['builder', 'raider', 'knight'] as const)[seed % 3]!;
+    const sideCount: 2 | 3 = this.layout.sideCount === 3 ? 3 : 2;
+    const startAge: EraNumber = mode === 'campaign' ? (missionId === 6 ? 2 : 1) : (options.startAge ?? 1);
+    const fastAges = Boolean(options.fastAges);
+    const side2 = createSideState(2, 'normal');
+    if (sideCount < 3) side2.absent = true;
+    const sides: [SideState, SideState, SideState] = [
+      createSideState(0, difficulty),
+      createSideState(1, 'normal'),
+      side2,
+    ];
 
     const state: SimWorldState = {
       mapId: options.mapId,
@@ -189,7 +204,8 @@ export class SimEngine {
       nextOrderId: 1,
       nextAlertId: 1,
       rngState: (seed * 2654435761) >>> 0 || 1,
-      sides: [createSideState(0, difficulty), createSideState(1, 'normal')],
+      sideCount,
+      sides,
       buildings: [],
       walls: [],
       gates: [],
@@ -240,6 +256,8 @@ export class SimEngine {
         missionId,
         difficulty,
         aiPersonality,
+        startAge,
+        fastAges,
         deadlineS: mode === 'defence' ? CAMPAIGN.defenceWinTimeS : null,
         waveIndex: 0,
         nextWaveTimeS: CAMPAIGN.defenceFirstWaveS,
@@ -262,6 +280,7 @@ export class SimEngine {
 
     const [pkx, pkz] = this.layout.playerKeepXZ;
     const [ekx, ekz] = this.layout.enemyCenterXZ;
+    const thirdKeepXZ = this.layout.thirdKeepXZ;
     // Seed stone & iron ore outcrops directly from shared MapLayoutSpec so 3D rock clusters, minimap & Quarry/Mine placement match 100%
     for (const o of this.layout.outcrops) {
       state.outcrops.push({ kind: o.kind, x: o.x, z: o.z });
@@ -274,18 +293,23 @@ export class SimEngine {
       z: number,
       yawRad: number,
       isFortressDonzon = false,
+      level: BuildingLevel = 1,
     ): BuildingEntity => {
       const def = BUILDING_DEFS[type];
+      const maxHp =
+        type === 'keep'
+          ? (ECONOMY.keepLevels[level - 1]?.maxHp ?? def.maxHp)
+          : Math.round(def.maxHp * (1 + (level - 1) * 0.25));
       const b: BuildingEntity = {
         id: state.nextEntityId++,
         side,
         type,
-        level: 1,
+        level,
         x,
         z,
         yawRad,
-        hp: def.maxHp,
-        maxHp: def.maxHp,
+        hp: maxHp,
+        maxHp,
         buildProgress: 1,
         buildCostNeeded: {},
         buildCostDelivered: {},
@@ -305,7 +329,7 @@ export class SimEngine {
         yardFullTimerS: 0,
         strips:
           type === 'farm' || type === 'vineyard'
-            ? Array.from({ length: ECONOMY.farmStripsByLevel[0] }, () => ({ phase: 'growing' as const, timerS: 20, growth01: 0.35 }))
+            ? Array.from({ length: ECONOMY.farmStripsByLevel[level - 1] ?? 1 }, () => ({ phase: 'growing' as const, timerS: 20, growth01: 0.35 }))
             : [],
         recruitQueue: [],
         fireCooldownS: 0,
@@ -320,6 +344,17 @@ export class SimEngine {
       }
       return b;
     };
+
+    const keepCoords: readonly (readonly [SideId, number, number])[] = thirdKeepXZ
+      ? [
+          [0, pkx, pkz],
+          [1, ekx, ekz],
+          [2, thirdKeepXZ[0], thirdKeepXZ[1]],
+        ]
+      : [
+          [0, pkx, pkz],
+          [1, ekx, ekz],
+        ];
 
     if (options.showcaseMode || mode === 'campaign') {
       // Populate from MapLayoutSpec buildings, walls & gates!
@@ -342,7 +377,15 @@ export class SimEngine {
         }
       }
       for (const w of this.layout.walls) {
-        const wSide: SideId = Math.hypot(w.x - pkx, w.z - pkz) < Math.hypot(w.x - ekx, w.z - ekz) ? 0 : 1;
+        let wSide: SideId = 0;
+        let bestD = Infinity;
+        for (const [ks, kx, kz] of keepCoords) {
+          const d = Math.hypot(w.x - kx, w.z - kz);
+          if (d < bestD) {
+            bestD = d;
+            wSide = ks;
+          }
+        }
         state.walls.push({
           id: state.nextEntityId++,
           side: wSide,
@@ -355,36 +398,94 @@ export class SimEngine {
         });
       }
 
-      // Ensure both sides have a Keep on Skirmish/Showcase; on Campaign M1-M4 player always has Keep
+      // Ensure player has a Keep; on Showcase ensure all sides have Keeps + starting regiments!
       if (!state.buildings.some((b) => b.side === 0 && b.type === 'keep')) {
-        addCompletedBuilding(0, 'keep', pkx, pkz, 0.15);
+        addCompletedBuilding(0, 'keep', pkx, pkz, thirdKeepXZ ? Math.atan2(-pkx, -pkz) : 0.15);
       }
       if (options.showcaseMode && mode !== 'campaign') {
-        // Spawn lively opposing medieval armies for immediate playable action!
-        spawnRegiment(state, 0, 'swordsmen', pkx + 88, pkz - 2, Math.PI * 0.5);
-        spawnRegiment(state, 0, 'pikemen', pkx + 88, pkz + 14, Math.PI * 0.5);
-        spawnRegiment(state, 0, 'archers', pkx + 68, pkz - 4, Math.PI * 0.5);
-        spawnRegiment(state, 0, 'lightCav', pkx + 68, pkz + 18, Math.PI * 0.5);
-        spawnRegiment(state, 1, 'swordsmen', ekx - 42, ekz - 2, -Math.PI * 0.5);
-        spawnRegiment(state, 1, 'crossbowmen', ekx - 28, ekz + 10, -Math.PI * 0.5);
-        spawnRegiment(state, 1, 'heavyCav', ekx - 40, ekz - 16, -Math.PI * 0.5);
         if (!state.buildings.some((b) => b.side === 1 && b.type === 'keep')) {
-          addCompletedBuilding(1, 'keep', ekx, ekz, -Math.PI * 0.5);
+          addCompletedBuilding(1, 'keep', ekx, ekz, thirdKeepXZ ? Math.atan2(-ekx, -ekz) : -Math.PI * 0.5);
+        }
+        if (thirdKeepXZ && !state.buildings.some((b) => b.side === 2 && b.type === 'keep')) {
+          addCompletedBuilding(2, 'keep', thirdKeepXZ[0], thirdKeepXZ[1], Math.atan2(-thirdKeepXZ[0], -thirdKeepXZ[1]));
+        }
+        if (thirdKeepXZ) {
+          for (const [ks, kx, kz] of keepCoords) {
+            const ang = Math.atan2(-kx, -kz);
+            const fx = Math.sin(ang);
+            const fz = Math.cos(ang);
+            const rx = Math.cos(ang);
+            const rz = -Math.sin(ang);
+            spawnRegiment(state, ks, 'swordsmen', kx + fx * 34 - rx * 8, kz + fz * 34 - rz * 8, ang);
+            spawnRegiment(state, ks, 'pikemen', kx + fx * 34 + rx * 8, kz + fz * 34 + rz * 8, ang);
+            spawnRegiment(state, ks, 'archers', kx + fx * 22, kz + fz * 22, ang);
+          }
+        } else {
+          // Spawn lively opposing medieval armies for immediate playable action!
+          spawnRegiment(state, 0, 'swordsmen', pkx + 88, pkz - 2, Math.PI * 0.5);
+          spawnRegiment(state, 0, 'pikemen', pkx + 88, pkz + 14, Math.PI * 0.5);
+          spawnRegiment(state, 0, 'archers', pkx + 68, pkz - 4, Math.PI * 0.5);
+          spawnRegiment(state, 0, 'lightCav', pkx + 68, pkz + 18, Math.PI * 0.5);
+          spawnRegiment(state, 1, 'swordsmen', ekx - 42, ekz - 2, -Math.PI * 0.5);
+          spawnRegiment(state, 1, 'crossbowmen', ekx - 28, ekz + 10, -Math.PI * 0.5);
+          spawnRegiment(state, 1, 'heavyCav', ekx - 40, ekz - 16, -Math.PI * 0.5);
         }
       }
       if (mode === 'campaign' && missionId !== null) {
         applyMissionSetup(state, missionId, options.carryOver);
       }
     } else {
-      // Pure minute-one Skirmish / Defence / Tutorial start: Keep + 8 residents + 340g / 90t / 40s / 40b!
-      addCompletedBuilding(0, 'keep', pkx, pkz, 0.15);
+      // Pure minute-one Skirmish / Defence / Tutorial start: Keep + 8 residents + starting stock!
+      addCompletedBuilding(0, 'keep', pkx, pkz, thirdKeepXZ ? Math.atan2(-pkx, -pkz) : 0.15);
       if (mode === 'skirmish') {
-        addCompletedBuilding(1, 'keep', ekx, ekz, -Math.PI * 0.5);
+        addCompletedBuilding(1, 'keep', ekx, ekz, thirdKeepXZ ? Math.atan2(-ekx, -ekz) : -Math.PI * 0.5);
+        if (thirdKeepXZ) {
+          addCompletedBuilding(2, 'keep', thirdKeepXZ[0], thirdKeepXZ[1], Math.atan2(-thirdKeepXZ[0], -thirdKeepXZ[1]));
+        }
       }
     }
 
     this.state = state;
-    this.forest = new ForestGrid(this.state.trees);
+    this.forest = new ForestGrid(this.state.trees, this.layout.terrainConfig.sizeM);
+
+    // Starting Age 2 / 3 boost (Skirmish / Defence / Tutorial / Showcase — never Campaign):
+    // upgrades every side's Keep, adds Era stock, and places an era-matched Barracks beside each Keep!
+    if (startAge > 1 && mode !== 'campaign') {
+      const targetKeepLevel = ERAS[startAge - 1]!.keepLevel as BuildingLevel;
+      const keepHp = ECONOMY.keepLevels[targetKeepLevel - 1]?.maxHp ?? BUILDING_DEFS.keep.maxHp;
+      const extraStock = START_AGE.stock[startAge - 1] ?? {};
+      for (const s of state.sides) {
+        if (s.absent) continue;
+        const keep = state.buildings.find((b) => b.side === s.side && b.type === 'keep' && b.hp > 0);
+        if (!keep) continue;
+        keep.level = targetKeepLevel;
+        keep.maxHp = keepHp;
+        keep.hp = keepHp;
+        for (const g of Object.keys(extraStock) as GoodId[]) {
+          s.stock[g] = (s.stock[g] ?? 0) + (extraStock[g] ?? 0);
+        }
+        const existingBar = state.buildings.find((b) => b.side === s.side && b.type === 'barracks' && b.hp > 0);
+        if (existingBar) {
+          existingBar.level = targetKeepLevel;
+        } else {
+          // Place a completed Barracks at the era's Keep level on the nearest legal site near the Keep
+          let placed = false;
+          for (let r = 18; r <= 42 && !placed; r += 6) {
+            for (let a = 0; a < 16; a++) {
+              const ang = keep.yawRad + (a / 16) * Math.PI * 2;
+              const bx = Math.round(keep.x + Math.sin(ang) * r);
+              const bz = Math.round(keep.z + Math.cos(ang) * r);
+              if (validateBuildingPlacement(state, s.side, 'barracks', bx, bz, keep.yawRad, this.terrain, this.forest, false) === 'ok') {
+                addCompletedBuilding(s.side, 'barracks', bx, bz, keep.yawRad, false, targetKeepLevel);
+                placed = true;
+                break;
+              }
+            }
+          }
+        }
+      }
+    }
+
     this.rebuildNav();
   }
 
@@ -430,29 +531,27 @@ export class SimEngine {
     const { navDirty: combatNavDirty } = stepCombat(this.state, dtS, this.terrain, this.nav);
     if (combatNavDirty) this.navDirty = true;
 
-    // Fair-economy AI (Skirmish & AI-vs-AI tests; respects reaction delay 6s / 3s / 1s!)
+    // Fair-economy AI (Skirmish & AI-vs-AI tests; supports 2 or 3 sides with distinct personalities!)
     if (!this.options.disableAi && this.state.scenario.mode === 'skirmish') {
       this.state.aiTimerS += dtS;
       const reactS = getAiReactionIntervalS(this.state.scenario.difficulty);
       if (this.state.aiTimerS >= reactS) {
         this.state.aiTimerS -= reactS;
-        stepAiForSide(
-          this.state,
-          1,
-          this.state.scenario.aiPersonality,
-          this.state.scenario.difficulty,
-          this.terrain,
-          this.nav,
-          this.forest,
-          () => {
-            this.navDirty = true;
-          },
-        );
-        if (this.aiControlsSide0) {
+        const personalities: readonly AiPersonality[] = ['builder', 'raider', 'knight'];
+        const p1Idx = Math.max(0, personalities.indexOf(this.state.scenario.aiPersonality));
+        for (const s of this.state.sides) {
+          if (s.absent) continue;
+          if (s.side === 0 && !this.aiControlsSide0) continue;
+          const pers: AiPersonality =
+            s.side === 0
+              ? 'builder'
+              : s.side === 1
+                ? this.state.scenario.aiPersonality
+                : personalities[(p1Idx + 1) % personalities.length]!;
           stepAiForSide(
             this.state,
-            0,
-            'builder',
+            s.side,
+            pers,
             this.state.scenario.difficulty,
             this.terrain,
             this.nav,
@@ -475,6 +574,7 @@ export class SimEngine {
       const p1Pop = countPopulation(this.state, 1).total;
       const p0Army = this.state.regiments.filter((r) => r.side === 0).reduce((s, r) => s + countAliveSoldiers(r), 0);
       const p1Army = this.state.regiments.filter((r) => r.side === 1).reduce((s, r) => s + countAliveSoldiers(r), 0);
+      const hasP2 = (this.state.sideCount ?? 2) >= 3;
       this.state.timeline.push({
         timeS: Math.round(this.state.timeS),
         p0Pop,
@@ -483,6 +583,13 @@ export class SimEngine {
         p1Pop,
         p1Army,
         p1Gold: Math.floor(this.state.sides[1].stock.gold),
+        ...(hasP2
+          ? {
+              p2Pop: countPopulation(this.state, 2).total,
+              p2Army: this.state.regiments.filter((r) => r.side === 2).reduce((s, r) => s + countAliveSoldiers(r), 0),
+              p2Gold: Math.floor(this.state.sides[2].stock.gold),
+            }
+          : {}),
       });
     }
 

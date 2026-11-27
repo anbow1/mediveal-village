@@ -29,7 +29,7 @@ import {
   type Node,
   type Scene,
 } from 'three/webgpu';
-import { abs, attribute, cos, Fn, int, ivec2, mix, normalLocal, sin, textureLoad, vec3, vec4 } from 'three/tsl';
+import { abs, attribute, cos, float, Fn, int, ivec2, max, min, mix, normalLocal, sin, textureLoad, vec3, vec4 } from 'three/tsl';
 import { BUILDING_DEFS, UNIT_DEFS, type BuildingTypeId, type GoodId, type QualityPreset, type UnitTypeId } from '../config.ts';
 import type { RegimentEntity, SimWorldState, SoldierEntity } from '../sim/types.ts';
 
@@ -144,7 +144,7 @@ export interface MarchlandUnitsHandles {
   readonly dispose: () => void;
 }
 
-const TEAM_COLORS = [new Color(0x2858a8), new Color(0xa82828)] as const;
+const TEAM_COLORS = [new Color(0x2858a8), new Color(0xa82828), new Color(0xc8971e)] as const;
 const UNIT_CAP = 260;
 const FOLK_CAP = 120;
 const CART_CAP = 160;
@@ -156,7 +156,8 @@ const SINK_S = 2.0;
 const BODY_SECONDS = 6.0;
 const WALK_CYCLE_M = 1.6;
 const RUN_CYCLE_M = 2.5;
-const GALLOP_FROM_MS = 1.8;
+const TROT_FROM_MS = 2.0;
+const GALLOP_FROM_MS = 4.2;
 const GALLOP_CYCLE_M = 3.0;
 const AT_EASE_AFTER_S = 5.0;
 const HOLD_AFTER_SHOT = 0.3;
@@ -173,7 +174,14 @@ const GOODS_CAP = 128;
 const DIGGER_BUILDINGS: ReadonlySet<BuildingTypeId> = new Set(['quarry', 'ironMine']);
 const HARVEST_BUILDINGS: ReadonlySet<BuildingTypeId> = new Set(['farm', 'vineyard']);
 const CHOP_BUILDINGS: ReadonlySet<BuildingTypeId> = new Set(['woodcutter', 'forester', 'sawmill', 'butcher']);
-const HAMMER_BUILDINGS: ReadonlySet<BuildingTypeId> = new Set(['smithy', 'armourer', 'smelter', 'gunFoundry']);
+const HAMMER_BUILDINGS: ReadonlySet<BuildingTypeId> = new Set([
+  'smithy',
+  'armourer',
+  'smelter',
+  'gunFoundry',
+  'gunsmith',
+  'manufactory',
+]);
 
 type GoodPropKind = 'lumber' | 'stone' | 'sack' | 'barrel' | 'bread' | 'meat' | 'arrows' | 'crate';
 const GOOD_PROP_KINDS: readonly GoodPropKind[] = [
@@ -214,6 +222,7 @@ function mapGoodToProp(g: GoodId): GoodPropKind {
     case 'wine':
     case 'ale':
     case 'fish':
+    case 'powder':
       return 'barrel';
     case 'bread':
       return 'bread';
@@ -222,6 +231,7 @@ function mapGoodToProp(g: GoodId): GoodPropKind {
       return 'meat';
     case 'bows':
     case 'weapons':
+    case 'muskets':
       return 'arrows';
     default:
       return 'crate';
@@ -290,6 +300,14 @@ function sanitizeNormals(normals: number[]): number[] {
   return out;
 }
 
+function teamColourNode(side: Node<'float'>): Node<'vec3'> {
+  const t0 = TEAM_COLORS[0];
+  const t1 = TEAM_COLORS[1];
+  const t2 = TEAM_COLORS[2];
+  const first = mix(vec3(t0.r, t0.g, t0.b), vec3(t1.r, t1.g, t1.b), min(side, float(1)));
+  return mix(first, vec3(t2.r, t2.g, t2.b), max(side.sub(1), float(0)));
+}
+
 function createSkinnedMaterial(bones: DataTexture, mounted = false): MeshStandardNodeMaterial {
   const m = new MeshStandardNodeMaterial({
     name: mounted ? 'MarchlandSkinnedHorseman' : 'MarchlandSkinnedFootman',
@@ -303,8 +321,6 @@ function createSkinnedMaterial(bones: DataTexture, mounted = false): MeshStandar
   const anim = attribute('aAnim', 'vec4');
   const side = attribute('aSide', 'float');
   const frame = attribute('aFrame', 'float');
-  const t0 = TEAM_COLORS[0];
-  const t1 = TEAM_COLORS[1];
 
   const row = (bone: Node<'float'>, r: number) =>
     textureLoad(bones, ivec2(int(bone).mul(3).add(r), int(frame)));
@@ -340,11 +356,7 @@ function createSkinnedMaterial(bones: DataTexture, mounted = false): MeshStandar
     normalLocal.assign(pose(sn));
     return pose(swung).add(place.xyz);
   })();
-  m.colorNode = mix(
-    attribute('color', 'vec3'),
-    mix(vec3(t0.r, t0.g, t0.b), vec3(t1.r, t1.g, t1.b), side),
-    surface.z,
-  );
+  m.colorNode = mix(attribute('color', 'vec3'), teamColourNode(side), surface.z);
   m.metalnessNode = surface.x;
   m.roughnessNode = surface.y;
   return m;
@@ -355,8 +367,6 @@ function createStaticUnitMaterial(): MeshStandardNodeMaterial {
   const surface = attribute('aSurface', 'vec3');
   const place = attribute('aPlace', 'vec4');
   const side = attribute('aSide', 'float');
-  const t0 = TEAM_COLORS[0];
-  const t1 = TEAM_COLORS[1];
 
   const turn = (v: Node<'vec3'>) => {
     const cy = cos(place.w);
@@ -368,11 +378,7 @@ function createStaticUnitMaterial(): MeshStandardNodeMaterial {
     normalLocal.assign(turn(vec3(attribute('normal', 'vec3')).add(vec3(0, 1e-5, 0)).normalize()));
     return turn(vec3(attribute('position', 'vec3'))).add(place.xyz);
   })();
-  m.colorNode = mix(
-    attribute('color', 'vec3'),
-    mix(vec3(t0.r, t0.g, t0.b), vec3(t1.r, t1.g, t1.b), side),
-    surface.z,
-  );
+  m.colorNode = mix(attribute('color', 'vec3'), teamColourNode(side), surface.z);
   m.metalnessNode = surface.x;
   m.roughnessNode = surface.y;
   return m;
@@ -878,6 +884,7 @@ function buildMountedPool(
   heavy: boolean,
   horse: RiggedModel,
   rider: BodyModel,
+  modern = false,
 ): SkinnedUnitPool | null {
   const named = (nm: string): Clip | null => horse.clips.find((c) => c.name === nm) ?? null;
   const idle = named('idle');
@@ -892,45 +899,49 @@ function buildMountedPool(
   const shY = rider.pivots.shoulderY + dy;
   const shZ = rider.pivots.shoulderZ + dz;
 
-  // Build rider + fitted surcoat + lance/pike + side sword + heraldic heater shield!
+  // Build rider + fitted surcoat + lance/pike + side sword + heraldic heater shield (medieval only; modern riders carry era kit!)
   const extras: RawVertBuf = { positions: [], normals: [], colours: [], surface: [], part: [] };
   const shieldPart: readonly [number, number, number, number] = [shY, shZ, -0.15, 0];
   const weaponPart: readonly [number, number, number, number] = [shY - 0.5, shZ - 0.1, 0.12, 1];
 
-  // Shield angled naturally along the rider's front-left shoulder/flank
-  pushHeaterShield(
-    extras,
-    -0.34,
-    sy - 0.04,
-    sz - 0.14,
-    heavy ? 0.44 : 0.36,
-    heavy ? 0.60 : 0.50,
-    shieldPart,
-    -0.62,
-  );
+  if (!modern) {
+    // Shield angled naturally along the rider's front-left shoulder/flank
+    pushHeaterShield(
+      extras,
+      -0.34,
+      sy - 0.04,
+      sz - 0.14,
+      heavy ? 0.44 : 0.36,
+      heavy ? 0.60 : 0.50,
+      shieldPart,
+      -0.62,
+    );
 
-  // Primary polearm: Heavy Knight = 3.35 m sculpted war lance with steel vamplate & swallowtail pennon; Light Cav = 2.55 m spear
-  const poleLen = heavy ? 3.35 : 2.55;
-  pushWarLance(extras, 0.33, shY - 0.42, sz - 0.14, poleLen, heavy, weaponPart);
+    // Primary polearm: Heavy Knight = 3.35 m sculpted war lance with steel vamplate & swallowtail pennon; Light Cav = 2.55 m spear
+    const poleLen = heavy ? 3.35 : 2.55;
+    pushWarLance(extras, 0.33, shY - 0.42, sz - 0.14, poleLen, heavy, weaponPart);
+  }
 
-  // Side arming sword in leather scabbard at left hip
+  // Side arming sword / saber in leather scabbard at left hip
   pushArmingSword(extras, -0.25, sy + 0.06, sz + 0.04, [0, 0, 0, 0]);
 
-  // Fitted surcoat over rider torso
+  // Fitted surcoat over rider torso (medieval knights/light cav)
   const coatTris: number[] = [];
-  for (let k = 0; k + 2 < rider.triangles.length; k += 3) {
-    const c0 = rider.triangles[k]!;
-    const c1 = rider.triangles[k + 1]!;
-    const c2 = rider.triangles[k + 2]!;
-    if (
-      [c0, c1, c2].every(
-        (v) =>
-          rider.limbs[v] === 0 &&
-          rider.positions[v * 3 + 1]! > rider.pivots.hipY - 0.22 &&
-          rider.positions[v * 3 + 1]! < rider.pivots.shoulderY - 0.03,
-      )
-    ) {
-      coatTris.push(c0, c1, c2);
+  if (!modern) {
+    for (let k = 0; k + 2 < rider.triangles.length; k += 3) {
+      const c0 = rider.triangles[k]!;
+      const c1 = rider.triangles[k + 1]!;
+      const c2 = rider.triangles[k + 2]!;
+      if (
+        [c0, c1, c2].every(
+          (v) =>
+            rider.limbs[v] === 0 &&
+            rider.positions[v * 3 + 1]! > rider.pivots.hipY - 0.22 &&
+            rider.positions[v * 3 + 1]! < rider.pivots.shoulderY - 0.03,
+        )
+      ) {
+        coatTris.push(c0, c1, c2);
+      }
     }
   }
 
@@ -984,14 +995,28 @@ function buildMountedPool(
     nor[cursor * 3] = rider.normals[v * 3]!;
     nor[cursor * 3 + 1] = rider.normals[v * 3 + 1]!;
     nor[cursor * 3 + 2] = rider.normals[v * 3 + 2]!;
-    // Light cavalry gets leather-brown armour tint; heavy knights keep polished steel plate!
-    const tintMul = heavy ? 1.0 : 0.72;
-    col[cursor * 3] = rider.colours[v * 3]! * (heavy ? 1.0 : 0.88);
-    col[cursor * 3 + 1] = rider.colours[v * 3 + 1]! * tintMul;
-    col[cursor * 3 + 2] = rider.colours[v * 3 + 2]! * (heavy ? 1.0 : 0.56);
-    surf[cursor * 3] = heavy ? rider.surface[v * 2]! : rider.surface[v * 2]! * 0.25;
-    surf[cursor * 3 + 1] = heavy ? rider.surface[v * 2 + 1]! : 0.82;
-    surf[cursor * 3 + 2] = 0;
+    if (modern) {
+      col[cursor * 3] = rider.colours[v * 3]!;
+      col[cursor * 3 + 1] = rider.colours[v * 3 + 1]!;
+      col[cursor * 3 + 2] = rider.colours[v * 3 + 2]!;
+      surf[cursor * 3] = rider.surface[v * 2]!;
+      surf[cursor * 3 + 1] = rider.surface[v * 2 + 1]!;
+      // Paint Era 2-3 rider torso coat in subtle faction colour so all 3 lords read cleanly!
+      const isTorso =
+        rider.limbs[v] === 0 &&
+        rider.positions[v * 3 + 1]! > rider.pivots.hipY - 0.08 &&
+        rider.positions[v * 3 + 1]! < rider.pivots.shoulderY - 0.02;
+      surf[cursor * 3 + 2] = isTorso && rider.surface[v * 2]! < 0.35 ? 0.65 : 0;
+    } else {
+      // Light cavalry gets leather-brown armour tint; heavy knights keep polished steel plate!
+      const tintMul = heavy ? 1.0 : 0.72;
+      col[cursor * 3] = rider.colours[v * 3]! * (heavy ? 1.0 : 0.88);
+      col[cursor * 3 + 1] = rider.colours[v * 3 + 1]! * tintMul;
+      col[cursor * 3 + 2] = rider.colours[v * 3 + 2]! * (heavy ? 1.0 : 0.56);
+      surf[cursor * 3] = heavy ? rider.surface[v * 2]! : rider.surface[v * 2]! * 0.25;
+      surf[cursor * 3 + 1] = heavy ? rider.surface[v * 2 + 1]! : 0.82;
+      surf[cursor * 3 + 2] = 0;
+    }
     const p = ARM_PARTS[rider.limbs[v] ?? 0]!;
     part[cursor * 4] = p[0];
     part[cursor * 4 + 1] = p[1];
@@ -1537,8 +1562,9 @@ export async function buildMarchlandUnits(
 ): Promise<MarchlandUnitsHandles | null> {
   const base = 'assets/marchland';
   const unitPools = new Map<UnitTypeId, SkinnedUnitPool>();
-  const engines = new Map<'cannon' | 'mortar', EnginePool>();
+  const engines = new Map<'cannon' | 'fieldgun' | 'mortar', EnginePool>();
   const folkPools: FolkPool[] = [];
+  let artilleryCrewPool: FolkPool | null = null;
   const goodMeshes = new Map<GoodPropKind, InstancedMesh>();
   let handcartMesh: InstancedMesh | null = null;
   let wagonMesh: InstancedMesh | null = null;
@@ -1562,7 +1588,7 @@ export async function buildMarchlandUnits(
             'townswoman-worker.json',
           ];
 
-  const totalSteps = 6 + 2 + 6 + folkFiles.length;
+  const totalSteps = 9 + 6 + 8 + folkFiles.length;
   let doneSteps = 0;
   const stepDone = () => {
     doneSteps++;
@@ -1590,6 +1616,10 @@ export async function buildMarchlandUnits(
     ['swordsmen', 'swordsman.json', false],
     // Halberdiers (Lancknechci): full plate + two-handed polearm (historically no shield!)
     ['halberdiers', 'halberdier.json', false],
+    // Ages (Era 2–3) firearm infantry
+    ['musketeers', 'musketeer.json', false],
+    ['lineInfantry', 'lineman.json', false],
+    ['riflemen', 'rifleman.json', false],
   ];
 
   await runLimited(footSpecs, 2, async ([kind, file, largeShield]) => {
@@ -1601,32 +1631,53 @@ export async function buildMarchlandUnits(
     stepDone();
   });
 
-  // Mounted units + draft horse share warhorse.json & rider.json
-  const [riderM, warhorseM] = await Promise.all([
+  // Mounted units + draft horse share warhorse.json & medieval/era riders (including Hospitaller knight_rider.json!)
+  const [riderM, knightRiderM, warhorseM, cuirassierM, dragoonM, hussarM] = await Promise.all([
     fetchJson<BodyModel>(`${base}/soldiers/rider.json`).finally(stepDone),
+    fetchJson<BodyModel>(`${base}/soldiers/knight_rider.json`).finally(stepDone),
     fetchJson<RiggedModel>(`${base}/soldiers/warhorse.json`).finally(stepDone),
+    fetchJson<BodyModel>(`${base}/soldiers/cuirassier_rider.json`).finally(stepDone),
+    fetchJson<BodyModel>(`${base}/soldiers/dragoon_rider.json`).finally(stepDone),
+    fetchJson<BodyModel>(`${base}/soldiers/hussar_rider.json`).finally(stepDone),
   ]);
   if (riderM && warhorseM) {
     const lc = buildMountedPool(scene, 'ML_Unit_lightCav', false, warhorseM, riderM);
     if (lc) unitPools.set('lightCav', lc);
-    const hc = buildMountedPool(scene, 'ML_Unit_heavyCav', true, warhorseM, riderM);
+    const heavyRider = knightRiderM ?? riderM;
+    const hc = buildMountedPool(scene, 'ML_Unit_heavyCav', true, warhorseM, heavyRider, Boolean(knightRiderM));
     if (hc) unitPools.set('heavyCav', hc);
   }
   if (warhorseM) {
+    if (cuirassierM) {
+      const cr = buildMountedPool(scene, 'ML_Unit_cuirassiers', true, warhorseM, cuirassierM, true);
+      if (cr) unitPools.set('cuirassiers', cr);
+    }
+    if (dragoonM) {
+      const dr = buildMountedPool(scene, 'ML_Unit_dragoons', false, warhorseM, dragoonM, true);
+      if (dr) unitPools.set('dragoons', dr);
+    }
+    if (hussarM) {
+      const hr = buildMountedPool(scene, 'ML_Unit_hussars', false, warhorseM, hussarM, true);
+      if (hr) unitPools.set('hussars', hr);
+    }
     draftHorsePool = buildDraftHorsePool(scene, warhorseM);
   }
 
-  // Small prop JSONs (cannons, mortars, handcarts, wagons, livestock pigs + 8 real 3D goods bundles)
-  const [cannonM, mortarM, handcartM, wagonM, pigM, goodsModels] = await Promise.all([
+  // Small prop JSONs (cannons, Era 2-3 fieldgun, mortars, handcarts, wagons, livestock pigs + 8 real 3D goods bundles + Era 2-3 artilleryman crew)
+  const [cannonM, fieldgunM, mortarM, handcartM, wagonM, pigM, goodsModels, artillerymanM] = await Promise.all([
     fetchJson<PropModel>(`${base}/props/cannon.json`).finally(stepDone),
+    fetchJson<PropModel>(`${base}/props/fieldgun.json`).finally(stepDone),
     fetchJson<PropModel>(`${base}/props/mortar.json`).finally(stepDone),
     fetchJson<PropModel>(`${base}/props/handcart.json`).finally(stepDone),
     fetchJson<PropModel>(`${base}/props/wagon.json`).finally(stepDone),
     fetchJson<PropModel>(`${base}/props/pig.json`).finally(stepDone),
     Promise.all(GOOD_PROP_KINDS.map((kind) => fetchJson<PropModel>(`${base}/props/goods/${kind}.json`))).finally(stepDone),
+    fetchJson<RiggedModel>(`${base}/soldiers/artilleryman.json`).finally(stepDone),
   ]);
   if (cannonM) engines.set('cannon', buildEnginePool(scene, 'ML_Engine_cannon', cannonM));
+  if (fieldgunM) engines.set('fieldgun', buildEnginePool(scene, 'ML_Engine_fieldgun', fieldgunM));
   if (mortarM) engines.set('mortar', buildEnginePool(scene, 'ML_Engine_mortar', mortarM));
+  if (artillerymanM) artilleryCrewPool = buildFolkPool(scene, 'ML_ArtilleryCrew', artillerymanM);
   if (handcartM) handcartMesh = buildPropMesh(scene, 'ML_Handcarts', handcartM, 0, 0, 0, 1.2, true);
   if (wagonM) wagonMesh = buildPropMesh(scene, 'ML_Wagons', wagonM, 1.0, 0, -0.3, 1.0, false);
   if (pigM) pigMesh = buildPropMesh(scene, 'ML_LivestockPigs', pigM, 0, 0, 0, 1.0, false);
@@ -1725,7 +1776,11 @@ export async function buildMarchlandUnits(
       if (speed > GALLOP_FROM_MS) {
         return cycle(h.gallop, strideM / ((h.gallop.travelM ?? 0) > 0.5 ? h.gallop.travelM! : GALLOP_CYCLE_M));
       }
-      if (isMoving) return cycle(h.walk, strideM / Math.max(0.5, h.walk.travelM ?? 1));
+      if (isMoving) {
+        // Intermediate trot gait (2.0..4.2 m/s): brisker 1.45x walk cadence distinct from slow walk & full gallop!
+        const trotMul = speed > TROT_FROM_MS ? 1.45 : 1.0;
+        return cycle(h.walk, (strideM * trotMul) / Math.max(0.5, h.walk.travelM ?? 1));
+      }
       const hurtS = simClockS - (s.hurtAtS ?? -1e9);
       const atEase = reg.outOfCombatS > AT_EASE_AFTER_S && (s.sinceAttackS ?? 99) > AT_EASE_AFTER_S && hurtS > AT_EASE_AFTER_S;
       return atEase && h.graze && s.slotIndex % 3 === 0 ? loop(h.graze) : loop(h.idle);
@@ -1768,6 +1823,15 @@ export async function buildMarchlandUnits(
     if (pool.draw && def.ranged) {
       const drawS = pool.draw.frames / pool.fps;
       const shooting = sinceAtk < def.ranged.reloadS * 1.6;
+      if (def.firearm) {
+        // 3-phase blackpowder cycle: fire recoil (handled above) -> lowered reload -> crisp shoulder aim (last 2.2 s)!
+        const aimWindowS = Math.max(drawS, 2.2);
+        if (shooting && s.rangedCooldownS < aimWindowS) {
+          const aimProgress = Math.max(0, Math.min(drawS, (aimWindowS - s.rangedCooldownS) * (drawS / aimWindowS)));
+          return at(pool.draw, aimProgress, pool.fps);
+        }
+        return pool.idle ? cycle(pool.idle, simClockS / (pool.idle.frames / pool.fps) + s.slotIndex * 0.37) : pool.guard;
+      }
       if (shooting && s.rangedCooldownS < drawS) {
         return at(pool.draw, drawS - s.rangedCooldownS, pool.fps);
       }
@@ -1775,7 +1839,7 @@ export async function buildMarchlandUnits(
     }
 
     if (reg.stance === 'shieldWall' && pool.shield) return pool.blockHeld;
-    if (reg.stance === 'pikeWall' || reg.formation === 'schiltron') return pool.reach;
+    if (reg.stance === 'pikeWall' || reg.formation === 'schiltron' || reg.formation === 'square') return pool.reach;
     const fighting = reg.outOfCombatS < AT_EASE_AFTER_S || sinceAtk < AT_EASE_AFTER_S || hurtS < AT_EASE_AFTER_S;
     if (!fighting && pool.idle) {
       return cycle(pool.idle, simClockS / (pool.idle.frames / pool.fps) + s.slotIndex * 0.37);
@@ -1791,10 +1855,18 @@ export async function buildMarchlandUnits(
     }
     lastSyncClockS = simClockS;
 
+    // Track each side's current Era (Keep L4 -> Era 2, Keep L5 -> Era 3) for Era 2-3 field guns & uniformed gunners!
+    const sideEra: [number, number, number] = [1, 1, 1];
+    for (const b of state.buildings) {
+      if (b.type === 'keep' && b.hp > 0) {
+        sideEra[b.side] = b.level >= 5 ? 3 : b.level >= 4 ? 2 : 1;
+      }
+    }
+
     // 1. Soldiers & Cavalry
     const unitCounts = new Map<UnitTypeId, number>();
     for (const k of unitPools.keys()) unitCounts.set(k, 0);
-    const engineCounts: Record<'cannon' | 'mortar', number> = { cannon: 0, mortar: 0 };
+    const engineCounts: Record<'cannon' | 'fieldgun' | 'mortar', number> = { cannon: 0, fieldgun: 0, mortar: 0 };
 
     const bldById = new Map<number, BuildingTypeId>();
     for (const b of state.buildings) bldById.set(b.id, b.type);
@@ -1804,13 +1876,15 @@ export async function buildMarchlandUnits(
       const def = UNIT_DEFS[reg.unitType];
 
       if (reg.unitType === 'cannon' || reg.unitType === 'mortar') {
-        const ep = engines.get(reg.unitType);
+        const useFieldGun = reg.unitType === 'cannon' && (sideEra[reg.side] ?? 1) >= 2 && engines.has('fieldgun');
+        const eKey: 'cannon' | 'fieldgun' | 'mortar' = useFieldGun ? 'fieldgun' : reg.unitType;
+        const ep = engines.get(eKey);
         if (!ep) continue;
         const pArr = ep.place.array as Float32Array;
         const sArr = ep.side.array as Float32Array;
         for (const s of reg.soldiers) {
           if (!s.alive) continue;
-          const idx = engineCounts[reg.unitType];
+          const idx = engineCounts[eKey];
           if (idx >= 48) break;
           const trKey = reg.id * 64 + s.slotIndex;
           updateTracker(soldierMotion, trKey, s.x, s.z, reg.currentSpeedMs, simClockS, 0.14, 0.06);
@@ -1827,12 +1901,15 @@ export async function buildMarchlandUnits(
           pArr[idx * 4 + 2] = gz;
           pArr[idx * 4 + 3] = s.yawRad + Math.PI;
           sArr[idx] = reg.side;
-          engineCounts[reg.unitType] = idx + 1;
+          engineCounts[eKey] = idx + 1;
         }
         continue;
       }
 
-      const pool = unitPools.get(reg.unitType);
+      // Dismounted Dragoons visually render on foot using the Musketeers pool!
+      const visualUnitType: UnitTypeId =
+        reg.unitType === 'dragoons' && reg.dismounted && unitPools.has('musketeers') ? 'musketeers' : reg.unitType;
+      const pool = unitPools.get(visualUnitType);
       if (!pool) continue;
       const pArr = pool.place.array as Float32Array;
       const aArr = pool.anim.array as Float32Array;
@@ -1842,7 +1919,7 @@ export async function buildMarchlandUnits(
       for (const s of reg.soldiers) {
         const deadS = s.deadS ?? 0;
         if (!s.alive && deadS >= BODY_SECONDS) continue;
-        const idx = unitCounts.get(reg.unitType) ?? 0;
+        const idx = unitCounts.get(visualUnitType) ?? 0;
         if (idx >= UNIT_CAP) break;
 
         let y = heightAt(s.x, s.z);
@@ -1861,8 +1938,14 @@ export async function buildMarchlandUnits(
         const sinceAtk = s.sinceAttackS ?? 99;
         const strikeAmt = s.alive && sinceAtk < STRIKE_S ? Math.sin((sinceAtk / STRIKE_S) * Math.PI) : 0;
 
+        // Rhythmic trot suspension lift between TROT_FROM_MS and GALLOP_FROM_MS!
+        const trotBob =
+          pool.mounted && s.alive && isMoving && speed > TROT_FROM_MS && speed <= GALLOP_FROM_MS
+            ? Math.abs(Math.sin(strideM * 3.1)) * 0.085
+            : 0;
+
         pArr[idx * 4] = s.x;
-        pArr[idx * 4 + 1] = y;
+        pArr[idx * 4 + 1] = y + trotBob;
         pArr[idx * 4 + 2] = s.z;
         // FPS/marchland soldier models face -Z; heading yawRad looks along (+sin, +cos)
         pArr[idx * 4 + 3] = s.yawRad + Math.PI;
@@ -1879,15 +1962,12 @@ export async function buildMarchlandUnits(
 
         sArr[idx] = reg.side;
         fArr[idx] = pickSoldierFrame(pool, reg, s, speed, isMoving, strideM, simClockS);
-        unitCounts.set(reg.unitType, idx + 1);
+        unitCounts.set(visualUnitType, idx + 1);
       }
     }
 
-    // 1b. Render garrisoned Archers / Crossbowmen visibly standing on Watchtower battlements (FPS/marchland writeGarrisons)!
-    const enemyKeepBySide = new Map<number, { x: number; z: number }>();
-    for (const b of state.buildings) {
-      if (b.type === 'keep' && b.hp > 0) enemyKeepBySide.set(b.side === 0 ? 1 : 0, { x: b.x, z: b.z });
-    }
+    // 1b. Render garrisoned Archers / Crossbowmen / Musketeers visibly standing on Watchtower battlements!
+    const standingKeeps = state.buildings.filter((b) => b.type === 'keep' && b.hp > 0);
     for (const b of state.buildings) {
       if (b.type !== 'watchtower' || b.hp <= 0 || b.buildProgress < 1) continue;
       if (b.garrisonCount <= 0 || !b.garrisonType) continue;
@@ -1897,9 +1977,19 @@ export async function buildMarchlandUnits(
       const reloadS = uDef.ranged?.reloadS ?? 6;
       const topY = heightAt(b.x, b.z) + 9.0;
 
-      // Aim toward nearest enemy regiment in range, else toward enemy Keep
-      let lookX = enemyKeepBySide.get(b.side)?.x ?? b.x + (b.side === 0 ? 50 : -50);
-      let lookZ = enemyKeepBySide.get(b.side)?.z ?? b.z;
+      // Aim toward nearest enemy regiment in range, else toward nearest enemy Keep
+      let lookX = b.x + Math.sin(b.yawRad) * 50;
+      let lookZ = b.z + Math.cos(b.yawRad) * 50;
+      let bestKeepD = Infinity;
+      for (const ek of standingKeeps) {
+        if (ek.side === b.side) continue;
+        const d = Math.hypot(ek.x - b.x, ek.z - b.z);
+        if (d < bestKeepD) {
+          bestKeepD = d;
+          lookX = ek.x;
+          lookZ = ek.z;
+        }
+      }
       let nearestD = (uDef.ranged?.maxRangeM ?? 80) + 25;
       for (const reg of state.regiments) {
         if (reg.side === b.side || reg.garrisonedInBuildingId !== null) continue;
@@ -1963,7 +2053,7 @@ export async function buildMarchlandUnits(
       pool.frame.needsUpdate = true;
     }
 
-    for (const kind of ['cannon', 'mortar'] as const) {
+    for (const kind of ['cannon', 'fieldgun', 'mortar'] as const) {
       const ep = engines.get(kind);
       if (!ep) continue;
       const cnt = engineCounts[kind];
@@ -1981,6 +2071,7 @@ export async function buildMarchlandUnits(
 
     // 2. Townsfolk (carriers, builders, workers) + Transport L2 Handcarts + L3 Wagons & Draft Horses + Real 3D Goods!
     for (const fp of folkPools) fp.count = 0;
+    if (artilleryCrewPool) artilleryCrewPool.count = 0;
     let handcartCount = 0;
     let wagonCount = 0;
     let draftHorseCount = 0;
@@ -2025,7 +2116,7 @@ export async function buildMarchlandUnits(
       pArr[idx * 4 + 3] = c.yawRad + Math.PI;
       sArr[idx] = c.side;
 
-      const tLvl = state.sides[c.side].transportLevel ?? 1;
+      const tLvl = state.sides[c.side]?.transportLevel ?? 1;
       const isCarrier = c.role === 'carrier';
       const carrying = c.carryingGood !== null;
       const pushingCart = isCarrier && c.carryJob !== null && tLvl === 2;
@@ -2187,15 +2278,19 @@ export async function buildMarchlandUnits(
       mesh.instanceMatrix.needsUpdate = true;
     }
 
-    // 3. Animated gun crewmen beside active cannons/mortars (FPS/marchland writeCrews: face forward & march smoothly while moving, load after firing!)
-    if (folkPools.length > 0) {
-      const fp = folkPools[0]!;
-      const pArr = fp.place.array as Float32Array;
-      const sArr = fp.side.array as Float32Array;
-      const fArr = fp.frame.array as Float32Array;
-      const { idle, walk, pickup, putdown } = fp.clips;
+    // 3. Animated gun crewmen beside active cannons/mortars (Era 2-3 uses uniformed artilleryman.json; Era 1 uses townsfolk!)
+    if (folkPools.length > 0 || artilleryCrewPool) {
       for (const reg of state.regiments) {
         if (reg.unitType !== 'cannon' && reg.unitType !== 'mortar') continue;
+        const fp =
+          (sideEra[reg.side] ?? 1) >= 2 && artilleryCrewPool
+            ? artilleryCrewPool
+            : folkPools[0];
+        if (!fp) continue;
+        const pArr = fp.place.array as Float32Array;
+        const sArr = fp.side.array as Float32Array;
+        const fArr = fp.frame.array as Float32Array;
+        const { idle, walk, pickup, putdown } = fp.clips;
         const reloadS = UNIT_DEFS[reg.unitType].ranged?.reloadS ?? 10;
         const spots: readonly (readonly [number, number, number])[] =
           reg.unitType === 'cannon'
@@ -2245,7 +2340,8 @@ export async function buildMarchlandUnits(
       }
     }
 
-    for (const fp of folkPools) {
+    const allFolkPools = artilleryCrewPool ? [...folkPools, artilleryCrewPool] : folkPools;
+    for (const fp of allFolkPools) {
       if (fp.count === 0) {
         fp.place.setXYZW(0, 0, -500, 0, 0);
         fp.mesh.count = 1;
@@ -2398,6 +2494,12 @@ export async function buildMarchlandUnits(
       fp.mesh.geometry.dispose();
       fp.material.dispose();
       fp.boneTex.dispose();
+    }
+    if (artilleryCrewPool) {
+      scene.remove(artilleryCrewPool.mesh);
+      artilleryCrewPool.mesh.geometry.dispose();
+      artilleryCrewPool.material.dispose();
+      artilleryCrewPool.boneTex.dispose();
     }
     if (handcartMesh) {
       scene.remove(handcartMesh);

@@ -7,15 +7,19 @@
 //     plus capture-point dispatch and Keep upgrade before Barracks upgrade!
 
 import {
+  AI_AGES,
+  ALL_GOODS,
   BUILDING_DEFS,
   ECONOMY,
+  GOOD_VALUE_GOLD,
   UNIT_DEFS,
   type BuildingTypeId,
+  type GoodId,
   type UnitTypeId,
 } from '../config.ts';
 import { countAliveSoldiers, nextSimRand } from './combat.ts';
 import { executeCommand, hasResources, validateBuildingPlacement } from './commands.ts';
-import { countPopulation, findKeep } from './economy.ts';
+import { countPopulation, eraOfKeepLevel, findKeep } from './economy.ts';
 import type { NavGrid } from './pathing.ts';
 import type { TerrainField } from './terrain.ts';
 import type { ForestGrid } from './trees.ts';
@@ -216,6 +220,93 @@ function findLegalSiteForBuilding(
   return null;
 }
 
+/** Returns true if `side` is still in the match (not absent and its Keep still stands). */
+function isSideStanding(state: SimWorldState, side: SideId): boolean {
+  const s = state.sides[side];
+  if (!s || s.absent) return false;
+  return findKeep(state, side) !== null;
+}
+
+/**
+ * Picks which rival lord `side` should march against on 2- or 3-lord maps:
+ * 1. If any enemy has troops within 110 m of our Keep, prioritize the biggest threat near home.
+ * 2. Otherwise pick the weaker surviving rival (by living men + distance/8), penalizing a rival
+ *    that another AI is already attacking by `+AI_AGES.sharedFoeMen` so two AIs don't blindly pile on one lord!
+ */
+export function pickFoe(state: SimWorldState, side: SideId): SideId | null {
+  const others = state.sides
+    .map((s) => s.side)
+    .filter((s) => s !== side && isSideStanding(state, s));
+  if (others.length <= 1) return others[0] ?? null;
+
+  const ownKeep = findKeep(state, side);
+  const kx = ownKeep?.x ?? 0;
+  const kz = ownKeep?.z ?? 0;
+  const near = new Map<SideId, number>();
+  const men = new Map<SideId, number>();
+
+  for (const r of state.regiments) {
+    if (r.side === side) continue;
+    const alive = countAliveSoldiers(r);
+    if (alive === 0) continue;
+    men.set(r.side, (men.get(r.side) ?? 0) + alive);
+    if (Math.hypot(r.x - kx, r.z - kz) < 110) {
+      near.set(r.side, (near.get(r.side) ?? 0) + alive);
+    }
+  }
+
+  let best = others[0]!;
+  let bestScore = Number.POSITIVE_INFINITY;
+  for (const s of others) {
+    const threat = near.get(s) ?? 0;
+    const foeKeep = findKeep(state, s);
+    const dist = foeKeep ? Math.hypot(foeKeep.x - kx, foeKeep.z - kz) : 0;
+    const taken = state.sides.some(
+      (other) => other.side !== side && !other.absent && other.aiTargetSide === s && other.aiAttacking,
+    )
+      ? AI_AGES.sharedFoeMen
+      : 0;
+    const score = threat > 0 ? -threat : (men.get(s) ?? 0) + taken + dist / 8;
+    if (score < bestScore) {
+      best = s;
+      bestScore = score;
+    }
+  }
+  return best;
+}
+
+function agesOpen(state: SimWorldState): boolean {
+  const openTimeS = state.scenario.fastAges ? AI_AGES.fastAgesAfterS : AI_AGES.agesAfterS;
+  return (state.scenario.startAge ?? 1) >= 2 || state.timeS >= openTimeS;
+}
+
+function unitEra(u: UnitTypeId): number {
+  const bl = UNIT_DEFS[u].barracksLevel;
+  return bl >= 5 ? 3 : bl >= 4 ? 2 : 1;
+}
+
+const AGES_BUILD_ORDER: readonly BuildingTypeId[] = [
+  'cathedral',
+  'gunsmith',
+  'powderMill',
+  'townHall',
+  'manufactory',
+];
+
+const MODERNISE_TARGETS: Partial<Record<UnitTypeId, readonly UnitTypeId[]>> = {
+  militia: ['lineInfantry', 'musketeers', 'swordsmen', 'pikemen'],
+  pikemen: ['lineInfantry', 'musketeers'],
+  swordsmen: ['lineInfantry', 'musketeers'],
+  halberdiers: ['lineInfantry', 'musketeers'],
+  archers: ['riflemen', 'musketeers'],
+  crossbowmen: ['riflemen', 'musketeers'],
+  musketeers: ['lineInfantry'],
+  lightCav: ['hussars', 'dragoons'],
+  heavyCav: ['cuirassiers', 'hussars'],
+  cuirassiers: ['hussars'],
+  dragoons: ['hussars'],
+};
+
 /** Evaluates opponent's army classes and picks the highest-priority affordable counter regiment! */
 export function pickCounterUnit(
   state: SimWorldState,
@@ -223,8 +314,9 @@ export function pickCounterUnit(
   personality: AiPersonality,
   barracksLevel: number,
   foundryLevel: number,
+  targetFoe?: SideId | null,
 ): UnitTypeId | null {
-  const enemySide: SideId = side === 0 ? 1 : 0;
+  const enemySide: SideId = targetFoe ?? pickFoe(state, side) ?? (side === 0 ? 1 : 0);
   let enemyCav = 0;
   let enemyHeavy = 0;
   let enemyRanged = 0;
@@ -237,19 +329,28 @@ export function pickCounterUnit(
   }
 
   const ownMilitia = state.regiments.filter((r) => r.side === side && r.unitType === 'militia').length;
-  const stock = state.sides[side].stock;
+  const sideState = state.sides[side];
+  if (!sideState) return null;
+  const stock = sideState.stock;
 
   const candidates: UnitTypeId[] = [];
+  // Later ages prioritize the age's own firearm and modern cavalry arms first!
+  if (barracksLevel >= 5) {
+    candidates.push('lineInfantry', 'riflemen', 'hussars', 'cuirassiers', 'cannon');
+  } else if (barracksLevel >= 4) {
+    candidates.push('musketeers', 'cuirassiers', 'dragoons', 'pikemen', 'halberdiers', 'cannon');
+  }
+
   if (enemyCav >= 2) candidates.push('pikemen', 'halberdiers');
-  if (enemyHeavy >= 2) candidates.push('crossbowmen', 'halberdiers');
-  if (enemyRanged >= 2) candidates.push('lightCav', 'heavyCav', 'swordsmen');
+  if (enemyHeavy >= 2) candidates.push('riflemen', 'musketeers', 'crossbowmen', 'halberdiers');
+  if (enemyRanged >= 2) candidates.push('hussars', 'cuirassiers', 'dragoons', 'lightCav', 'heavyCav', 'swordsmen');
 
   if (personality === 'raider') {
-    candidates.push('lightCav', 'archers', 'pikemen', 'swordsmen');
+    candidates.push('hussars', 'dragoons', 'lightCav', 'archers', 'pikemen', 'swordsmen');
   } else if (personality === 'knight') {
-    candidates.push('heavyCav', 'swordsmen', 'crossbowmen', 'cannon', 'pikemen', 'archers');
+    candidates.push('cuirassiers', 'heavyCav', 'swordsmen', 'crossbowmen', 'cannon', 'pikemen', 'archers');
   } else {
-    candidates.push('swordsmen', 'crossbowmen', 'pikemen', 'archers', 'halberdiers', 'cannon');
+    candidates.push('lineInfantry', 'musketeers', 'swordsmen', 'crossbowmen', 'pikemen', 'archers', 'halberdiers', 'cannon');
   }
   if (ownMilitia < 2) candidates.push('militia');
 
@@ -262,7 +363,7 @@ export function pickCounterUnit(
   return null;
 }
 
-/** Runs one fair-economy AI decision cycle for `side` (default `1`, also supports AI-vs-AI on side `0`!). */
+/** Runs one fair-economy AI decision cycle for `side` (supports 2- or 3-lord maps and AI-vs-AI!). */
 export function stepAiForSide(
   state: SimWorldState,
   side: SideId,
@@ -273,18 +374,47 @@ export function stepAiForSide(
   forest: ForestGrid,
   onNavDirty: () => void,
 ): void {
+  const sideState = state.sides[side];
+  if (!sideState || sideState.absent) return;
   const keep = findKeep(state, side);
   if (!keep) return;
 
-  const enemySide: SideId = side === 0 ? 1 : 0;
-  const enemyKeep = findKeep(state, enemySide);
+  const enemySide = pickFoe(state, side);
+  sideState.aiTargetSide = enemySide ?? undefined;
+  const enemyKeep = enemySide !== null ? findKeep(state, enemySide) : null;
   const sideBuildings = state.buildings.filter((b) => b.side === side && b.hp > 0);
   const constructingCount = sideBuildings.filter((b) => b.buildProgress < 1).length;
+  const keepEra = eraOfKeepLevel(keep.level);
+  const barracks = sideBuildings.find((b) => b.type === 'barracks' && b.buildProgress >= 1);
+  const stock = sideState.stock;
+
+  // 0. In Era 2+ with a Barracks, prioritize Gunsmith & Powder Mill before expanding medieval chains
+  let placedAgesBuilding = false;
+  if (constructingCount < 2 && keepEra >= 2 && barracks) {
+    for (const gType of ['gunsmith', 'powderMill'] as const) {
+      if (sideBuildings.some((b) => b.type === gType)) continue;
+      const def = BUILDING_DEFS[gType];
+      if (!hasResources(stock, def.cost)) continue;
+      const site = findLegalSiteForBuilding(state, side, gType, keep.x, keep.z, terrain, forest);
+      if (!site) continue;
+      const res = executeCommand(
+        state,
+        { type: 'placeBuilding', side, buildingType: gType, x: site.x, z: site.z, yawRad: site.yawRad },
+        terrain,
+        nav,
+        forest,
+        onNavDirty,
+      );
+      if (res.ok) {
+        placedAgesBuilding = true;
+        break;
+      }
+    }
+  }
 
   // 1. Fair-economy building construction (max 2 concurrent sites; check materials so workshops never starve!)
-  if (constructingCount < 2) {
+  if (!placedAgesBuilding && constructingCount < 2) {
     const order = getBuildOrder(personality);
-    const stock = state.sides[side].stock;
     for (const goal of order) {
       const existing = sideBuildings.filter((b) => b.type === goal.type).length;
       if (existing >= goal.count) continue;
@@ -316,30 +446,111 @@ export function stepAiForSide(
             onNavDirty,
           );
         }
+        placedAgesBuilding = true;
         break;
       }
     }
   }
 
-  // 2. Keep upgrade before Barracks upgrade (docs/GAMEPLAY.md §5)
-  const barracks = sideBuildings.find((b) => b.type === 'barracks' && b.buildProgress >= 1);
-  if (keep.level < 3 && keep.upgradingToLevel === null && state.timeS > (keep.level === 1 ? 260 : 580)) {
-    executeCommand(state, { type: 'upgradeBuilding', side, buildingId: keep.id }, terrain, nav, forest, onNavDirty);
-  } else if (barracks && barracks.level < keep.level && barracks.upgradingToLevel === null) {
+  // 1b. Great Buildings, Era 2+ Iron expansion & later-age workshops once Ages are open
+  if (!placedAgesBuilding && constructingCount < 2 && agesOpen(state)) {
+    // In Era 2+ (or Keep L3 preparing for Era 2), expand iron supply with a 2nd ironMine & 2nd smelter so musketeers never stall!
+    if (keep.level >= 3) {
+      for (const ironType of ['ironMine', 'smelter'] as const) {
+        const count = sideBuildings.filter((b) => b.type === ironType).length;
+        if (count >= 2) continue;
+        const def = BUILDING_DEFS[ironType];
+        if (!hasResources(stock, def.cost)) continue;
+        const site = findLegalSiteForBuilding(state, side, ironType, keep.x, keep.z, terrain, forest);
+        if (!site) continue;
+        const res = executeCommand(
+          state,
+          { type: 'placeBuilding', side, buildingType: ironType, x: site.x, z: site.z, yawRad: site.yawRad },
+          terrain,
+          nav,
+          forest,
+          onNavDirty,
+        );
+        if (res.ok) {
+          placedAgesBuilding = true;
+          break;
+        }
+      }
+    }
+    if (!placedAgesBuilding) {
+      for (const aType of AGES_BUILD_ORDER) {
+        const def = BUILDING_DEFS[aType];
+        if (keep.level < (def.keepLevel ?? 1)) continue;
+        if (sideBuildings.some((b) => b.type === aType)) continue;
+        if (!hasResources(stock, def.cost)) continue;
+        const site = findLegalSiteForBuilding(state, side, aType, keep.x, keep.z, terrain, forest);
+        if (!site) continue;
+        const res = executeCommand(
+          state,
+          { type: 'placeBuilding', side, buildingType: aType, x: site.x, z: site.z, yawRad: site.yawRad },
+          terrain,
+          nav,
+          forest,
+          onNavDirty,
+        );
+        if (res.ok) break;
+      }
+    }
+  }
+
+  // 2. Keep upgrade (L1->L3 normally; L3->L5 once Ages are open, buying missing planks/iron/stone at Market!)
+  const maxKeepTarget = agesOpen(state) ? 5 : 3;
+  if (keep.level < maxKeepTarget && keep.upgradingToLevel === null) {
+    const minTimeForLevel = keep.level === 1 ? 260 : keep.level === 2 ? 580 : 0;
+    if (state.timeS >= minTimeForLevel) {
+      const nextKeep = ECONOMY.keepLevels[keep.level as 1 | 2 | 3 | 4];
+      if (nextKeep && keep.level >= 3 && sideBuildings.some((b) => b.type === 'market' && b.buildProgress >= 1)) {
+        const keepCost: Partial<Record<GoodId, number>> = nextKeep.cost;
+        const keepGold = keepCost.gold ?? 0;
+        for (const g of ALL_GOODS) {
+          if (g === 'gold') continue;
+          const req = keepCost[g] ?? 0;
+          if (req <= 0 || (stock[g] ?? 0) >= req) continue;
+          const lotPrice = Math.round(ECONOMY.marketLotSize * GOOD_VALUE_GOLD[g] * ECONOMY.marketBuyMul);
+          if (stock.gold - lotPrice >= keepGold) {
+            executeCommand(state, { type: 'marketTrade', side, good: g, action: 'buy' }, terrain, nav, forest, onNavDirty);
+            break;
+          }
+        }
+      }
+      executeCommand(state, { type: 'upgradeBuilding', side, buildingId: keep.id }, terrain, nav, forest, onNavDirty);
+    }
+  }
+  if (barracks && barracks.level < keep.level && barracks.upgradingToLevel === null) {
     executeCommand(state, { type: 'upgradeBuilding', side, buildingId: barracks.id }, terrain, nav, forest, onNavDirty);
+  }
+  // In Era 2+, upgrade ironMine & smelter (up to L3) so firearm armies have plentiful iron!
+  if (keepEra >= 2) {
+    const ironUpgradeTarget = sideBuildings.find(
+      (b) =>
+        (b.type === 'ironMine' || b.type === 'smelter' || b.type === 'gunsmith' || b.type === 'powderMill') &&
+        b.buildProgress >= 1 &&
+        b.upgradingToLevel === null &&
+        b.level < Math.min(3, keep.level),
+    );
+    if (ironUpgradeTarget) {
+      executeCommand(state, { type: 'upgradeBuilding', side, buildingId: ironUpgradeTarget.id }, terrain, nav, forest, onNavDirty);
+    }
   }
 
   // 2b. Regulate armament workshop orders through Barracks (`orderUnitEquipment`) when equipment stock + pendingOrders are low
-  const stock = state.sides[side].stock;
-  const orderUnits: readonly UnitTypeId[] =
+  const orderUnits: UnitTypeId[] =
     personality === 'raider'
       ? ['archers', 'pikemen', 'lightCav', 'swordsmen']
       : personality === 'knight'
         ? ['pikemen', 'archers', 'swordsmen', 'heavyCav']
         : ['pikemen', 'archers', 'swordsmen', 'crossbowmen'];
+  if (keepEra >= 2) orderUnits.unshift('musketeers', 'cuirassiers', 'dragoons');
+  if (keepEra >= 3) orderUnits.unshift('lineInfantry', 'riflemen', 'hussars');
+
   for (const u of orderUnits) {
     const uDef = UNIT_DEFS[u];
-    for (const eqGood of ['weapons', 'bows', 'leatherArmour', 'mail', 'horses'] as const) {
+    for (const eqGood of ['weapons', 'bows', 'leatherArmour', 'mail', 'horses', 'muskets', 'powder'] as const) {
       const req = uDef.cost[eqGood] ?? 0;
       if (req <= 0) continue;
       const wType =
@@ -351,7 +562,11 @@ export function stepAiForSide(
               ? 'tannery'
               : eqGood === 'mail'
                 ? 'armourer'
-                : 'stable';
+                : eqGood === 'horses'
+                  ? 'stable'
+                  : eqGood === 'muskets'
+                    ? 'gunsmith'
+                    : 'powderMill';
       const shops = sideBuildings.filter((b) => b.type === wType);
       if (shops.length === 0) continue;
       const pending = shops.reduce((s, b) => s + (b.pendingOrders ?? 0), 0);
@@ -362,42 +577,96 @@ export function stepAiForSide(
     }
   }
 
-  // 3. Recruitment & Militia refitting
+  // 3. Recruitment & Militia/Cross-Age modernization refitting
   const pop = countPopulation(state, side);
   const barracksLvl = barracks ? barracks.level : 0;
   const foundry = sideBuildings.find((b) => b.type === 'gunFoundry' && b.buildProgress >= 1);
   const foundryLvl = foundry ? foundry.level : 0;
 
   if (pop.total >= ECONOMY.minFreeCarriers + 6) {
-    const unitChoice = pickCounterUnit(state, side, personality, barracksLvl, foundryLvl);
+    const unitChoice = pickCounterUnit(state, side, personality, barracksLvl, foundryLvl, enemySide);
     if (unitChoice) {
       executeCommand(state, { type: 'recruit', side, unitType: unitChoice }, terrain, nav, forest, onNavDirty);
     }
   }
 
-  // Refit militia when barracks & weapons are ready (docs/UNITS.md §1)
+  // Refit militia or outdated Era 1/2 regiments near Barracks when arms & barracks level are ready!
   if (barracks) {
+    let refitted = false;
     for (const r of state.regiments) {
-      if (r.side === side && r.unitType === 'militia' && r.refittingTo === null && Math.hypot(r.x - barracks.x, r.z - barracks.z) <= 40) {
-        const res = executeCommand(state, { type: 'refitRegiment', side, regimentId: r.id, targetType: 'pikemen' }, terrain, nav, forest, onNavDirty);
-        if (res.ok) break;
+      if (refitted) break;
+      if (r.side !== side || r.refittingTo !== null || r.routing || r.outOfCombatS < 3) continue;
+      if (Math.hypot(r.x - barracks.x, r.z - barracks.z) > 40) continue;
+      const isMilitia = r.unitType === 'militia';
+      if (!isMilitia && unitEra(r.unitType) >= keepEra) continue;
+      const targets = MODERNISE_TARGETS[r.unitType] ?? [];
+      for (const tgt of targets) {
+        if (!UNIT_DEFS[r.unitType].refitTargets.includes(tgt)) continue;
+        if (barracks.level < UNIT_DEFS[tgt].barracksLevel) continue;
+        const res = executeCommand(
+          state,
+          { type: 'refitRegiment', side, regimentId: r.id, targetType: tgt },
+          terrain,
+          nav,
+          forest,
+          onNavDirty,
+        );
+        if (res.ok) {
+          refitted = true;
+          break;
+        }
       }
     }
   }
 
-  // 4. Tactical Field Orders (Defence, Capture Points, Flanking & Relief, Wave Assaults!)
+  // 4. Tactical Field Orders (Defence against ANY foe, Capture Points, Flanking & Relief, Wave Assaults!)
   const ownRegs = state.regiments.filter(
     (r) => r.side === side && !r.routing && r.garrisonedInBuildingId === null && countAliveSoldiers(r) > 0,
   );
-  if (ownRegs.length === 0) return;
+  if (ownRegs.length === 0) {
+    sideState.aiAttacking = false;
+    return;
+  }
 
-  const enemyRegs = state.regiments.filter(
-    (r) => r.side === enemySide && !r.routing && r.garrisonedInBuildingId === null && countAliveSoldiers(r) > 0,
+  const allHostileRegs = state.regiments.filter(
+    (r) => r.side !== side && !r.routing && r.garrisonedInBuildingId === null && countAliveSoldiers(r) > 0,
   );
+  const foeRegs = enemySide !== null ? allHostileRegs.filter((r) => r.side === enemySide) : [];
 
-  // 4a. Defend Keep if enemies enter < 95 m
-  const threatAtHome = enemyRegs.find((e) => Math.hypot(e.x - keep.x, e.z - keep.z) < 95);
+  // 4.0 Firearm tactical reflexes (marchland PLAN §3.2): form Hollow Square vs nearby cavalry, Volley Fire vs infantry!
+  if (difficulty !== 'easy') {
+    for (const r of ownRegs) {
+      if (r.unitType !== 'musketeers' && r.unitType !== 'lineInfantry') continue;
+      const nearCav = allHostileRegs.some(
+        (e) =>
+          UNIT_DEFS[e.unitType].unitClass === 'cavalry' &&
+          !e.dismounted &&
+          Math.hypot(e.x - r.x, e.z - r.z) < 26,
+      );
+      if (nearCav && r.formation !== 'square') {
+        executeCommand(state, { type: 'setFormation', side, regimentIds: [r.id], formation: 'square' }, terrain, nav, forest, onNavDirty);
+      } else if (!nearCav && r.formation === 'square') {
+        const cavStillClose = allHostileRegs.some(
+          (e) =>
+            UNIT_DEFS[e.unitType].unitClass === 'cavalry' &&
+            !e.dismounted &&
+            Math.hypot(e.x - r.x, e.z - r.z) < 38,
+        );
+        if (!cavStillClose) {
+          executeCommand(state, { type: 'setFormation', side, regimentIds: [r.id], formation: 'line' }, terrain, nav, forest, onNavDirty);
+        }
+      }
+      const nearInf = allHostileRegs.some((e) => Math.hypot(e.x - r.x, e.z - r.z) < 62);
+      if (nearInf && r.stance !== 'volleyFire') {
+        executeCommand(state, { type: 'setStance', side, regimentIds: [r.id], stance: 'volleyFire' }, terrain, nav, forest, onNavDirty);
+      }
+    }
+  }
+
+  // 4a. Defend Keep if ANY enemy enters < 95 m
+  const threatAtHome = allHostileRegs.find((e) => Math.hypot(e.x - keep.x, e.z - keep.z) < 95);
   if (threatAtHome) {
+    sideState.aiAttacking = false;
     for (const r of ownRegs) {
       if (!r.order || r.order.targetRegimentId !== threatAtHome.id) {
         executeCommand(
@@ -406,7 +675,12 @@ export function stepAiForSide(
             type: 'issueOrder',
             side,
             regimentIds: [r.id],
-            order: { kind: UNIT_DEFS[r.unitType].unitClass === 'cavalry' ? 'charge' : 'attack', x: threatAtHome.x, z: threatAtHome.z, targetRegimentId: threatAtHome.id },
+            order: {
+              kind: UNIT_DEFS[r.unitType].unitClass === 'cavalry' ? 'charge' : 'attack',
+              x: threatAtHome.x,
+              z: threatAtHome.z,
+              targetRegimentId: threatAtHome.id,
+            },
           },
           terrain,
           nav,
@@ -418,9 +692,11 @@ export function stepAiForSide(
     return;
   }
 
-  // 4b. Send 1 free non-militia unit to capture unowned center strategic points!
+  // 4b. Send 1 free non-militia unit to capture nearest unowned strategic point!
   const mobileRegs = ownRegs.filter((r) => UNIT_DEFS[r.unitType].homeDefenceRadiusM === undefined);
-  const unownedCp = state.capturePoints.find((cp) => cp.owner !== side);
+  const unownedCp = state.capturePoints
+    .filter((cp) => cp.owner !== side)
+    .sort((a, b) => Math.hypot(a.x - keep.x, a.z - keep.z) - Math.hypot(b.x - keep.x, b.z - keep.z))[0];
   if (unownedCp && mobileRegs.length >= 2) {
     const scout = mobileRegs.find((r) => !r.order && UNIT_DEFS[r.unitType].unitClass !== 'siege');
     if (scout) {
@@ -438,6 +714,7 @@ export function stepAiForSide(
   // 4c. Escalating attack waves (Raider strikes early with 2+ regs; Builder/Knight muster 4+ regs)
   const waveThreshold = personality === 'raider' ? 2 : personality === 'knight' ? 3 : 4;
   if (mobileRegs.length >= waveThreshold && enemyKeep) {
+    sideState.aiAttacking = true;
     const useFlankAndRelief = difficulty !== 'easy';
     // Morale relief: pull back battered regiment (< 40% morale) if reserve available
     if (useFlankAndRelief) {
@@ -455,8 +732,10 @@ export function stepAiForSide(
       }
     }
 
-    // Main assault target: nearest enemy regiment, else enemy Keep (or enemy wall blocking approach)
-    const primaryEnemy: RegimentEntity | null = enemyRegs[0] ?? null;
+    // Main assault target: nearest regiment of chosen foe, else chosen foe's Keep
+    const primaryEnemy: RegimentEntity | null =
+      foeRegs.slice().sort((a, b) => Math.hypot(a.x - keep.x, a.z - keep.z) - Math.hypot(b.x - keep.x, b.z - keep.z))[0] ??
+      null;
     for (const r of mobileRegs) {
       if (r.order !== null) continue;
       const def = UNIT_DEFS[r.unitType];
@@ -512,5 +791,7 @@ export function stepAiForSide(
         );
       }
     }
+  } else {
+    sideState.aiAttacking = false;
   }
 }

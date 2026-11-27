@@ -10,6 +10,7 @@ import {
   GOVERNOR_STEPS,
   QUALITY_PRESETS,
   SIM,
+  type EraNumber,
   type LangCode,
   type LightingPresetId,
   type QualityPreset,
@@ -68,6 +69,8 @@ export interface BootOptions {
   readonly missionId?: CampaignMissionId;
   readonly difficulty?: Difficulty;
   readonly aiPersonality?: AiPersonality;
+  readonly startAge?: EraNumber;
+  readonly fastAges?: boolean;
   readonly showcaseMode?: boolean;
 }
 
@@ -331,6 +334,8 @@ export class Game {
       missionId: opts.missionId,
       difficulty: opts.difficulty ?? 'normal',
       aiPersonality: opts.aiPersonality ?? 'raider',
+      startAge: opts.startAge ?? 1,
+      fastAges: Boolean(opts.fastAges),
       showcaseMode: opts.showcaseMode ?? true,
       carryOver,
     });
@@ -341,6 +346,7 @@ export class Game {
       stage.renderer.domElement,
       bindings,
       (x, z) => world.terrain.heightAt(x, z),
+      world.terrain.halfSizeM,
     );
     const startSpot = opts.initialSpot && benchSpots.some((s) => s.name === opts.initialSpot) ? opts.initialSpot : 'showcase';
     camCtrl.applySpotCamera(findBenchSpot(startSpot, benchSpots).camera);
@@ -460,6 +466,8 @@ export class Game {
     difficulty: Difficulty;
     aiPersonality: AiPersonality;
     missionId?: CampaignMissionId;
+    startAge?: EraNumber;
+    fastAges?: boolean;
     showcaseMode?: boolean;
   }): void {
     this.sound.unlock();
@@ -472,6 +480,10 @@ export class Game {
       url.searchParams.set('diff', cfg.difficulty);
       url.searchParams.set('ai', cfg.aiPersonality);
       url.searchParams.set('showcase', cfg.showcaseMode ? '1' : '0');
+      if (cfg.startAge && cfg.startAge > 1 && cfg.mode !== 'campaign') url.searchParams.set('age', String(cfg.startAge));
+      else url.searchParams.delete('age');
+      if (cfg.fastAges && cfg.mode !== 'campaign') url.searchParams.set('fastAges', '1');
+      else url.searchParams.delete('fastAges');
       if (cfg.missionId) url.searchParams.set('mission', String(cfg.missionId));
       else url.searchParams.delete('mission');
       window.location.href = url.toString();
@@ -490,6 +502,8 @@ export class Game {
       missionId: cfg.missionId,
       difficulty: cfg.difficulty,
       aiPersonality: cfg.aiPersonality,
+      startAge: cfg.startAge ?? 1,
+      fastAges: Boolean(cfg.fastAges),
       showcaseMode: cfg.showcaseMode ?? false,
       carryOver,
     });
@@ -511,13 +525,15 @@ export class Game {
       difficulty: o.difficulty ?? 'normal',
       aiPersonality: o.aiPersonality ?? 'raider',
       missionId: o.missionId,
+      startAge: o.startAge,
+      fastAges: o.fastAges,
       showcaseMode: o.showcaseMode,
     });
   }
 
   private launchNextCampaignMission(): void {
     const cur = this.sim.state.scenario.missionId;
-    if (!cur || cur >= 5) return;
+    if (!cur || cur >= 6) return;
     const next = (cur + 1) as CampaignMissionId;
     const missionMaps: Record<CampaignMissionId, MapLayoutId> = {
       1: 'crossing',
@@ -525,6 +541,7 @@ export class Game {
       3: 'valley',
       4: 'valley',
       5: 'fortress',
+      6: 'fortress',
     };
     this.launchMatch({
       mode: 'campaign',

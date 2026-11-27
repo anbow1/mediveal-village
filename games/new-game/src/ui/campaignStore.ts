@@ -47,7 +47,7 @@ export function recordMissionVictory(
   const prog = loadCampaignProgress();
   const prevStars = prog.stars[missionId] ?? 0;
   prog.stars[missionId] = Math.max(prevStars, stars) as 1 | 2 | 3;
-  if (missionId < 5) {
+  if (missionId < 6) {
     const next = (missionId + 1) as CampaignMissionId;
     if (next > prog.highestUnlocked) prog.highestUnlocked = next;
     prog.carryOverByMission[next] = carryOver;

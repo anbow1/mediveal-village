@@ -1217,8 +1217,9 @@ export async function buildStage5World(
   const layout = buildMapLayout(mapId);
   const terrain = new TerrainField(layout.terrainConfig);
 
-  // Full 560 x 560 m dynamic GroundWorksMap at 512 x 512 (~1.09 m texel resolution across whole battlefield!)
-  const groundWorks = new GroundWorksMap(512, layout.terrainConfig.sizeM);
+  // Dynamic GroundWorksMap: 1024x1024 (~0.84 m/texel) on 860 m Three Lords maps (non-minimal), 512x512 (~1.09 m) on 560 m maps!
+  const groundWorksRes = layout.terrainConfig.sizeM > 600 && quality !== 'minimal' ? 1024 : 512;
+  const groundWorks = new GroundWorksMap(groundWorksRes, layout.terrainConfig.sizeM);
   for (const road of layout.roads) {
     groundWorks.stampRoadPolyline(road, 2.0, 1.8);
   }
@@ -2116,6 +2117,7 @@ export async function buildStage5World(
     skyUniforms,
     quality,
     buildingMaterial: surfaces.buildingMaterial,
+    instancedBuildingMaterial: surfaces.instancedBuildingMaterial,
     siteBuildingMaterial: surfaces.siteBuildingMaterial,
     buildingTemplates,
     marchlandBuildingLevels,

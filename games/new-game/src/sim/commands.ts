@@ -2,6 +2,7 @@
 // Player, AI, and Campaign scenarios execute identical commands through `executeCommand()`.
 
 import {
+  AI_AGES,
   BUILDING_DEFS,
   CAMPAIGN,
   COMBAT,
@@ -10,10 +11,11 @@ import {
   GOOD_TO_WORKSHOP,
   GOOD_VALUE_GOLD,
   isEquipmentWorkshop,
+  isFirearmWorkshop,
+  MEDIEVAL_MAX_LEVEL,
   REINFORCE,
   TRANSPORT_LEVELS,
   UNIT_DEFS,
-  WORLD,
   type BuildingTypeId,
   type GoodId,
   type ResourceMap,
@@ -61,10 +63,23 @@ export function spendAllResources(stock: Record<GoodId, number>, cost: ResourceM
   }
 }
 
-/** Computes exact upgrade resource cost for moving a building to `targetLevel` (L2+: half timber as planks!). */
-export function computeUpgradeCost(b: BuildingEntity, targetLevel: 2 | 3): ResourceMap {
+/** Computes exact upgrade resource cost for moving a building to `targetLevel` (L2+: half timber as planks; Fast Ages reduces Keep L4–5 by 35%). */
+export function computeUpgradeCost(
+  b: BuildingEntity,
+  targetLevel: 2 | 3 | 4 | 5,
+  fastAges = false,
+): ResourceMap {
   if (b.type === 'keep') {
-    return { ...ECONOMY.keepLevels[targetLevel - 1]!.cost };
+    const rawCost = ECONOMY.keepLevels[targetLevel - 1]!.cost;
+    if (fastAges && targetLevel >= 4) {
+      const scaled: ResourceMap = {};
+      for (const g of Object.keys(rawCost) as GoodId[]) {
+        const v = rawCost[g] ?? 0;
+        if (v > 0) scaled[g] = Math.ceil(v * AI_AGES.fastAgesCostMul);
+      }
+      return scaled;
+    }
+    return { ...rawCost };
   }
   const base = BUILDING_DEFS[b.type].cost;
   const mul = ECONOMY.levelCostMul[targetLevel - 1]!;
@@ -84,7 +99,7 @@ export function computeUpgradeCost(b: BuildingEntity, targetLevel: 2 | 3): Resou
 
 export interface UpgradeCheck {
   readonly canUpgrade: boolean;
-  readonly targetLevel: 2 | 3 | null;
+  readonly targetLevel: 2 | 3 | 4 | 5 | null;
   readonly cost: ResourceMap;
   readonly missing: ResourceMap;
   readonly reason: 'ok' | 'maxLevel' | 'constructing' | 'alreadyUpgrading' | 'needsKeepUpgrade' | 'insufficientResources';
@@ -101,9 +116,9 @@ export function inspectBuildingUpgrade(
   if (b.level >= def.maxLevel) {
     return { canUpgrade: false, targetLevel: null, cost: {}, missing: {}, reason: 'maxLevel' };
   }
-  const targetLvl = (b.level + 1) as 2 | 3;
-  const cost = computeUpgradeCost(b, targetLvl);
-  const stock = state.sides[side].stock;
+  const targetLvl = (b.level + 1) as 2 | 3 | 4 | 5;
+  const cost = computeUpgradeCost(b, targetLvl, Boolean(state.scenario.fastAges));
+  const stock = state.sides[side]!.stock;
   const missing: ResourceMap = {};
   let hasMissing = false;
   for (const g of Object.keys(cost) as GoodId[]) {
@@ -121,8 +136,21 @@ export function inspectBuildingUpgrade(
   if (b.upgradingToLevel !== null) {
     return { canUpgrade: false, targetLevel: targetLvl, cost, missing, reason: 'alreadyUpgrading' };
   }
+
+  // Past the Middle Ages (L4-5), any non-keep building waits for its Keep to reach that age's level!
+  const keep = findKeep(state, side);
+  const keepLvl = keep ? keep.level : 1;
+  if (b.type !== 'keep' && targetLvl > MEDIEVAL_MAX_LEVEL && targetLvl > keepLvl) {
+    return {
+      canUpgrade: false,
+      targetLevel: targetLvl,
+      cost,
+      missing,
+      reason: 'needsKeepUpgrade',
+      requiredKeepLevel: targetLvl,
+    };
+  }
   if (b.type === 'barracks') {
-    const keep = findKeep(state, side);
     const maxBar = keep ? ECONOMY.keepLevels[keep.level - 1]!.maxBarracksLevel : 1;
     if (targetLvl > maxBar) {
       return {
@@ -142,10 +170,11 @@ export function inspectBuildingUpgrade(
 }
 
 /**
- * Validates free building placement against every rule in `docs/ECONOMY.md` §7 & `docs/BUILDINGS.md`:
- *   - Map bounds, dry non-water, non-impassable mountain/ridge, max ground rise <= 2.2 m
- *   - Within Keep reach (280/330/380 m; farms/vineyards +60 m; +70 m around own buildings; anywhere for gatherers/towers)
- *   - At least 90 m from enemy Keep
+ * Validates free building placement against every rule in `docs/ECONOMY.md` §7, `docs/BUILDINGS.md` & `docs/AGES.md`:
+ *   - Era gate (`keepLevel`) & Great Building uniqueness (`unique`: one per side)
+ *   - Map bounds (`terrain.halfSizeM - 10`), dry non-water, non-impassable mountain/ridge, max ground rise <= 2.2 m
+ *   - Within Keep reach (280..460 m; farms/vineyards +60 m; +70 m around own buildings; anywhere for gatherers/towers)
+ *   - At least 90 m from every enemy Keep
  *   - Clearance >= 1.5 m from all buildings & active walls
  *   - Terrain requirements (forest <= 26 m, lake <= 16 m, stone/ore outcrop <= 15 m)
  *   - Max 64 buildings per side & gold affordability
@@ -164,7 +193,15 @@ export function validateBuildingPlacement(
   const def = BUILDING_DEFS[buildingType];
   if (!def.buildable) return 'blocked';
 
-  const margin = WORLD.halfSizeM - 10;
+  // Era / Keep-level requirement & Great Building uniqueness (marchland placement.ts)
+  const ownKeep = findKeep(state, side);
+  const keepLvl = ownKeep ? ownKeep.level : 1;
+  if (def.keepLevel !== undefined && keepLvl < def.keepLevel) return 'needsKeep';
+  if (def.unique && state.buildings.some((b) => b.side === side && b.hp > 0 && b.type === buildingType)) {
+    return 'onlyOne';
+  }
+
+  const margin = terrain.halfSizeM - 10;
   if (Math.abs(x) > margin || Math.abs(z) > margin) return 'outOfBounds';
 
   // Max 64 buildings per side
@@ -194,11 +231,13 @@ export function validateBuildingPlacement(
   }
   if (maxH - minH > ECONOMY.maxGroundRiseM) return 'tooSteep';
 
-  // Keep reach & enemy keep exclusion
-  const ownKeep = findKeep(state, side);
-  const enemyKeep = findKeep(state, side === 0 ? 1 : 0);
-  if (enemyKeep && Math.hypot(x - enemyKeep.x, z - enemyKeep.z) < ECONOMY.enemyKeepMinDistM) {
-    return 'tooCloseEnemyKeep';
+  // Keep reach & enemy keep exclusion (supports 2 or 3 lords!)
+  for (const b of state.buildings) {
+    if (b.side !== side && b.type === 'keep' && b.hp > 0) {
+      if (Math.hypot(x - b.x, z - b.z) < ECONOMY.enemyKeepMinDistM) {
+        return 'tooCloseEnemyKeep';
+      }
+    }
   }
   if (!def.anywhereOnMap && ownKeep) {
     const kLvl = ECONOMY.keepLevels[ownKeep.level - 1]!;
@@ -249,7 +288,7 @@ export function validateBuildingPlacement(
 
   // Affordability check (gold paid at once; materials must exist in town stock to start!)
   if (checkResources) {
-    const s = state.sides[side];
+    const s = state.sides[side]!;
     if ((s.stock.gold ?? 0) < (def.cost.gold ?? 0)) return 'insufficientResources';
   }
 
@@ -266,6 +305,7 @@ export function executeCommand(
   onNavDirty: () => void,
 ): CommandResult {
   const sideState = state.sides[cmd.side];
+  if (!sideState || sideState.absent) return { ok: false, reason: 'invalidSide' };
 
   switch (cmd.type) {
     case 'placeBuilding': {
@@ -318,6 +358,9 @@ export function executeCommand(
         pendingOrders: 0,
       };
       state.buildings.push(b);
+      if (def.unique) {
+        pushAlert(state, 0, 'greatBuilding', b.x, b.z, `started:${b.type}:${cmd.side}`);
+      }
       distributeQueuedEquipmentOrders(state, cmd.side);
       onNavDirty();
       state.visualRevision++;
@@ -469,7 +512,7 @@ export function executeCommand(
       const segs = Math.max(1, Math.ceil(dist / 1.80));
       const stoneCost = Math.max(1, Math.ceil((dist / 10) * ECONOMY.wallStonePer10M));
       if (sideState.stock.stone < stoneCost) return { ok: false, reason: 'insufficientResources' };
-      const enemyKeep = findKeep(state, cmd.side === 0 ? 1 : 0);
+      const enemyKeeps = state.buildings.filter((b) => b.side !== cmd.side && b.type === 'keep' && b.hp > 0);
       // `wall_segment` runs along its local X axis (2.08 m wide in X, 1.55 m thick in Z), so align local X with (dx, dz)!
       const yaw = Math.atan2(-dz, dx);
       for (let i = 0; i < segs; i++) {
@@ -479,8 +522,10 @@ export function executeCommand(
         if (terrain.waterDepthAt(wx, wz) > 0.1 || terrain.isImpassable(wx, wz)) {
           return { ok: false, reason: 'blocked' };
         }
-        if (enemyKeep && Math.hypot(wx - enemyKeep.x, wz - enemyKeep.z) < ECONOMY.enemyKeepMinDistM) {
-          return { ok: false, reason: 'tooCloseEnemyKeep' };
+        for (const ek of enemyKeeps) {
+          if (Math.hypot(wx - ek.x, wz - ek.z) < ECONOMY.enemyKeepMinDistM) {
+            return { ok: false, reason: 'tooCloseEnemyKeep' };
+          }
         }
       }
       sideState.stock.stone -= stoneCost;
@@ -803,7 +848,8 @@ export function executeCommand(
       const countMul = Math.max(1, Math.round(cmd.count ?? 1));
       if (!sideState.equipmentOrders) sideState.equipmentOrders = {};
       let orderedAny = false;
-      for (const g of EQUIPMENT_GOODS) {
+      const allOrderGoods: readonly GoodId[] = [...EQUIPMENT_GOODS, 'muskets', 'powder'];
+      for (const g of allOrderGoods) {
         const amt = Math.round((def.cost[g] ?? 0) * countMul);
         if (amt <= 0) continue;
         orderedAny = true;
@@ -827,28 +873,41 @@ export function executeCommand(
         // Clear all equipment orders across all workshops and side queue
         sideState.equipmentOrders = {};
         for (const b of state.buildings) {
-          if (b.side === cmd.side && isEquipmentWorkshop(b.type)) {
+          if (b.side === cmd.side && (isEquipmentWorkshop(b.type) || isFirearmWorkshop(b.type))) {
             b.pendingOrders = 0;
           }
         }
         return { ok: true, reason: 'ok' };
       }
       const b = state.buildings.find((x) => x.id === cmd.buildingId && x.side === cmd.side && x.hp > 0);
-      if (!b || !isEquipmentWorkshop(b.type)) return { ok: false, reason: 'invalidBuilding' };
+      if (!b || (!isEquipmentWorkshop(b.type) && !isFirearmWorkshop(b.type))) {
+        return { ok: false, reason: 'invalidBuilding' };
+      }
       b.pendingOrders = Math.max(0, Math.round(cmd.orders));
       return { ok: true, reason: 'ok' };
     }
 
     case 'setFormation': {
+      let updated = 0;
       for (const rId of cmd.regimentIds) {
         const reg = state.regiments.find((r) => r.id === rId && r.side === cmd.side);
         if (!reg) continue;
         const def = UNIT_DEFS[reg.unitType];
         if (cmd.formation === 'schiltron' && def.antiCavBonus === 0) continue;
-        if (cmd.formation === 'wedge' && def.unitClass !== 'cavalry') continue;
+        if (cmd.formation === 'wedge' && (def.unitClass !== 'cavalry' || reg.dismounted)) continue;
+        if (
+          cmd.formation === 'square' &&
+          reg.unitType !== 'musketeers' &&
+          reg.unitType !== 'lineInfantry' &&
+          reg.unitType !== 'pikemen' &&
+          reg.unitType !== 'halberdiers'
+        ) {
+          continue;
+        }
         reg.formation = cmd.formation;
+        updated++;
       }
-      return { ok: true, reason: 'ok' };
+      return { ok: updated > 0, reason: updated > 0 ? 'ok' : 'notThisUnit' };
     }
 
     case 'setRanks': {
@@ -956,11 +1015,21 @@ export function executeCommand(
         const def = UNIT_DEFS[reg.unitType];
         if (cmd.stance === 'shieldWall' && def.shieldBlock < 0.2) continue;
         if (cmd.stance === 'pikeWall' && (def.antiCavBonus <= 0 || def.unitClass !== 'infantry')) continue;
+        if (cmd.stance === 'volleyFire' && (!def.firearm || !def.ranged)) continue;
         reg.stance = cmd.stance;
         if (cmd.stance === 'pikeWall') {
           reg.order = null;
           reg.orderQueue = [];
           reg.path = [];
+        } else if (cmd.stance === 'volleyFire' && def.ranged) {
+          // Stagger front vs rear rank fire cooldowns so 2-rank ripple volleys begin cleanly!
+          const half = Math.ceil(reg.soldiers.length * 0.5);
+          const stagger = def.ranged.reloadS * 0.5;
+          for (let si = 0; si < reg.soldiers.length; si++) {
+            const sol = reg.soldiers[si]!;
+            if (!sol.alive) continue;
+            sol.rangedCooldownS = si < half ? Math.min(sol.rangedCooldownS, 0.5) : Math.max(sol.rangedCooldownS, stagger);
+          }
         }
         updated++;
       }
@@ -973,6 +1042,20 @@ export function executeCommand(
         if (reg) reg.holdFire = cmd.holdFire;
       }
       return { ok: true, reason: 'ok' };
+    }
+
+    case 'setDismounted': {
+      let updated = 0;
+      for (const rId of cmd.regimentIds) {
+        const reg = state.regiments.find((r) => r.id === rId && r.side === cmd.side);
+        if (!reg || reg.unitType !== 'dragoons') continue;
+        reg.dismounted = cmd.dismounted;
+        reg.chargeTimerS = 0;
+        if (cmd.dismounted && reg.formation === 'wedge') reg.formation = 'line';
+        updated++;
+      }
+      if (updated > 0) state.visualRevision++;
+      return { ok: updated > 0, reason: updated > 0 ? 'ok' : 'notThisUnit' };
     }
 
     case 'setGoodPriority': {

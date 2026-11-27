@@ -65,7 +65,7 @@ export interface BuildingPlacementSpec {
   readonly yawRad: number;
   readonly yardRx: number;
   readonly yardRz: number;
-  readonly team: 0 | 1;
+  readonly team: 0 | 1 | 2;
 }
 
 export interface WallSegmentSpec {
@@ -128,7 +128,7 @@ export interface ResourceOutcropSpec {
 
 export interface UnitPlacementSpec {
   readonly archetype: 'swordsman' | 'archer' | 'citizen';
-  readonly team: 0 | 1;
+  readonly team: 0 | 1 | 2;
   readonly x: number;
   readonly z: number;
   readonly yawRad: number;
@@ -147,6 +147,9 @@ export interface MapLayoutSpec {
   readonly terrainConfig: TerrainConfig;
   readonly playerKeepXZ: readonly [number, number];
   readonly enemyCenterXZ: readonly [number, number];
+  /** Third lord's Keep on Three Lords ('triangle') 860 x 860 m map. */
+  readonly thirdKeepXZ?: readonly [number, number];
+  readonly sideCount?: 2 | 3;
   readonly calibrationXZ: readonly [number, number];
   readonly buildings: readonly BuildingPlacementSpec[];
   readonly walls: readonly WallSegmentSpec[];
@@ -167,6 +170,7 @@ export const ALL_MAP_IDS: readonly MapLayoutId[] = [
   'forest',
   'valley',
   'fortress',
+  'triangle',
 ];
 
 function createRng(seed: number): () => number {
@@ -210,7 +214,7 @@ function appendWallRun(
 function appendRegiment(
   out: UnitPlacementSpec[],
   archetype: 'swordsman' | 'archer',
-  team: 0 | 1,
+  team: 0 | 1 | 2,
   cx: number,
   cz: number,
   cols: number,
@@ -380,6 +384,7 @@ function scatterNatureAcrossWorld(
     readonly id: MapLayoutId;
     readonly playerKeepXZ: readonly [number, number];
     readonly enemyCenterXZ: readonly [number, number];
+    readonly thirdKeepXZ?: readonly [number, number];
     readonly buildings: readonly BuildingPlacementSpec[];
     readonly farmStrips: readonly FarmStripSpec[];
     readonly roads: readonly (readonly (readonly [number, number])[])[];
@@ -395,6 +400,11 @@ function scatterNatureAcrossWorld(
   const rocks: RockSpec[] = [];
   const ferns: FernSpec[] = [];
   const fp = terrain.config.fortressPlateau;
+  const halfM = terrain.halfSizeM;
+  const outcropBound = halfM - 45;
+  const treeBound = halfM - 22;
+  const scatterSpan = (halfM - 35) * 2;
+  const groveSpan = (halfM - 47.5) * 2;
 
   const isNearRoad = (x: number, z: number, padM: number): boolean => {
     for (const poly of layout.roads) {
@@ -411,10 +421,10 @@ function scatterNatureAcrossWorld(
     return false;
   };
 
-  // 1. Place 6 guaranteed, clear, dry-land Stone & Iron Ore outcrops (shared by 3D renderer, minimap & SimEngine!)
+  // 1. Place guaranteed, clear, dry-land Stone & Iron Ore outcrops (6 on 2-lord maps, 9 on 3-lord triangle!)
   const findDryOutcropSpot = (idealX: number, idealZ: number): [number, number] => {
     const isGood = (x: number, z: number): boolean => {
-      if (Math.abs(x) > 235 || Math.abs(z) > 235) return false;
+      if (Math.abs(x) > outcropBound || Math.abs(z) > outcropBound) return false;
       if (terrain.heightAt(x, z) < 0.45 || terrain.slopeAt(x, z) > 0.24) return false;
       if (fp && Math.hypot(x - fp.cx, z - fp.cz) < fp.flatRadiusM + 10) return false;
       if (Math.hypot(x - layout.calibrationXZ[0], z - layout.calibrationXZ[1]) < 14) return false;
@@ -444,7 +454,7 @@ function scatterNatureAcrossWorld(
 
   const [pkx, pkz] = layout.playerKeepXZ;
   const [ekx, ekz] = layout.enemyCenterXZ;
-  const desiredOutcrops: readonly { kind: 'stone' | 'ore'; x: number; z: number }[] = [
+  const desiredOutcrops: { kind: 'stone' | 'ore'; x: number; z: number }[] = [
     { kind: 'stone', x: pkx - 28, z: pkz + 32 },
     { kind: 'ore', x: pkx - 32, z: pkz - 34 },
     { kind: 'stone', x: ekx + 28, z: ekz - 32 },
@@ -452,13 +462,21 @@ function scatterNatureAcrossWorld(
     { kind: 'stone', x: 0, z: -110 },
     { kind: 'ore', x: 0, z: 110 },
   ];
+  if (layout.thirdKeepXZ) {
+    const [tkx, tkz] = layout.thirdKeepXZ;
+    desiredOutcrops.push(
+      { kind: 'stone', x: tkx + 28, z: tkz + 32 },
+      { kind: 'ore', x: tkx - 32, z: tkz - 32 },
+      { kind: 'ore', x: 0, z: 0 },
+    );
+  }
   for (const d of desiredOutcrops) {
     const [ox, oz] = findDryOutcropSpot(d.x, d.z);
     outcrops.push({ kind: d.kind, x: ox, z: oz });
   }
 
   const isBlockedForTree = (x: number, z: number): boolean => {
-    if (Math.abs(x) > 258 || Math.abs(z) > 258) return true;
+    if (Math.abs(x) > treeBound || Math.abs(z) > treeBound) return true;
     if (Math.hypot(x - layout.calibrationXZ[0], z - layout.calibrationXZ[1]) < 14) return true;
     // Mission 5 rule: ZERO forest on the 100 m fortress plateau!
     if (fp && Math.hypot(x - fp.cx, z - fp.cz) < fp.flatRadiusM + 18) return true;
@@ -481,6 +499,7 @@ function scatterNatureAcrossWorld(
     if (layout.id === 'openField' && Math.abs(x) < 75 && Math.abs(z) < 55) return true;
     if (layout.id === 'valley' && Math.abs(z) < 48 && x > -105 && x < 165) return true;
     if (layout.id === 'fortress' && Math.abs(x) < 52 && z > 20 && z < 195) return true;
+    if (layout.id === 'triangle' && Math.hypot(x, z) < 75) return true;
     return false;
   };
 
@@ -493,10 +512,17 @@ function scatterNatureAcrossWorld(
     [ekx + 42, ekz + 12, 'oak', 26],
     [ekx - 14, ekz + 52, 'pine', 24],
   ];
-  const extraGroves = layout.id === 'forest' ? 24 : 16;
+  if (layout.thirdKeepXZ) {
+    const [tkx, tkz] = layout.thirdKeepXZ;
+    groveCenters.push(
+      [tkx - 42, tkz + 14, 'oak', 26],
+      [tkx + 20, tkz + 48, 'birch', 24],
+    );
+  }
+  const extraGroves = layout.id === 'forest' ? 24 : layout.id === 'triangle' ? 30 : 16;
   for (let g = 0; g < extraGroves; g++) {
-    const gx = (rng() - 0.5) * 465;
-    const gz = (rng() - 0.5) * 465;
+    const gx = (rng() - 0.5) * groveSpan;
+    const gz = (rng() - 0.5) * groveSpan;
     const rad = (layout.id === 'forest' ? 30 : 25) + rng() * 14;
     groveCenters.push([gx, gz, speciesCycle[g % 3]!, rad]);
   }
@@ -546,8 +572,8 @@ function scatterNatureAcrossWorld(
       z = gr[1] + Math.sin(ang) * rad;
       preferred = rng() < 0.76 ? gr[2] : speciesCycle[Math.floor(rng() * 3)]!;
     } else {
-      x = (rng() - 0.5) * 490;
-      z = (rng() - 0.5) * 490;
+      x = (rng() - 0.5) * scatterSpan;
+      z = (rng() - 0.5) * scatterSpan;
       preferred = speciesCycle[Math.floor(rng() * 3)]!;
     }
 
@@ -577,8 +603,8 @@ function scatterNatureAcrossWorld(
   let rAtt = 0;
   while (rocks.length < targetRocks && rAtt < targetRocks * 16) {
     rAtt++;
-    const x = (rng() - 0.5) * 490;
-    const z = (rng() - 0.5) * 490;
+    const x = (rng() - 0.5) * scatterSpan;
+    const z = (rng() - 0.5) * scatterSpan;
     if (Math.hypot(x - layout.calibrationXZ[0], z - layout.calibrationXZ[1]) < 12) continue;
     if (fp && Math.hypot(x - fp.cx, z - fp.cz) < fp.flatRadiusM + 4) continue;
     if (isNearRoad(x, z, 6.0)) continue;
@@ -610,7 +636,7 @@ function scatterNatureAcrossWorld(
     const r = 1.4 + rng() * 3.8;
     const fx = host.x + Math.cos(a) * r;
     const fz = host.z + Math.sin(a) * r;
-    if (Math.abs(fx) > 258 || Math.abs(fz) > 258) continue;
+    if (Math.abs(fx) > treeBound || Math.abs(fz) > treeBound) continue;
     if (terrain.heightAt(fx, fz) < 0.25) continue;
     if (isNearRoad(fx, fz, 4.5)) continue;
     ferns.push({
@@ -1247,7 +1273,161 @@ function buildFortressMap(): MapLayoutSpec {
   };
 }
 
-/** Generates the complete deterministic 560 x 560 m map layout for any of the 5 campaign/skirmish maps. */
+/**
+ * Map of Three Lords ('triangle', ported from anbow1/marchland):
+ *   - Larger 860 x 860 m battlefield (431 x 431 terrain grid -> 2.0 m cells)
+ *   - 3 Keeps on a 320 m circle, 120 deg apart (Player South, Crimson NW, Gold NE), free-for-all!
+ *   - 3 symmetric lakes, 3 outer mountain massifs, 9 outcrops, and 3 strategic capture points
+ *     each equidistant between two keeps (opposite the third keep across the middle).
+ */
+function buildTriangleMap(): MapLayoutSpec {
+  const rng = createRng(606);
+  const R = WORLD.triangleRadiusM; // 320 m
+  const keepPos: readonly (readonly [number, number])[] = [
+    [0, R],                                                // Side 0 (Player, South)
+    [Math.round(-R * Math.sin((2 * Math.PI) / 3)), Math.round(R * Math.cos((2 * Math.PI) / 3))], // Side 1 (NW: -277, -160)
+    [Math.round(R * Math.sin((2 * Math.PI) / 3)), Math.round(R * Math.cos((2 * Math.PI) / 3))],  // Side 2 (NE: +277, -160)
+  ];
+
+  // Symmetric lake offset from each Keep (70 m forward toward center + 62 m to the right)
+  const makeLake = (kx: number, kz: number) => {
+    const yaw = Math.atan2(-kx, -kz);
+    const fx = Math.sin(yaw);
+    const fz = Math.cos(yaw);
+    const rx = Math.cos(yaw);
+    const rz = -Math.sin(yaw);
+    return {
+      centerX: Math.round(kx + fx * 66 + rx * 62),
+      centerZ: Math.round(kz + fz * 66 + rz * 62),
+      radiusXM: 24,
+      radiusZM: 18,
+      maxDepthM: 1.45,
+      waterLevelM: 0.0,
+    };
+  };
+  const lakes = keepPos.map(([kx, kz]) => makeLake(kx, kz));
+
+  // 3 flanking mountain massifs on the outer rim opposite each Keep
+  const peaks: MountainPeakSpec[] = keepPos.map(([kx, kz]) => ({
+    cx: Math.round(-kx * 1.12),
+    cz: Math.round(-kz * 1.12),
+    radiusM: 84,
+    heightM: 34,
+  }));
+
+  const terraces: FlatTerraceSpec[] = [
+    ...keepPos.map(([kx, kz]) => ({ cx: kx, cz: kz, radiusXM: 56, radiusZM: 56, heightM: 1.85, blendM: 28 })),
+    { cx: 0, cz: 0, radiusXM: 48, radiusZM: 48, heightM: 2.1, blendM: 24 }, // central tactical clearing
+    { cx: -64, cz: R - 34, radiusXM: 16, radiusZM: 16, heightM: 1.85, blendM: 12 }, // calibration plinth
+  ];
+
+  const terrainConfig: TerrainConfig = {
+    profile: 'triangle',
+    seed: 67,
+    sizeM: WORLD.triangleSizeM,
+    gridResolution: 431,
+    lake: lakes[0]!,
+    extraLakes: [lakes[1]!, lakes[2]!],
+    terraces,
+    peaks,
+  };
+
+  const terrain = new TerrainField(terrainConfig);
+  const buildings: BuildingPlacementSpec[] = [];
+  const walls: WallSegmentSpec[] = [];
+  const farmStrips: FarmStripSpec[] = [];
+  const props: PropSpec[] = [];
+  const units: UnitPlacementSpec[] = [];
+
+  // Place 3 symmetric fortified starter towns (showcase mode) centered on each Lord's Keep
+  for (let s = 0; s < 3; s++) {
+    const team = s as 0 | 1 | 2;
+    const [kx, kz] = keepPos[s]!;
+    const yaw = Math.atan2(-kx, -kz);
+    const fx = Math.sin(yaw);
+    const fz = Math.cos(yaw);
+    const rx = Math.cos(yaw);
+    const rz = -Math.sin(yaw);
+    const at = (rM: number, fM: number): [number, number] => [kx + rx * rM + fx * fM, kz + rz * rM + fz * fM];
+
+    buildings.push(
+      { kind: 'keep_l1', x: kx, z: kz, yawRad: yaw, yardRx: 11.5, yardRz: 9.5, team },
+      { kind: 'storehouse_l1', x: at(-16, 4)[0], z: at(-16, 4)[1], yawRad: yaw, yardRx: 7.5, yardRz: 6.2, team },
+      { kind: 'house_l1', x: at(16, 4)[0], z: at(16, 4)[1], yawRad: yaw, yardRx: 6.0, yardRz: 5.6, team },
+      { kind: 'house_l1', x: at(16, 18)[0], z: at(16, 18)[1], yawRad: yaw, yardRx: 6.0, yardRz: 5.6, team },
+      { kind: 'market_l1', x: at(-16, 20)[0], z: at(-16, 20)[1], yawRad: yaw, yardRx: 8.5, yardRz: 7.5, team },
+      { kind: 'barracks_l1', x: at(0, 32)[0], z: at(0, 32)[1], yawRad: yaw, yardRx: 9.5, yardRz: 7.2, team },
+      { kind: 'smithy_l1', x: at(18, 32)[0], z: at(18, 32)[1], yawRad: yaw, yardRx: 6.8, yardRz: 5.8, team },
+    );
+
+    const [ax, az] = at(0, 62);
+    appendRegiment(units, 'swordsman', team, ax, az, 6, 3, yaw, 1.55, rng, 'idle');
+    const [bx, bz] = at(-14, 52);
+    appendRegiment(units, 'archer', team, bx, bz, 6, 3, yaw, 1.6, rng, 'idle');
+  }
+
+  // 3 strategic capture points each opposite one Keep at 0.42 * R (equidistant between the other two Keeps!)
+  const POINT_SHARE = 0.42;
+  const capturePoints: readonly CapturePointSpec[] = [
+    { id: 'cp_tri_village', label: 'Northern Crossroads', x: Math.round(-POINT_SHARE * keepPos[0]![0]), z: Math.round(-POINT_SHARE * keepPos[0]![1]) },
+    { id: 'cp_tri_mine', label: 'Eastern Iron Knoll', x: Math.round(-POINT_SHARE * keepPos[1]![0]), z: Math.round(-POINT_SHARE * keepPos[1]![1]) },
+    { id: 'cp_tri_quarry', label: 'Western Stone Quarry', x: Math.round(-POINT_SHARE * keepPos[2]![0]), z: Math.round(-POINT_SHARE * keepPos[2]![1]) },
+  ];
+
+  // Radial roads from each Keep into the center + ring road linking the 3 capture points
+  const roads: readonly (readonly (readonly [number, number])[])[] = [
+    [keepPos[0]!, [0, 120], [0, 0]],
+    [keepPos[1]!, [-110, -64], [0, 0]],
+    [keepPos[2]!, [110, -64], [0, 0]],
+    [
+      [capturePoints[0]!.x, capturePoints[0]!.z],
+      [capturePoints[1]!.x, capturePoints[1]!.z],
+      [capturePoints[2]!.x, capturePoints[2]!.z],
+      [capturePoints[0]!.x, capturePoints[0]!.z],
+    ],
+  ];
+
+  const calibrationXZ: readonly [number, number] = [-64, R - 34];
+  const nature = scatterNatureAcrossWorld(
+    terrain,
+    {
+      id: 'triangle',
+      playerKeepXZ: keepPos[0]!,
+      enemyCenterXZ: keepPos[1]!,
+      thirdKeepXZ: keepPos[2]!,
+      buildings,
+      farmStrips,
+      roads,
+      calibrationXZ,
+    },
+    1850,
+    200,
+    520,
+    rng,
+  );
+
+  return {
+    id: 'triangle',
+    title: 'Three Lords',
+    subtitle: 'Skirmish (860 m) · Three keeps in a triangle, free-for-all across the Ages',
+    terrainConfig,
+    playerKeepXZ: keepPos[0]!,
+    enemyCenterXZ: keepPos[1]!,
+    thirdKeepXZ: keepPos[2]!,
+    sideCount: 3,
+    calibrationXZ,
+    buildings,
+    walls,
+    farmStrips,
+    roads,
+    capturePoints,
+    ...nature,
+    props,
+    units,
+  };
+}
+
+/** Generates the complete deterministic map layout (560 m for 2-lord maps, 860 m for Three Lords 'triangle'). */
 export function buildMapLayout(id: MapLayoutId): MapLayoutSpec {
   switch (id) {
     case 'crossing':
@@ -1260,6 +1440,8 @@ export function buildMapLayout(id: MapLayoutId): MapLayoutSpec {
       return buildValleyMap();
     case 'fortress':
       return buildFortressMap();
+    case 'triangle':
+      return buildTriangleMap();
   }
 }
 
@@ -1270,5 +1452,6 @@ export function parseMapId(raw: string | null | undefined): MapLayoutId {
   if (norm === 'forest' || norm === 'bor') return 'forest';
   if (norm === 'valley' || norm === 'dolina') return 'valley';
   if (norm === 'fortress' || norm === 'twierdza') return 'fortress';
+  if (norm === 'triangle' || norm === 'trzech' || norm === 'threelords') return 'triangle';
   return 'crossing';
 }

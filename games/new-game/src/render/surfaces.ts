@@ -16,6 +16,7 @@ import {
 } from 'three/webgpu';
 import {
   abs,
+  attribute,
   clamp,
   dot,
   float,
@@ -82,6 +83,8 @@ export interface SurfaceLibrary {
   readonly ormArray: CompressedArrayTexture | DataArrayTexture;
   readonly photoTerrain: PhotoTerrainArrays | null;
   readonly buildingMaterial: MeshStandardNodeMaterial;
+  /** Shared instanced building material reading per-instance `aEra` (1=Medieval, 2=Early Modern, 3=19th Century) for ERA_LOOK! */
+  readonly instancedBuildingMaterial: MeshStandardNodeMaterial;
   /** Course-by-course shader-clipped material for buildings under construction (`object.userData.cutY`). */
   readonly siteBuildingMaterial: MeshStandardNodeMaterial;
   readonly groundMaterial: MeshStandardNodeMaterial;
@@ -156,6 +159,7 @@ async function loadPhotoTerrainArrays(anisotropy: number, size: number): Promise
 /**
  * Loads the 12-layer KTX2 surface library into 3 GPU texture arrays and compiles the shared
  * TSL building material (UV0 box-projected, UV1.x = layer/15, 1-UV1.y = iron metal flag, COLOR_0 = Cycles AO),
+ * instanced Era-look building material (per-instance `aEra` shifting L4/L5 roofs & facades with zero extra RAM),
  * course-by-course construction site clipping material, photogrammetry terrain PBR arrays,
  * and dual-scale medieval village ground material.
  */
@@ -185,8 +189,9 @@ export async function loadSurfaceLibrary(
     photoPromise,
   ]);
 
-  const buildingMaterial = createBuildingSurfaceMaterial(albedoArray, normalArray, ormArray, false, skyUniforms);
-  const siteBuildingMaterial = createBuildingSurfaceMaterial(albedoArray, normalArray, ormArray, true, skyUniforms);
+  const buildingMaterial = createBuildingSurfaceMaterial(albedoArray, normalArray, ormArray, 'static', skyUniforms);
+  const instancedBuildingMaterial = createBuildingSurfaceMaterial(albedoArray, normalArray, ormArray, 'instancedEra', skyUniforms);
+  const siteBuildingMaterial = createBuildingSurfaceMaterial(albedoArray, normalArray, ormArray, 'site', skyUniforms);
   const groundMaterial = createVillageGroundMaterial(albedoArray, normalArray, ormArray);
 
   return {
@@ -195,10 +200,12 @@ export async function loadSurfaceLibrary(
     ormArray,
     photoTerrain,
     buildingMaterial,
+    instancedBuildingMaterial,
     siteBuildingMaterial,
     groundMaterial,
     dispose() {
       buildingMaterial.dispose();
+      instancedBuildingMaterial.dispose();
       siteBuildingMaterial.dispose();
       groundMaterial.dispose();
       albedoArray.dispose();
@@ -215,22 +222,59 @@ function createBuildingSurfaceMaterial(
   albedoArray: CompressedArrayTexture | DataArrayTexture,
   normalArray: CompressedArrayTexture | DataArrayTexture,
   ormArray: CompressedArrayTexture | DataArrayTexture,
-  constructionSite: boolean,
+  mode: 'static' | 'instancedEra' | 'site',
   skyUniforms?: PhysicalSkyUniforms,
 ): MeshStandardNodeMaterial {
   const mat = new MeshStandardNodeMaterial({
     roughness: 1.0,
     metalness: 0.0,
   });
-  mat.name = constructionSite ? 'MarchlandBuildingSiteMat' : 'MarchlandBuildingSurfaceMat';
+  mat.name =
+    mode === 'site'
+      ? 'MarchlandBuildingSiteMat'
+      : mode === 'instancedEra'
+        ? 'MarchlandBuildingEraInstancedMat'
+        : 'MarchlandBuildingSurfaceMat';
 
   const uv0 = uv(0);
   const uv1 = uv(1);
 
   // UV1.x carries `layer / 15.0` from Blender; UV1.y is V-flipped by glTF so `1.0 - uv1.y` is metalFlag.
-  const layerFloat = round(clamp(uv1.x.mul(15.0), 0.0, 11.0));
-  const layerIdx = int(layerFloat);
+  const rawLayerFloat = round(clamp(uv1.x.mul(15.0), 0.0, 11.0));
   const ironMask = smoothstep(float(0.45), float(0.85), float(1.0).sub(uv1.y));
+
+  // Era visual remapping (marchland surfaceModel.ts ERA_LOOK):
+  //   Era 2 (L4 Early Modern): thatch/shingles -> terracotta red tile, plaster -> limewashed white, rubble -> ashlar
+  //   Era 3 (L5 19th Century): thatch/shingles -> dark grey slate, plaster/rubble -> dressed classical ashlar, timber -> painted slate
+  const eraNode =
+    mode === 'instancedEra'
+      ? attribute('aEra', 'float')
+      : mode === 'site'
+        ? uniform(1.0).onObjectUpdate((frame) => (frame.object?.userData['era'] as number | undefined) ?? 1.0)
+        : float(1.0);
+  const era2Mask = smoothstep(float(1.5), float(1.95), eraNode).mul(float(1.0).sub(smoothstep(float(2.5), float(2.95), eraNode)));
+  const era3Mask = smoothstep(float(2.5), float(2.95), eraNode);
+
+  const isPlasterRaw = smoothstep(float(0.5), float(0.05), abs(rawLayerFloat.sub(3.0)));
+  const isBeamRaw = smoothstep(float(0.5), float(0.05), abs(rawLayerFloat.sub(4.0)));
+  const isBoardsRaw = smoothstep(float(0.5), float(0.05), abs(rawLayerFloat.sub(5.0)));
+  const isThatchRaw = smoothstep(float(0.5), float(0.05), abs(rawLayerFloat.sub(6.0)));
+  const isShinglesRaw = smoothstep(float(0.5), float(0.05), abs(rawLayerFloat.sub(7.0)));
+  const isRubbleRaw = smoothstep(float(0.5), float(0.05), abs(rawLayerFloat.sub(8.0)));
+  const isRoofRaw = clamp(isThatchRaw.add(isShinglesRaw), 0.0, 1.0);
+  const isTimberRaw = clamp(isBeamRaw.add(isBoardsRaw), 0.0, 1.0);
+
+  // Remap KTX2 layer index for Era 2 & Era 3 before sampling (zero extra texture fetches!)
+  let mappedLayer = rawLayerFloat;
+  // Era 2: thatch(6) -> shingles(7), rubble(8) -> ashlar(9)
+  mappedLayer = mix(mappedLayer, float(7.0), era2Mask.mul(isThatchRaw));
+  mappedLayer = mix(mappedLayer, float(9.0), era2Mask.mul(isRubbleRaw));
+  // Era 3: thatch(6) -> shingles(7), plaster(3) & rubble(8) -> ashlar(9)
+  mappedLayer = mix(mappedLayer, float(7.0), era3Mask.mul(isThatchRaw));
+  mappedLayer = mix(mappedLayer, float(9.0), era3Mask.mul(clamp(isPlasterRaw.add(isRubbleRaw), 0.0, 1.0)));
+
+  const layerFloat = round(clamp(mappedLayer, 0.0, 11.0));
+  const layerIdx = int(layerFloat);
 
   const albSample = texture(albedoArray, uv0).depth(layerIdx).rgb;
   const norSample = texture(normalArray, uv0).depth(layerIdx).rgb;
@@ -241,8 +285,23 @@ function createBuildingSurfaceMaterial(
   const isPlaster = smoothstep(float(0.5), float(0.05), abs(layerFloat.sub(3.0)));
   const plasterLifted = albSample.mul(mix(vec3(1.0), vec3(1.62, 1.56, 1.44), isPlaster));
 
+  // Apply ERA_LOOK architectural colour grading:
+  //   Era 2: warm terracotta red roofs + bright whitewashed plaster
+  //   Era 3: cool dark slate roofs + classical pale ashlar + painted dark slate timber
+  const era2RoofTint = mix(vec3(1.0), vec3(1.56, 0.72, 0.48), era2Mask.mul(isRoofRaw));
+  const era2PlasterTint = mix(vec3(1.0), vec3(1.14, 1.11, 1.05), era2Mask.mul(isPlasterRaw));
+  const era3RoofTint = mix(vec3(1.0), vec3(0.68, 0.72, 0.80), era3Mask.mul(isRoofRaw));
+  const era3WallTint = mix(vec3(1.0), vec3(0.95, 0.93, 0.89), era3Mask.mul(clamp(isPlasterRaw.add(isRubbleRaw), 0.0, 1.0)));
+  const era3TimberTint = mix(vec3(1.0), vec3(0.62, 0.68, 0.76), era3Mask.mul(isTimberRaw));
+  const eraTinted = plasterLifted
+    .mul(era2RoofTint)
+    .mul(era2PlasterTint)
+    .mul(era3RoofTint)
+    .mul(era3WallTint)
+    .mul(era3TimberTint);
+
   // Forged iron door hinges, shutter straps, and handle override albedo/roughness/metalness.
-  const baseAlb = mix(plasterLifted, vec3(0.24, 0.24, 0.26), ironMask);
+  const baseAlb = mix(eraTinted, vec3(0.24, 0.24, 0.26), ironMask);
 
   // Multiply by Cycles-baked vertex AO & weathering tint (COLOR_0) + micro-AO from ORM.r.
   const vcol = vertexColor().rgb;
@@ -276,7 +335,7 @@ function createBuildingSurfaceMaterial(
     vec3(0.015),
     vec3(0.82),
   );
-  if (constructionSite) {
+  if (mode === 'site') {
     // Course-by-course construction clipping (FPS/marchland townView.ts): discards geometry above `userData.cutY`
     // and washes out unbuilt courses slightly grey until the last course is laid!
     const cutY = uniform(UNCUT_Y).onObjectUpdate(

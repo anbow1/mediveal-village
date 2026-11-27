@@ -2,21 +2,23 @@
 
 import type {
   BuildingTypeId,
+  EraNumber,
   GoodId,
   ResourceMap,
   UnitTypeId,
 } from '../config.ts';
 import type { MapLayoutId } from './terrain.ts';
 
-export type SideId = 0 | 1;
+export type SideId = 0 | 1 | 2;
+export type BuildingLevel = 1 | 2 | 3 | 4 | 5;
 export type GameMode = 'skirmish' | 'defence' | 'tutorial' | 'campaign';
 export type Difficulty = 'easy' | 'normal' | 'hard';
 export type AiPersonality = 'builder' | 'raider' | 'knight';
 export type KeepSlot = 0 | 1 | 2;
-export type CampaignMissionId = 1 | 2 | 3 | 4 | 5;
+export type CampaignMissionId = 1 | 2 | 3 | 4 | 5 | 6;
 
-export type FormationKind = 'line' | 'column' | 'schiltron' | 'wedge' | 'loose';
-export type StanceKind = 'hold' | 'guard' | 'skirmish' | 'shieldWall' | 'pikeWall';
+export type FormationKind = 'line' | 'column' | 'schiltron' | 'wedge' | 'loose' | 'square';
+export type StanceKind = 'hold' | 'guard' | 'skirmish' | 'shieldWall' | 'pikeWall' | 'volleyFire';
 
 export type OrderKind =
   | 'march'
@@ -114,7 +116,7 @@ export interface BuildingEntity {
   type: BuildingTypeId;
   /** For Mission 4 rebuildable ruins: original building type restored at half price. */
   ruinTargetType?: BuildingTypeId;
-  level: 1 | 2 | 3;
+  level: BuildingLevel;
   x: number;
   z: number;
   yawRad: number;
@@ -126,7 +128,7 @@ export interface BuildingEntity {
   buildCostNeeded: ResourceMap;
   buildCostDelivered: ResourceMap;
   /** Upgrade state (if upgrading from level -> level+1). */
-  upgradingToLevel: (2 | 3) | null;
+  upgradingToLevel: (2 | 3 | 4 | 5) | null;
   upgradeTimerS: number;
   paused: boolean;
   status: BuildingStatus;
@@ -268,12 +270,18 @@ export interface RegimentEntity {
   noUpkeep?: boolean;
   /** Optional scenario role tag (e.g., 'm5_guard', 'm5_sortie', 'm2_camp'). */
   scenarioTag?: string;
+  /** Field blackpowder volleys remaining for firearm regiments (resupplied from Keep/Storehouse/Barracks or town stock). */
+  ammoVolleys?: number;
+  maxAmmoVolleys?: number;
+  ammoResupplyTimerS?: number;
+  /** True when Dragoons have dismounted to fight on foot as accurate musketeers. */
+  dismounted?: boolean;
 }
 
 export interface ProjectileEntity {
   readonly id: number;
   readonly side: SideId;
-  readonly kind: 'arrow' | 'bolt' | 'cannonball' | 'mortar';
+  readonly kind: 'arrow' | 'bolt' | 'cannonball' | 'mortar' | 'musketball';
   readonly sourceRegimentId: number | null;
   x: number;
   y: number;
@@ -295,6 +303,10 @@ export interface ProjectileEntity {
   readonly targetBuildingId: number | null;
   readonly targetWallId: number | null;
   readonly shooterAccuracyMul: number;
+  /** Extra morale shock carried by volleyFire rounds. */
+  readonly extraMoraleShock?: number;
+  /** True if fired by Riflemen skirmishers (ignores forest cover penalty). */
+  readonly ignoresForestCover?: boolean;
 }
 
 export interface CapturePointEntity {
@@ -331,14 +343,17 @@ export interface AlertEvent {
     | 'pointCaptured'
     | 'tributePaid'
     | 'waveIncoming'
-    | 'missionInfo';
+    | 'missionInfo'
+    | 'townFell'
+    | 'eraAdvanced'
+    | 'greatBuilding';
   readonly x: number;
   readonly z: number;
   readonly detail: string;
 }
 
 export interface FxEvent {
-  readonly kind: 'cannonMuzzle' | 'mortarImpact' | 'arrowHit' | 'swordClash' | 'horn' | 'buildHammer' | 'woodChop' | 'wallCollapse';
+  readonly kind: 'cannonMuzzle' | 'musketShot' | 'mortarImpact' | 'arrowHit' | 'swordClash' | 'horn' | 'buildHammer' | 'woodChop' | 'wallCollapse';
   readonly x: number;
   readonly y: number;
   readonly z: number;
@@ -373,6 +388,8 @@ export interface SavedArmyFormation {
 
 export interface SideState {
   readonly side: SideId;
+  /** True on 3-lord maps once this side's Keep has fallen and its town is knocked out of the match. */
+  absent?: boolean;
   /** Shared town warehouse (Keep + all completed Storehouses). */
   stock: Record<GoodId, number>;
   /** Rolling 2-minute production/consumption ledger (sampled every 10 s). */
@@ -387,6 +404,10 @@ export interface SideState {
   armyStarving: boolean;
   /** Active Chapel count (> 0 -> +6 army morale). */
   hasChapel: boolean;
+  /** Active Great Buildings (marchland GREAT): Cathedral, Town Hall, Manufactory. */
+  hasCathedral?: boolean;
+  hasTownHall?: boolean;
+  hasManufactory?: boolean;
   /** Telemetry counters for end-screen timeline charts & star ratings. */
   totalKills: number;
   totalLosses: number;
@@ -402,6 +423,9 @@ export interface SideState {
   equipmentOrders?: ResourceMap;
   /** Multi-regiment formations saved by the player/side. */
   savedFormations?: SavedArmyFormation[];
+  /** Currently selected foe on 3-lord free-for-all maps (used by AI to avoid piling onto one target). */
+  aiTargetSide?: SideId | null;
+  aiAttacking?: boolean;
 }
 
 export interface TimelinePoint {
@@ -412,6 +436,9 @@ export interface TimelinePoint {
   readonly p1Pop: number;
   readonly p1Army: number;
   readonly p1Gold: number;
+  readonly p2Pop?: number;
+  readonly p2Army?: number;
+  readonly p2Gold?: number;
 }
 
 export interface TutorialStepState {
@@ -424,6 +451,10 @@ export interface ScenarioState {
   readonly missionId: CampaignMissionId | null;
   readonly difficulty: Difficulty;
   readonly aiPersonality: AiPersonality;
+  /** Starting Era for Skirmish/Defence (1 = Middle Ages, 2 = Early Modern, 3 = 19th Century). */
+  readonly startAge?: EraNumber;
+  /** Fast Ages toggle: -35% Keep L4/L5 cost & build time and AI enters Ages at 25 min instead of 50 min. */
+  readonly fastAges?: boolean;
   /** Mission / Defence countdown or elapsed milestones. */
   deadlineS: number | null;
   waveIndex: number;
@@ -465,6 +496,10 @@ export interface SimInitOptions {
   readonly aiPersonality?: AiPersonality;
   readonly keepSlot?: KeepSlot;
   readonly carryOver?: CampaignCarryOver;
+  /** Starting Era (1 = Middle Ages default, 2 = Early Modern, 3 = 19th Century; ignored in Campaign). */
+  readonly startAge?: EraNumber;
+  /** Fast Ages toggle (0.65x Keep L4/L5 cost & duration, AI enters Ages at 25 min). */
+  readonly fastAges?: boolean;
   /** If true, populates rich demo town + opposing armies right away (used for Stage 5/6 showcase & battle testing). */
   readonly showcaseMode?: boolean;
   /** Disable AI controller (for deterministic headless unit tests & duels). */
@@ -484,6 +519,8 @@ export type PlacementRejectionReason =
   | 'needsLake'
   | 'needsStone'
   | 'needsOre'
+  | 'needsKeep'
+  | 'onlyOne'
   | 'maxBuildings'
   | 'insufficientResources';
 
@@ -512,6 +549,7 @@ export type SimCommand =
   | { readonly type: 'deleteArmyFormation'; readonly side: SideId; readonly formationId: number }
   | { readonly type: 'setStance'; readonly side: SideId; readonly regimentIds: readonly number[]; readonly stance: StanceKind }
   | { readonly type: 'setHoldFire'; readonly side: SideId; readonly regimentIds: readonly number[]; readonly holdFire: boolean }
+  | { readonly type: 'setDismounted'; readonly side: SideId; readonly regimentIds: readonly number[]; readonly dismounted: boolean }
   | { readonly type: 'setGoodPriority'; readonly side: SideId; readonly good: GoodId; readonly priority: -1 | 0 | 1 }
   | { readonly type: 'upgradeTransport'; readonly side: SideId }
   | { readonly type: 'ungarrisonWatchtower'; readonly side: SideId; readonly buildingId: number }
@@ -534,13 +572,15 @@ export interface RoadSegmentRecord {
 export interface SimWorldState {
   readonly mapId: MapLayoutId;
   readonly seed: number;
+  /** Number of active sides in this match (2 on standard maps, 3 on Three Lords 'triangle'). */
+  readonly sideCount?: 2 | 3;
   tick: number;
   timeS: number;
   nextEntityId: number;
   nextOrderId: number;
   nextAlertId: number;
   rngState: number;
-  sides: [SideState, SideState];
+  sides: [SideState, SideState, SideState];
   buildings: BuildingEntity[];
   walls: WallSegmentEntity[];
   gates: GateEntity[];

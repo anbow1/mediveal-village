@@ -12,10 +12,12 @@ describe('Stage 5 full 560 x 560 m Campaign & Skirmish maps', () => {
     expect(parseMapId('valley')).toBe('valley');
     expect(parseMapId('fortress')).toBe('fortress');
     expect(parseMapId('twierdza')).toBe('fortress');
+    expect(parseMapId('triangle')).toBe('triangle');
+    expect(parseMapId('trzech')).toBe('triangle');
   });
 
   for (const mapId of ALL_MAP_IDS) {
-    it(`generates deterministic, well-grounded 560x560 m layout for '${mapId}'`, () => {
+    it(`generates deterministic, well-grounded layout for '${mapId}'`, () => {
       const a = buildMapLayout(mapId);
       const b = buildMapLayout(mapId);
       expect(a.buildings.length).toBe(b.buildings.length);
@@ -28,7 +30,9 @@ describe('Stage 5 full 560 x 560 m Campaign & Skirmish maps', () => {
       expect(a.units.length).toBeGreaterThanOrEqual(100);
 
       const terrain = new TerrainField(a.terrainConfig);
-      expect(terrain.config.sizeM).toBe(560);
+      const expectedSize = mapId === 'triangle' ? 860 : 560;
+      const treeBound = terrain.halfSizeM - 15;
+      expect(terrain.config.sizeM).toBe(expectedSize);
 
       // Every building (except lakeside fisher hut pilings) sits on dry land above waterline
       for (const bld of a.buildings) {
@@ -37,8 +41,8 @@ describe('Stage 5 full 560 x 560 m Campaign & Skirmish maps', () => {
       }
       // Every tree stays strictly on dry bank and inside map bounds
       for (const tr of a.trees) {
-        expect(Math.abs(tr.x)).toBeLessThan(265);
-        expect(Math.abs(tr.z)).toBeLessThan(265);
+        expect(Math.abs(tr.x)).toBeLessThan(treeBound);
+        expect(Math.abs(tr.z)).toBeLessThan(treeBound);
         expect(terrain.heightAt(tr.x, tr.z)).toBeGreaterThan(0.35);
       }
 

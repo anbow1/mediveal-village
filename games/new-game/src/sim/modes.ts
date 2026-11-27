@@ -16,6 +16,7 @@ import type {
   CampaignCarryOver,
   CampaignMissionId,
   RegimentEntity,
+  SideId,
   SimWorldState,
   TutorialStepState,
 } from './types.ts';
@@ -284,6 +285,119 @@ export function applyMissionSetup(
     spawnRegiment(state, 1, 'crossbowmen', 0, -2, 0, { count: scaleEnemyMen(16), noUpkeep: true, scenarioTag: 'm5_bailey' });
 
     pushAlert(state, 0, 'missionInfo', 0, 160, 'M5: Expand your southern camp, then cross the ford to storm the Fortress');
+  } else if (missionId === 6) {
+    // Mission 6: The Gunpowder Bastion (Era 2 siege on Fortress map!)
+    // Both Player and Crimson Bastion operate in Era 2 (Keep L4, Barracks L4, blackpowder garrisons & field cannons!).
+    for (const w of state.walls) {
+      w.maxHp = Math.round(ECONOMY.wallSegmentHp * CAMPAIGN.m5WallHpMul);
+      w.hp = w.maxHp;
+    }
+    for (const g of state.gates) {
+      g.maxHp = Math.round(ECONOMY.gateHp * CAMPAIGN.m5WallHpMul);
+      g.hp = g.maxHp;
+    }
+    const keepL4Hp = ECONOMY.keepLevels[3]!.maxHp;
+    for (const b of state.buildings) {
+      if (b.type === 'keep') {
+        b.level = 4;
+        b.maxHp = keepL4Hp;
+        b.hp = keepL4Hp;
+        if (b.side === 1) {
+          b.indestructible = true;
+          b.isFortressDonzon = true;
+        }
+      } else if (b.type === 'barracks') {
+        b.level = 4;
+      } else if (b.side === 1 && b.type === 'watchtower') {
+        b.garrisonType = 'crossbowmen';
+        b.garrisonCount = 3;
+      }
+    }
+
+    // Add Era 2 Gunsmith & Powder Mill in player's southern siege camp so powder logistics run smoothly from minute 1!
+    const campSites: readonly (readonly [BuildingTypeId, number, number])[] = [
+      ['gunsmith', -34, 174],
+      ['powderMill', 34, 174],
+    ];
+    for (const [bType, bx, bz] of campSites) {
+      const bDef = BUILDING_DEFS[bType];
+      state.buildings.push({
+        id: state.nextEntityId++,
+        side: 0,
+        type: bType,
+        level: 4,
+        x: bx,
+        z: bz,
+        yawRad: Math.PI,
+        hp: bDef.maxHp * 2,
+        maxHp: bDef.maxHp * 2,
+        buildProgress: 1,
+        buildCostNeeded: {},
+        buildCostDelivered: {},
+        upgradingToLevel: null,
+        upgradeTimerS: 0,
+        paused: false,
+        status: 'idle',
+        inputs: {},
+        yard: {},
+        pendingOrders: 0,
+        residents: 0,
+        houseFoodRations: 0,
+        houseWineCasks: 0,
+        hungry: false,
+        growthTimerS: 0,
+        cycleTimerS: 0,
+        yardFullTimerS: 0,
+        strips: [],
+        recruitQueue: [],
+        fireCooldownS: 0,
+        garrisonRegimentIds: [],
+        garrisonType: null,
+        garrisonCount: 0,
+      });
+    }
+
+    // Generous Era 2 war chest scaled by difficulty
+    const stock = state.sides[0].stock;
+    stock.gold = Math.max(stock.gold, Math.round(900 * diffCfg.playerStockMul));
+    stock.timber = Math.max(stock.timber, Math.round(160 * diffCfg.playerStockMul));
+    stock.planks = Math.max(stock.planks, Math.round(120 * diffCfg.playerStockMul));
+    stock.stone = Math.max(stock.stone, Math.round(140 * diffCfg.playerStockMul));
+    stock.iron = Math.max(stock.iron, Math.round(80 * diffCfg.playerStockMul));
+    stock.bread = Math.max(stock.bread, Math.round(90 * diffCfg.playerStockMul));
+    stock.muskets = Math.max(stock.muskets, Math.round(36 * diffCfg.playerStockMul));
+    stock.powder = Math.max(stock.powder, Math.round(72 * diffCfg.playerStockMul));
+
+    // Player Era 2 siege battery & assault corps south of the river
+    spawnRegiment(state, 0, 'cannon', -14, 148, Math.PI, { count: 2 });
+    spawnRegiment(state, 0, 'cannon', 14, 148, Math.PI, { count: 2 });
+    spawnRegiment(state, 0, 'mortar', 0, 156, Math.PI, { count: 1 });
+    if (state.regiments.filter((r) => r.side === 0 && r.unitType !== 'cannon' && r.unitType !== 'mortar').length === 0) {
+      const defaults: readonly [UnitTypeId, number, number][] = [
+        ['musketeers', -24, 138],
+        ['musketeers', 24, 138],
+        ['pikemen', -10, 136],
+        ['pikemen', 10, 136],
+        ['dragoons', -36, 146],
+        ['cuirassiers', 36, 146],
+      ];
+      for (const [ut, x, z] of defaults) {
+        spawnRegiment(state, 0, ut, x, z, Math.PI, { count: 14 });
+      }
+    }
+
+    // Crimson Era 2 Gunpowder Bastion defenders + counter-battery field cannons!
+    spawnRegiment(state, 1, 'cuirassiers', -14, -26, 0, { count: scaleEnemyMen(12), noUpkeep: true, scenarioTag: 'm6_guard' });
+    spawnRegiment(state, 1, 'musketeers', 0, -24, 0, { count: scaleEnemyMen(16), noUpkeep: true, scenarioTag: 'm6_guard' });
+    spawnRegiment(state, 1, 'cuirassiers', 14, -26, 0, { count: scaleEnemyMen(12), noUpkeep: true, scenarioTag: 'm6_guard' });
+    spawnRegiment(state, 1, 'cannon', -22, -14, 0, { count: 2, noUpkeep: true, scenarioTag: 'm6_battery' });
+    spawnRegiment(state, 1, 'cannon', 22, -14, 0, { count: 2, noUpkeep: true, scenarioTag: 'm6_battery' });
+    spawnRegiment(state, 1, 'dragoons', -18, 12, 0, { count: scaleEnemyMen(10), noUpkeep: true, scenarioTag: 'm6_sortie' });
+    spawnRegiment(state, 1, 'musketeers', 18, 12, 0, { count: scaleEnemyMen(16), noUpkeep: true, scenarioTag: 'm6_sortie' });
+    spawnRegiment(state, 1, 'pikemen', -32, -8, 0, { count: scaleEnemyMen(16), noUpkeep: true, scenarioTag: 'm6_bailey' });
+    spawnRegiment(state, 1, 'musketeers', 32, -8, 0, { count: scaleEnemyMen(16), noUpkeep: true, scenarioTag: 'm6_bailey' });
+
+    pushAlert(state, 0, 'missionInfo', 0, 160, 'M6: Silence the Era 2 bastion cannons & crush the Gunpowder Guard');
   }
 }
 
@@ -300,13 +414,12 @@ function orderRegimentsTo(regs: readonly RegimentEntity[], x: number, z: number,
   }
 }
 
-/** Steps scenario triggers, Tutorial auto-steps, Defence waves, Campaign M1–M5 & victory/defeat evaluation! */
+/** Steps scenario triggers, Tutorial auto-steps, Defence waves, Campaign M1–M6 & victory/defeat evaluation! */
 export function stepScenario(state: SimWorldState, dtS: number): void {
   const sc = state.scenario;
   if (sc.outcome !== 'playing') return;
 
   const p0Keep = findKeep(state, 0);
-  const p1Keep = findKeep(state, 1);
   const enemyMul = DIFFICULTY_SETTINGS[sc.difficulty].enemyArmyMul;
   const scaleMen = (base: number): number => Math.max(4, Math.min(20, Math.round(base * enemyMul)));
 
@@ -343,7 +456,7 @@ export function stepScenario(state: SimWorldState, dtS: number): void {
     return;
   }
 
-  // 2. Defence mode: 25 min prep to wave 1, then 10 escalating waves every 5 min (scaled by difficulty)!
+  // 2. Defence mode: 25 min prep to wave 1, then 10 escalating waves every 5 min (Era-aware waves!)
   if (sc.mode === 'defence') {
     if (!p0Keep) {
       sc.outcome = 'defeat';
@@ -357,14 +470,34 @@ export function stepScenario(state: SimWorldState, dtS: number): void {
       const sz = 0;
       const baseCount = Math.min(8, 2 + Math.floor(sc.waveIndex * 0.7));
       const waveCount = Math.max(1, Math.round(baseCount * enemyMul));
-      const pool: readonly UnitTypeId[] =
-        sc.waveIndex <= 2
-          ? ['militia', 'pikemen', 'archers']
-          : sc.waveIndex <= 4
-            ? ['pikemen', 'swordsmen', 'archers', 'crossbowmen']
-            : sc.waveIndex <= 7
-              ? ['swordsmen', 'halberdiers', 'crossbowmen', 'lightCav']
-              : ['swordsmen', 'halberdiers', 'heavyCav', 'crossbowmen', 'cannon'];
+      const era = sc.startAge ?? 1;
+      let pool: readonly UnitTypeId[];
+      if (era >= 3) {
+        pool =
+          sc.waveIndex <= 3
+            ? ['musketeers', 'pikemen', 'dragoons']
+            : sc.waveIndex <= 6
+              ? ['lineInfantry', 'cuirassiers', 'dragoons', 'musketeers']
+              : ['lineInfantry', 'riflemen', 'hussars', 'cuirassiers', 'cannon', 'mortar'];
+      } else if (era === 2) {
+        pool =
+          sc.waveIndex <= 3
+            ? ['pikemen', 'musketeers', 'crossbowmen']
+            : sc.waveIndex <= 6
+              ? ['musketeers', 'cuirassiers', 'dragoons', 'halberdiers']
+              : ['musketeers', 'lineInfantry', 'riflemen', 'cuirassiers', 'hussars', 'cannon'];
+      } else {
+        pool =
+          sc.waveIndex <= 2
+            ? ['militia', 'pikemen', 'archers']
+            : sc.waveIndex <= 4
+              ? ['pikemen', 'swordsmen', 'archers', 'crossbowmen']
+              : sc.waveIndex <= 6
+                ? ['swordsmen', 'halberdiers', 'crossbowmen', 'lightCav']
+                : sc.waveIndex <= 8
+                  ? ['swordsmen', 'musketeers', 'cuirassiers', 'halberdiers', 'cannon']
+                  : ['lineInfantry', 'riflemen', 'hussars', 'heavyCav', 'cannon', 'mortar'];
+      }
       const spawned: RegimentEntity[] = [];
       for (let k = 0; k < waveCount; k++) {
         const ut = pool[(sc.waveIndex + k) % pool.length]!;
@@ -387,7 +520,7 @@ export function stepScenario(state: SimWorldState, dtS: number): void {
     return;
   }
 
-  // 3. Campaign Missions 1–5
+  // 3. Campaign Missions 1–6
   if (sc.mode === 'campaign' && sc.missionId !== null) {
     const m = sc.missionId;
 
@@ -590,15 +723,143 @@ export function stepScenario(state: SimWorldState, dtS: number): void {
       }
       return;
     }
+
+    if (m === 6) {
+      const p0Regs = state.regiments.filter((r) => r.side === 0 && countAliveSoldiers(r) > 0);
+      if (!p0Keep) {
+        sc.outcome = 'defeat';
+        sc.outcomeReason = 'campLost';
+        return;
+      }
+      if (p0Regs.length === 0) {
+        sc.playerNoRegimentsS += dtS;
+        if (sc.playerNoRegimentsS >= 60) {
+          sc.outcome = 'defeat';
+          sc.outcomeReason = 'armyLost';
+          return;
+        }
+      } else {
+        sc.playerNoRegimentsS = 0;
+      }
+
+      // Trigger 1: Dragoon & Musketeer sortie when player artillery advances within 165 m of Bastion Donżon!
+      if (!sc.firedTriggers.includes('m6_sortie')) {
+        const gunNear = p0Regs.find(
+          (r) => (r.unitType === 'cannon' || r.unitType === 'mortar') && Math.hypot(r.x - 0, r.z - -48) <= 165,
+        );
+        if (gunNear) {
+          sc.firedTriggers.push('m6_sortie');
+          orderRegimentsTo(state.regiments.filter((r) => r.scenarioTag === 'm6_sortie'), gunNear.x, gunNear.z);
+          pushAlert(state, 0, 'enemyInVillage', gunNear.x, gunNear.z, 'Bastion dragoons & musketeers sortie against your guns!');
+        }
+      }
+
+      // Trigger 2: Min 11 Era 2 relief army arrives behind southern camp
+      if (state.timeS >= CAMPAIGN.m6ReliefTimeS && !sc.firedTriggers.includes('m6_relief')) {
+        sc.firedTriggers.push('m6_relief');
+        const relief = [
+          spawnRegiment(state, 1, 'dragoons', -45, 225, 0, { count: scaleMen(10), noUpkeep: true, scenarioTag: 'm6_relief' }),
+          spawnRegiment(state, 1, 'musketeers', 0, 228, 0, { count: scaleMen(16), noUpkeep: true, scenarioTag: 'm6_relief' }),
+          spawnRegiment(state, 1, 'cuirassiers', 45, 225, 0, { count: scaleMen(10), noUpkeep: true, scenarioTag: 'm6_relief' }),
+        ];
+        orderRegimentsTo(relief, p0Keep.x, p0Keep.z, p0Keep.id);
+        pushAlert(state, 0, 'waveIncoming', 0, 225, 'Enemy Era 2 relief force arrives behind your camp!');
+      }
+
+      // Trigger 3: Enemy interior Barracks L4 spawns Era 2 regiments every 4.5 min while standing!
+      const spawnIdx = Math.floor(state.timeS / CAMPAIGN.m6BarracksSpawnS);
+      if (spawnIdx >= 1 && !sc.firedTriggers.includes(`m6_bar_${spawnIdx}`)) {
+        const enemyBar = state.buildings.find((b: BuildingEntity) => b.side === 1 && b.type === 'barracks' && b.hp > 0);
+        if (enemyBar) {
+          sc.firedTriggers.push(`m6_bar_${spawnIdx}`);
+          const rot: readonly UnitTypeId[] = ['musketeers', 'cuirassiers', 'pikemen'];
+          spawnRegiment(state, 1, rot[spawnIdx % 3]!, enemyBar.x, enemyBar.z + 8, 0, { count: scaleMen(14), noUpkeep: true });
+        }
+      }
+
+      // Victory: Courtyard Gunpowder Guard defeated!
+      const guardsAlive = state.regiments.filter((r) => r.scenarioTag === 'm6_guard' && countAliveSoldiers(r) > 0);
+      if (guardsAlive.length === 0) {
+        sc.outcome = 'victory';
+        sc.outcomeReason = 'bastionCaptured';
+        const fastAndSafe =
+          sc.fortressBreachedAtS !== null &&
+          sc.fortressBreachedAtS <= 720 &&
+          sc.playerCannonsLost === 0;
+        sc.starsEarned = fastAndSafe ? 3 : 2;
+      }
+      return;
+    }
   }
 
-  // 4. Skirmish victory / defeat: lose Keep -> defeat; destroy enemy Keep -> victory!
+  // 4. Skirmish victory / defeat: lose Keep -> defeat; on 3-lord maps knock out fallen AI towns, win when all foes are gone!
   if (!p0Keep) {
     sc.outcome = 'defeat';
     sc.outcomeReason = 'keepLost';
-  } else if (!p1Keep) {
+    return;
+  }
+
+  let anyFoeStanding = false;
+  for (const s of state.sides) {
+    if (s.side === 0) continue;
+    if (s.absent) continue;
+    const foeKeep = findKeep(state, s.side);
+    if (!foeKeep) {
+      if ((state.sideCount ?? state.sides.length) >= 3) {
+        fallTown(state, s.side);
+      }
+    } else {
+      anyFoeStanding = true;
+    }
+  }
+
+  if (!anyFoeStanding) {
     sc.outcome = 'victory';
     sc.outcomeReason = 'enemyKeepDestroyed';
-    sc.starsEarned = state.sides[0].buildingsLost === 0 ? 3 : 2;
+    sc.starsEarned = state.sides[0]!.buildingsLost === 0 ? 3 : 2;
   }
+}
+
+/** Knocks a defeated faction out of a Three Lords match when its Keep falls: clears army/citizens and turns remaining buildings to ruins. */
+export function fallTown(state: SimWorldState, side: SideId): void {
+  const s = state.sides[side];
+  if (!s || s.absent) return;
+  s.absent = true;
+  s.aiAttacking = false;
+  s.aiTargetSide = undefined;
+
+  let alertX = 0;
+  let alertZ = 0;
+  let count = 0;
+  for (const b of state.buildings) {
+    if (b.side !== side || b.hp <= 0) continue;
+    alertX += b.x;
+    alertZ += b.z;
+    count++;
+    b.type = 'ruin';
+    b.hp = Math.min(b.hp, BUILDING_DEFS.ruin.maxHp);
+    b.maxHp = BUILDING_DEFS.ruin.maxHp;
+    b.buildProgress = 1;
+    b.upgradingToLevel = null;
+    b.recruitQueue = [];
+    b.residents = 0;
+    b.garrisonCount = 0;
+    b.garrisonType = null;
+    b.garrisonRegimentIds = [];
+  }
+  state.regiments = state.regiments.filter((r) => r.side !== side);
+  state.citizens = state.citizens.filter((c) => c.side !== side);
+  for (const cp of state.capturePoints) {
+    if (cp.owner === side) cp.owner = null;
+    if (cp.capturingSide === side) {
+      cp.capturingSide = null;
+      cp.captureProgressS = 0;
+    }
+  }
+  if (count > 0) {
+    alertX /= count;
+    alertZ /= count;
+  }
+  pushAlert(state, 0, 'townFell', alertX, alertZ, `side:${side}`);
+  state.visualRevision++;
 }

@@ -16,6 +16,7 @@ import {
   WORLD,
   type BuildingBranch,
   type BuildingTypeId,
+  type EraNumber,
   type GoodId,
   type LangCode,
   type LightingPresetId,
@@ -26,7 +27,7 @@ import {
 import type { PlacementTool } from '../app/input.ts';
 import { countAliveSoldiers, countSideArmyMen, getArmyCap } from '../sim/combat.ts';
 import { inspectBuildingUpgrade, inspectRegimentReinforce, inspectTransportUpgrade } from '../sim/commands.ts';
-import { computeProductionRates, countFoodRationsInStock, countPopulation, listBottlenecks } from '../sim/economy.ts';
+import { computeProductionRates, countFoodRationsInStock, countPopulation, eraOfSide, findKeep, listBottlenecks } from '../sim/economy.ts';
 import { ALL_MAP_IDS } from '../sim/maps.ts';
 import type { TerrainField, MapLayoutId } from '../sim/terrain.ts';
 import type {
@@ -53,6 +54,8 @@ export interface HudCallbacks {
     difficulty: Difficulty;
     aiPersonality: AiPersonality;
     missionId?: CampaignMissionId;
+    startAge?: EraNumber;
+    fastAges?: boolean;
     showcaseMode?: boolean;
   }) => void;
   readonly onResume: () => void;
@@ -128,6 +131,8 @@ const GOOD_ICONS: Record<GoodId, string> = {
   mail: '🛡',
   bows: '🏹',
   horses: '🐎',
+  muskets: '🔫',
+  powder: '🧨',
 };
 
 const UNIT_ICONS: Record<UnitTypeId, string> = {
@@ -141,6 +146,12 @@ const UNIT_ICONS: Record<UnitTypeId, string> = {
   heavyCav: '🏇',
   cannon: '💣',
   mortar: '☄',
+  musketeers: '🔫',
+  cuirassiers: '🛡',
+  dragoons: '🐎',
+  lineInfantry: '🎖',
+  riflemen: '🎯',
+  hussars: '🪶',
 };
 
 const EQUIP_ORDER_UNITS: readonly UnitTypeId[] = [
@@ -165,6 +176,8 @@ function formatCostShort(cost: ResourceMap): string {
     bows: 'bw',
     horses: 'hr',
     iron: 'ir',
+    muskets: 'msk',
+    powder: 'pwd',
   };
   const parts: string[] = [];
   for (const k of Object.keys(cost) as GoodId[]) {
@@ -186,6 +199,12 @@ function unitAbbr(u: UnitTypeId): string {
     case 'heavyCav': return 'HCV';
     case 'cannon': return 'CNN';
     case 'mortar': return 'MRT';
+    case 'musketeers': return 'MSK';
+    case 'cuirassiers': return 'CUR';
+    case 'dragoons': return 'DRG';
+    case 'lineInfantry': return 'LIN';
+    case 'riflemen': return 'RFL';
+    case 'hussars': return 'HUS';
   }
 }
 
@@ -215,11 +234,13 @@ export class GameHud {
   private readonly regStripEl: HTMLDivElement;
   private readonly minimapCanvas: HTMLCanvasElement;
   private readonly minimapCtx: CanvasRenderingContext2D;
+  private readonly minimapJumpBarEl: HTMLDivElement;
   private readonly hoverTipEl: HTMLDivElement;
   private readonly statsEl: HTMLPreElement;
 
   private minimapBase: ImageData | null = null;
   private minimapMapId: MapLayoutId | null = null;
+  private minimapWorldSizeM: number = WORLD.sizeM;
   private minimapDragging = false;
 
   private lang: LangCode;
@@ -238,7 +259,10 @@ export class GameHud {
   private selMap: MapLayoutId;
   private selDiff: Difficulty = 'normal';
   private selPers: AiPersonality = 'raider';
+  private selStartAge: EraNumber = 1;
+  private selFastAges = false;
   private selMission: CampaignMissionId = 1;
+  private lastJumpSig = '';
 
   // Gameplay HUD interactive tab state
   private activeTab: 'build' | 'recruit' | 'production' | 'buildings' | null = 'build';
@@ -382,7 +406,12 @@ export class GameHud {
     this.minimapCanvas.height = 160;
     this.minimapCanvas.className = 'rts-minimap';
     this.minimapCtx = this.minimapCanvas.getContext('2d')!;
-    minimapWrap.appendChild(this.minimapCanvas);
+    this.minimapJumpBarEl = document.createElement('div');
+    this.minimapJumpBarEl.style.display = 'flex';
+    this.minimapJumpBarEl.style.gap = '3px';
+    this.minimapJumpBarEl.style.marginTop = '4px';
+    this.minimapJumpBarEl.style.justifyContent = 'space-between';
+    minimapWrap.append(this.minimapCanvas, this.minimapJumpBarEl);
 
     botRow.append(botCenter, minimapWrap);
 
@@ -415,8 +444,8 @@ export class GameHud {
       const u = Math.max(0, Math.min(1, (clientX - rect.left) / Math.max(1, rect.width)));
       const v = Math.max(0, Math.min(1, (clientY - rect.top) / Math.max(1, rect.height)));
       return {
-        x: (u - 0.5) * WORLD.sizeM,
-        z: (v - 0.5) * WORLD.sizeM,
+        x: (u - 0.5) * this.minimapWorldSizeM,
+        z: (v - 0.5) * this.minimapWorldSizeM,
       };
     };
     this.minimapCanvas.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -475,6 +504,8 @@ export class GameHud {
 
   /** Pre-bakes a crisp sunlit hillshaded parchment-terrain minimap bitmap once per map! */
   bakeMinimapBase(terrain: TerrainField, state: SimWorldState): void {
+    this.minimapWorldSizeM = terrain.config.sizeM;
+    const worldSizeM = this.minimapWorldSizeM;
     const w = this.minimapCanvas.width;
     const h = this.minimapCanvas.height;
     const img = this.minimapCtx.createImageData(w, h);
@@ -484,9 +515,9 @@ export class GameHud {
     const sunZ = -0.48;
 
     for (let py = 0; py < h; py++) {
-      const wz = ((py + 0.5) / h - 0.5) * WORLD.sizeM;
+      const wz = ((py + 0.5) / h - 0.5) * worldSizeM;
       for (let px = 0; px < w; px++) {
-        const wx = ((px + 0.5) / w - 0.5) * WORLD.sizeM;
+        const wx = ((px + 0.5) / w - 0.5) * worldSizeM;
         const idx = (py * w + px) * 4;
         const depth = terrain.waterDepthAt(wx, wz);
         if (depth > 0.05) {
@@ -522,8 +553,8 @@ export class GameHud {
     // Stamp dense mature forests clearly onto minimap base bitmap
     for (const tr of state.trees) {
       if (tr.state !== 'mature') continue;
-      const px = Math.floor(((tr.x / WORLD.sizeM) + 0.5) * w);
-      const py = Math.floor(((tr.z / WORLD.sizeM) + 0.5) * h);
+      const px = Math.floor(((tr.x / worldSizeM) + 0.5) * w);
+      const py = Math.floor(((tr.z / worldSizeM) + 0.5) * h);
       for (let oy = 0; oy <= 1; oy++) {
         for (let ox = 0; ox <= 1; ox++) {
           const tx = px + ox;
@@ -552,8 +583,9 @@ export class GameHud {
       ctx.fillRect(0, 0, w, h);
     }
 
-    const toPx = (x: number): number => ((x / WORLD.sizeM) + 0.5) * w;
-    const toPy = (z: number): number => ((z / WORLD.sizeM) + 0.5) * h;
+    const worldSizeM = this.minimapWorldSizeM;
+    const toPx = (x: number): number => ((x / worldSizeM) + 0.5) * w;
+    const toPy = (z: number): number => ((z / worldSizeM) + 0.5) * h;
 
     // Roads
     ctx.strokeStyle = 'rgba(196, 174, 132, 0.72)';
@@ -590,27 +622,97 @@ export class GameHud {
       ctx.fillRect(toPx(wl.x) - 1, toPy(wl.z) - 1, 2, 2);
     }
 
-    // Capture points
+    // Capture points (with strategic kind tag: M=Mine, Q=Quarry, V=Village)
+    ctx.font = 'bold 7px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
     for (const cp of state.capturePoints) {
-      ctx.strokeStyle = cp.owner === 0 ? '#4d8ef7' : cp.owner === 1 ? '#e04848' : '#e6bd53';
+      const cpx = toPx(cp.x);
+      const cpy = toPy(cp.z);
+      ctx.strokeStyle = cp.owner === 0 ? '#4d8ef7' : cp.owner === 1 ? '#e04848' : cp.owner === 2 ? '#e0ab2b' : '#e6bd53';
       ctx.lineWidth = 1.6;
       ctx.beginPath();
-      ctx.arc(toPx(cp.x), toPy(cp.z), 4.2, 0, Math.PI * 2);
+      ctx.arc(cpx, cpy, 4.6, 0, Math.PI * 2);
       ctx.stroke();
+      ctx.fillStyle = '#fff5d6';
+      ctx.fillText(cp.kind === 'mine' ? 'Fe' : cp.kind === 'quarry' ? 'St' : 'Au', cpx, cpy + 0.3);
     }
 
-    // Buildings
+    // Buildings (with distinct gold star markers for Great Buildings & pulsing siege rings around attacked Keeps!)
+    const pulsePhase = 0.5 + 0.5 * Math.sin(performance.now() * 0.009);
+    const keepSpots: { side: number; x: number; z: number }[] = [];
     for (const b of state.buildings) {
       if (b.hp <= 0) continue;
-      ctx.fillStyle = b.type === 'ruin' ? '#8c867c' : b.side === 0 ? '#3f84f5' : '#d94343';
+      const bx = toPx(b.x);
+      const by = toPy(b.z);
+      const isGreat = b.type === 'cathedral' || b.type === 'townHall' || b.type === 'manufactory';
+      if (isGreat) {
+        ctx.fillStyle = '#ffd54f';
+        ctx.strokeStyle = b.side === 0 ? '#1b4799' : b.side === 1 ? '#8a1c1c' : '#8a640f';
+        ctx.lineWidth = 1.3;
+        ctx.beginPath();
+        for (let k = 0; k < 10; k++) {
+          const ang = (k * Math.PI) / 5 - Math.PI * 0.5;
+          const rad = k % 2 === 0 ? 5.2 : 2.3;
+          const sx = bx + Math.cos(ang) * rad;
+          const sy = by + Math.sin(ang) * rad;
+          if (k === 0) ctx.moveTo(sx, sy);
+          else ctx.lineTo(sx, sy);
+        }
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        continue;
+      }
+      ctx.fillStyle = b.type === 'ruin' ? '#8c867c' : b.side === 0 ? '#3f84f5' : b.side === 1 ? '#d94343' : '#d9a52a';
       const sz = b.type === 'keep' ? 5 : 3;
-      ctx.fillRect(toPx(b.x) - sz * 0.5, toPy(b.z) - sz * 0.5, sz, sz);
+      ctx.fillRect(bx - sz * 0.5, by - sz * 0.5, sz, sz);
+      if (b.type === 'keep') {
+        keepSpots.push({ side: b.side, x: b.x, z: b.z });
+        const underSiege =
+          b.hp < b.maxHp * 0.95 ||
+          state.regiments.some(
+            (r) => r.side !== b.side && countAliveSoldiers(r) > 0 && Math.hypot(r.x - b.x, r.z - b.z) < 90,
+          );
+        if (underSiege) {
+          ctx.strokeStyle = `rgba(255, 118, 42, ${0.45 + 0.5 * pulsePhase})`;
+          ctx.lineWidth = 1.8;
+          ctx.beginPath();
+          ctx.arc(bx, by, 6 + pulsePhase * 4.5, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+      }
+    }
+
+    // Quick-jump Keep chips for effortless navigation on 860 m Three Lords maps!
+    const jumpSig = `${this.lang}:${keepSpots.map((k) => k.side).sort().join(',')}`;
+    if (jumpSig !== this.lastJumpSig) {
+      this.lastJumpSig = jumpSig;
+      this.minimapJumpBarEl.innerHTML = '';
+      const s = this.str;
+      keepSpots.sort((a, b) => a.side - b.side);
+      for (const kp of keepSpots) {
+        const btn = document.createElement('button');
+        btn.className = 'insp-btn';
+        btn.style.flex = '1';
+        btn.style.padding = '2px 4px';
+        btn.style.fontSize = '10px';
+        btn.textContent =
+          kp.side === 0 ? `🏰 ${s.jumpKeepBtn}` : kp.side === 1 ? `⚔ ${s.jumpRival1Btn}` : `⚔ ${s.jumpRival2Btn}`;
+        btn.title = `${btn.textContent} (${Math.round(kp.x)}, ${Math.round(kp.z)})`;
+        btn.addEventListener('click', () => this.cb.onJumpCamera(kp.x, kp.z));
+        this.minimapJumpBarEl.appendChild(btn);
+      }
+      const cpSummary = state.capturePoints
+        .map((cp) => `${cp.label}: ${s.captureYieldHints[cp.kind]}`)
+        .join(' · ');
+      if (cpSummary) this.minimapCanvas.title = cpSummary;
     }
 
     // Regiments
     for (const r of state.regiments) {
       if (countAliveSoldiers(r) === 0) continue;
-      ctx.fillStyle = r.routing ? '#f5f0e0' : r.side === 0 ? '#78b0ff' : '#ff6868';
+      ctx.fillStyle = r.routing ? '#f5f0e0' : r.side === 0 ? '#78b0ff' : r.side === 1 ? '#ff6868' : '#f2c144';
       ctx.beginPath();
       ctx.arc(toPx(r.x), toPy(r.z), this.latestSelectedRegs.has(r.id) ? 3.2 : 2.3, 0, Math.PI * 2);
       ctx.fill();
@@ -743,12 +845,19 @@ export class GameHud {
     title.textContent = s.orderEquipTitle;
     wrap.appendChild(title);
 
+    const keepLvl = findKeep(state, 0)?.level ?? 1;
+    const orderUnits: UnitTypeId[] = [...EQUIP_ORDER_UNITS];
+    if (keepLvl >= 4) orderUnits.push('musketeers', 'cuirassiers', 'dragoons');
+    if (keepLvl >= 5) orderUnits.push('lineInfantry', 'riflemen', 'hussars');
+    const allOrderGoods: readonly GoodId[] =
+      keepLvl >= 4 ? [...EQUIPMENT_GOODS, 'muskets', 'powder'] : EQUIPMENT_GOODS;
+
     const grid = document.createElement('div');
     grid.className = 'insp-equip-grid';
-    for (const uId of EQUIP_ORDER_UNITS) {
+    for (const uId of orderUnits) {
       const def = UNIT_DEFS[uId];
       const eqParts: string[] = [];
-      for (const g of EQUIPMENT_GOODS) {
+      for (const g of allOrderGoods) {
         const amt = def.cost[g] ?? 0;
         if (amt > 0) eqParts.push(`${GOOD_ICONS[g]}${amt}`);
       }
@@ -777,7 +886,7 @@ export class GameHud {
     sumRow.appendChild(lbl);
 
     let totalAll = 0;
-    for (const g of EQUIPMENT_GOODS) {
+    for (const g of allOrderGoods) {
       const wType = GOOD_TO_WORKSHOP[g];
       const shopOrders = wType
         ? state.buildings
@@ -1021,22 +1130,26 @@ export class GameHud {
       // Buildings in selected branch
       const grid = document.createElement('div');
       grid.className = 'rts-item-grid';
-      const stock = this.latestState?.sides[0].stock;
+      const stock = this.latestState?.sides[0]?.stock;
+      const keepLvl = this.latestState ? (findKeep(this.latestState, 0)?.level ?? 1) : 1;
       const blds = (Object.keys(BUILDING_DEFS) as BuildingTypeId[]).filter(
         (id) => BUILDING_DEFS[id].buildable && BUILDING_DEFS[id].branch === this.activeBranch && id !== 'gate',
       );
       for (const bId of blds) {
         const def = BUILDING_DEFS[bId];
         const cnt = bldCounts.get(bId) ?? 0;
+        const lockedKeep = (def.keepLevel ?? 1) > keepLvl;
+        const alreadyUnique = Boolean(def.unique) && cnt >= 1;
         const canAffordGold = !stock || stock.gold >= (def.cost.gold ?? 0);
         const isSel = this.activeTool?.kind === 'building' && this.activeTool.buildingType === bId;
         const btn = document.createElement('button');
-        btn.className = `rts-item-btn ${isSel ? 'active' : ''} ${canAffordGold ? '' : 'dim'}`;
+        btn.className = `rts-item-btn ${isSel ? 'active' : ''} ${canAffordGold && !lockedKeep && !alreadyUnique ? '' : 'dim'}`;
         btn.setAttribute('data-build', bId);
+        const reqSuffix = lockedKeep ? ` [K${def.keepLevel}]` : def.unique ? ' ★' : '';
         btn.innerHTML =
           `<span class="rts-bld-count ${cnt === 0 ? 'zero' : ''}" data-count-for="${bId}">${cnt}</span>` +
-          `<span>${s.buildings[bId]}</span><small>${formatCostShort(def.cost)}</small>`;
-        btn.title = `${s.buildings[bId]} (${formatCostShort(def.cost)})`;
+          `<span>${s.buildings[bId]}${reqSuffix}</span><small>${formatCostShort(def.cost)}</small>`;
+        btn.title = `${s.buildings[bId]} (${formatCostShort(def.cost)})${lockedKeep ? ` — ${s.upgradeNeedsKeep(def.keepLevel!)}` : ''}`;
         btn.addEventListener('click', () => {
           this.cb.onSelectTool(isSel ? null : { kind: 'building', buildingType: bId });
         });
@@ -1248,12 +1361,16 @@ export class GameHud {
     const foodGroup: readonly GoodId[] = ['grain', 'flour', 'bread', 'fish', 'meat', 'sausages', 'grapes', 'wine', 'ale'];
     const craftGroup: readonly GoodId[] = ['hides', 'leatherArmour', 'ironOre', 'iron', 'weapons', 'mail', 'bows', 'horses'];
 
+    const curEra = eraOfSide(state, 0);
+    const eraCraftExtra: GoodId[] =
+      curEra >= 2 || (p0.stock.muskets ?? 0) > 0 || (p0.stock.powder ?? 0) > 0 ? ['muskets', 'powder'] : [];
+
     this.resBarEl.innerHTML =
       matGroup.map((g) => chip(g, g === 'gold' ? 'gold' : '')).join('') +
       `<span class="res-sep">|</span>` +
       foodGroup.map((g) => chip(g)).join('') +
       `<span class="res-sep">|</span>` +
-      craftGroup.map((g) => chip(g)).join('') +
+      [...craftGroup, ...eraCraftExtra].map((g) => chip(g)).join('') +
       `<span class="res-sep">|</span>` +
       `<span class="res-chip ${rations < 10 ? 'warn' : ''}" title="Racje żywności">🍽 ${rations}</span>` +
       `<span class="res-chip">👥 ${pop.total}/${pop.capacity} (${s.freeCarriersLabel} ${pop.carriers + pop.builders})</span>` +
@@ -1261,6 +1378,10 @@ export class GameHud {
 
     // Objective / Scenario strip
     this.objStripEl.innerHTML = '';
+    const eraChip = document.createElement('span');
+    eraChip.className = 'obj-chip';
+    eraChip.textContent = `${['I', 'II', 'III'][curEra - 1]} · ${s.eraNames[curEra - 1]}`;
+    this.objStripEl.appendChild(eraChip);
     const sc = state.scenario;
     if (sc.mode === 'tutorial') {
       const nextStep = sc.tutorialSteps.find((st) => !st.completed);
@@ -1352,10 +1473,32 @@ export class GameHud {
       .filter((a) => a.side === 0 && state.timeS - a.timeS < 45)
       .slice(-4)
       .reverse();
+    const factionLabel = (sideNum: number): string =>
+      sideNum === 0 ? s.jumpKeepBtn : sideNum === 1 ? s.jumpRival1Btn : s.jumpRival2Btn;
     for (const al of recentAlerts) {
       const btn = document.createElement('button');
       btn.className = 'rts-alert-btn';
-      btn.textContent = `⚑ ${al.detail || al.kind}`;
+      let label = `⚑ ${al.detail || al.kind}`;
+      if (al.kind === 'greatBuilding') {
+        const [phase, bKey, sideStr] = al.detail.split(':');
+        const bName = s.buildings[bKey as BuildingTypeId] ?? bKey;
+        const fName = factionLabel(Number(sideStr ?? 0));
+        const verb =
+          phase === 'completed'
+            ? this.lang === 'pl' ? 'ukończona' : 'completed'
+            : this.lang === 'pl' ? 'w budowie' : 'started';
+        label = `🏛 ${fName}: ${bName} (${verb})`;
+      } else if (al.kind === 'eraAdvanced') {
+        const [eraTok, sideStr] = al.detail.split(':');
+        const eraNum = Number((eraTok ?? '').replace('era_', '')) || 2;
+        const eraName = s.eraNames[Math.max(0, Math.min(2, eraNum - 1))]!;
+        const sideNum = sideStr !== undefined ? Number(sideStr) : 0;
+        label =
+          sideNum === 0
+            ? `⏳ ${eraName}`
+            : `⏳ ${factionLabel(sideNum)} → ${eraName}`;
+      }
+      btn.textContent = label;
       btn.addEventListener('click', () => this.cb.onJumpCamera(al.x, al.z));
       this.alertsEl.appendChild(btn);
     }
@@ -1444,11 +1587,17 @@ export class GameHud {
       const isPose = this.activeTool?.kind === 'regimentPose';
       const savedForms = state.sides[0].savedFormations ?? [];
       const savedSig = savedForms.map((f) => `${f.id}:${f.slots.length}`).join('|');
-      const regSig = `r:${ids.join(',')}:${primary.unitType}:${primary.formation}:${primaryRanks}:${primary.width}:${primary.stance}:${primary.holdFire}:${primary.routing}:${isPose}:${savedSig}:${this.lang}`;
+      const regSig = `r:${ids.join(',')}:${primary.unitType}:${primary.formation}:${primaryRanks}:${primary.width}:${primary.stance}:${primary.holdFire}:${Boolean(primary.dismounted)}:${primary.routing}:${isPose}:${savedSig}:${this.lang}`;
 
+      const ammoMax = primary.maxAmmoVolleys ?? 0;
+      const ammoCur = primary.ammoVolleys !== undefined ? Math.ceil(primary.ammoVolleys) : 0;
+      const ammoHtml =
+        def.firearm && ammoMax > 0
+          ? ` · <span style="color:${ammoCur <= 2 ? '#f0a64c' : '#d8d2c0'}">🧨 ${s.ammoLabel} ${ammoCur}/${ammoMax}</span>`
+          : '';
       const headHtml =
         `<strong>${regs.length > 1 ? `${regs.length}× ` : ''}${UNIT_ICONS[primary.unitType]} ${s.units[primary.unitType]}</strong>` +
-        `<span>${alive}/${primary.maxMen} · ${s.ranksLabel}: ${primaryRanks} (${primary.width}×${primaryRanks}) · ${s.moraleLabel} ${Math.round(primary.morale)}/${Math.round(primary.maxMorale)} · ${s.fatigueLabel} ${Math.round(primary.fatigue * 100)}%</span>` +
+        `<span>${alive}/${primary.maxMen} · ${s.ranksLabel}: ${primaryRanks} (${primary.width}×${primaryRanks}) · ${s.moraleLabel} ${Math.round(primary.morale)}/${Math.round(primary.maxMorale)} · ${s.fatigueLabel} ${Math.round(primary.fatigue * 100)}%${ammoHtml}</span>` +
         `<span class="insp-cap">${primary.routing ? s.routingLabel : def.unitClass === 'siege' ? '' : primary.captainAlive ? s.captainAlive : s.captainFallen}${primary.veteranTier > 0 ? ` · ${s.veteranLabel} ${'★'.repeat(primary.veteranTier)}` : ''}</span>`;
 
       if (!force && regSig === this.lastInspectorSig) {
@@ -1491,10 +1640,18 @@ export class GameHud {
         actRow.appendChild(saveFormBtn);
       }
 
-      // Formations
+      // Formations (including Hollow Square for Era 2-3 muskets & polearms!)
       const forms: FormationKind[] = ['line', 'column', 'loose'];
       if (def.antiCavBonus > 0) forms.push('schiltron');
-      if (def.unitClass === 'cavalry') forms.push('wedge');
+      if (
+        primary.unitType === 'musketeers' ||
+        primary.unitType === 'lineInfantry' ||
+        primary.unitType === 'pikemen' ||
+        primary.unitType === 'halberdiers'
+      ) {
+        forms.push('square');
+      }
+      if (def.unitClass === 'cavalry' && !primary.dismounted) forms.push('wedge');
       for (const f of forms) {
         const btn = document.createElement('button');
         btn.className = `insp-btn ${primary.formation === f ? 'active' : ''}`;
@@ -1524,10 +1681,11 @@ export class GameHud {
         actRow.appendChild(rkBtn);
       }
 
-      // Stances (including Shield Wall & Pike Wall when unit is eligible)
+      // Stances (including Shield Wall, Pike Wall & Era 2-3 Volley Fire!)
       const stances: StanceKind[] = ['hold', 'guard', 'skirmish'];
       if (def.shieldBlock >= 0.2) stances.push('shieldWall');
       if (def.antiCavBonus > 0 && def.unitClass === 'infantry') stances.push('pikeWall');
+      if (def.firearm && def.ranged) stances.push('volleyFire');
       for (const st of stances) {
         const btn = document.createElement('button');
         btn.className = `insp-btn ${primary.stance === st ? 'active' : ''}`;
@@ -1537,6 +1695,18 @@ export class GameHud {
           this.refreshInspector(true);
         });
         actRow.appendChild(btn);
+      }
+
+      // Dragoon Dismount / Remount toggle
+      if (primary.unitType === 'dragoons') {
+        const dmBtn = document.createElement('button');
+        dmBtn.className = `insp-btn ${primary.dismounted ? 'active' : ''}`;
+        dmBtn.textContent = primary.dismounted ? `🐎 ${s.remountBtn}` : `🥾 ${s.dismountBtn}`;
+        dmBtn.addEventListener('click', () => {
+          this.cb.onExecute({ type: 'setDismounted', side: 0, regimentIds: ids, dismounted: !primary.dismounted });
+          this.refreshInspector(true);
+        });
+        actRow.appendChild(dmBtn);
       }
 
       if (def.ranged) {
@@ -2011,20 +2181,30 @@ export class GameHud {
         }
         ctx.stroke();
       };
-      const maxArmy = Math.max(20, ...tl.map((p) => Math.max(p.p0Army, p.p1Army)));
-      const maxPop = Math.max(20, ...tl.map((p) => Math.max(p.p0Pop, p.p1Pop)));
+      const hasP2 = tl.some((p) => p.p2Army !== undefined);
+      const maxArmy = Math.max(20, ...tl.map((p) => Math.max(p.p0Army, p.p1Army, p.p2Army ?? 0)));
+      const maxPop = Math.max(20, ...tl.map((p) => Math.max(p.p0Pop, p.p1Pop, p.p2Pop ?? 0)));
       drawSeries(tl.map((p) => p.p0Pop), '#69a2ff', maxPop);
-      drawSeries(tl.map((p) => p.p0Army), '#e6bd53', maxArmy);
+      drawSeries(tl.map((p) => p.p0Army), '#52d97b', maxArmy);
       drawSeries(tl.map((p) => p.p1Army), '#e05858', maxArmy);
+      if (hasP2) {
+        drawSeries(tl.map((p) => p.p2Army ?? 0), '#e6b23a', maxArmy);
+      }
       ctx.fillStyle = '#d8ccb2';
       ctx.font = '11px system-ui';
-      ctx.fillText('Blue: Pop  ·  Gold: Own Army  ·  Red: Enemy Army', 18, 14);
+      ctx.fillText(
+        hasP2
+          ? 'Blue: Pop  ·  Green: Own Army  ·  Red: Crimson AI  ·  Ochre: Gold AI'
+          : 'Blue: Pop  ·  Green: Own Army  ·  Red: Enemy Army',
+        18,
+        14,
+      );
     }
     panel.appendChild(chart);
 
     const row = document.createElement('div');
     row.className = 'btn-row';
-    if (isWin && sc.mode === 'campaign' && sc.missionId !== null && sc.missionId < 5) {
+    if (isWin && sc.mode === 'campaign' && sc.missionId !== null && sc.missionId < 6) {
       const nextBtn = document.createElement('button');
       nextBtn.className = 'btn btn-primary';
       nextBtn.textContent = s.nextMissionBtn;
@@ -2185,7 +2365,7 @@ export class GameHud {
       startPanel.innerHTML = `<h2>${s.startCampaignBtn}</h2>`;
       const mList = document.createElement('div');
       mList.className = 'campaign-list';
-      for (const mId of [1, 2, 3, 4, 5] as CampaignMissionId[]) {
+      for (const mId of [1, 2, 3, 4, 5, 6] as CampaignMissionId[]) {
         const mt = s.missions[mId];
         const stars = prog.stars[mId] ?? 0;
         const card = document.createElement('button');
@@ -2209,6 +2389,7 @@ export class GameHud {
         3: 'valley',
         4: 'valley',
         5: 'fortress',
+        6: 'fortress',
       };
       const row = document.createElement('div');
       row.className = 'btn-row';
@@ -2274,7 +2455,22 @@ export class GameHud {
         this.selPers = order[(order.indexOf(this.selPers) + 1) % order.length]!;
         this.rebuildMenus();
       });
-      optRow.append(diffBtn, persBtn);
+      const ageBtn = document.createElement('button');
+      ageBtn.className = 'btn';
+      ageBtn.textContent = `${s.startAgeLabel}: ${['I', 'II', 'III'][this.selStartAge - 1]} · ${s.eraNames[this.selStartAge - 1]}`;
+      ageBtn.addEventListener('click', () => {
+        const order: EraNumber[] = [1, 2, 3];
+        this.selStartAge = order[(order.indexOf(this.selStartAge) + 1) % order.length]!;
+        this.rebuildMenus();
+      });
+      const fastAgeBtn = document.createElement('button');
+      fastAgeBtn.className = `btn ${this.selFastAges ? 'btn-primary' : ''}`;
+      fastAgeBtn.textContent = `⚡ ${s.fastAgesLabel}: ${this.selFastAges ? s.on : s.off}`;
+      fastAgeBtn.addEventListener('click', () => {
+        this.selFastAges = !this.selFastAges;
+        this.rebuildMenus();
+      });
+      optRow.append(diffBtn, persBtn, ageBtn, fastAgeBtn);
 
       const goRow = document.createElement('div');
       goRow.className = 'btn-row';
@@ -2289,13 +2485,29 @@ export class GameHud {
       goSkir.className = 'btn btn-primary';
       goSkir.textContent = s.startSkirmishBtn;
       goSkir.addEventListener('click', () =>
-        this.cb.onLaunchGame({ mode: 'skirmish', mapId: this.selMap, difficulty: this.selDiff, aiPersonality: this.selPers, showcaseMode: false }),
+        this.cb.onLaunchGame({
+          mode: 'skirmish',
+          mapId: this.selMap,
+          difficulty: this.selDiff,
+          aiPersonality: this.selPers,
+          startAge: this.selStartAge,
+          fastAges: this.selFastAges,
+          showcaseMode: false,
+        }),
       );
       const goDef = document.createElement('button');
       goDef.className = 'btn';
       goDef.textContent = s.startDefenceBtn;
       goDef.addEventListener('click', () =>
-        this.cb.onLaunchGame({ mode: 'defence', mapId: this.selMap, difficulty: this.selDiff, aiPersonality: this.selPers, showcaseMode: false }),
+        this.cb.onLaunchGame({
+          mode: 'defence',
+          mapId: this.selMap,
+          difficulty: this.selDiff,
+          aiPersonality: this.selPers,
+          startAge: this.selStartAge,
+          fastAges: this.selFastAges,
+          showcaseMode: false,
+        }),
       );
       goRow.append(back, goDef, goSkir);
       startPanel.append(mapRow, optRow, goRow);

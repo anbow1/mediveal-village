@@ -38,7 +38,7 @@ export function wrapAngleRad(a: number): number {
   return r;
 }
 
-export function clampRtsGoal(goal: RtsCameraGoal, halfMapM = WORLD.halfSizeM): RtsCameraGoal {
+export function clampRtsGoal(goal: RtsCameraGoal, halfMapM: number = WORLD.halfSizeM): RtsCameraGoal {
   return {
     targetX: clamp(goal.targetX, -halfMapM, halfMapM),
     targetZ: clamp(goal.targetZ, -halfMapM, halfMapM),

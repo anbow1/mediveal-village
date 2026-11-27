@@ -15,6 +15,7 @@ import {
   DynamicDrawUsage,
   Float32BufferAttribute,
   IcosahedronGeometry,
+  InstancedBufferAttribute,
   InstancedMesh,
   LinearMipmapLinearFilter,
   Matrix4,
@@ -387,6 +388,7 @@ export function buildSimWorldRenderer(opts: {
   readonly skyUniforms?: PhysicalSkyUniforms;
   readonly quality?: QualityPreset;
   readonly buildingMaterial: Material;
+  readonly instancedBuildingMaterial?: Material;
   readonly siteBuildingMaterial?: Material;
   readonly buildingTemplates: ReadonlyMap<BuildingKind, SimBuildingTemplate>;
   readonly marchlandBuildingLevels?: ReadonlyMap<MarchlandBuildingLevelKey, BufferGeometry>;
@@ -407,6 +409,7 @@ export function buildSimWorldRenderer(opts: {
     skyUniforms,
     quality = 'high',
     buildingMaterial,
+    instancedBuildingMaterial,
     siteBuildingMaterial,
     buildingTemplates,
     marchlandBuildingLevels,
@@ -418,35 +421,59 @@ export function buildSimWorldRenderer(opts: {
     treeHooks,
   } = opts;
 
+  const dynBuildingMat = instancedBuildingMaterial ?? buildingMaterial;
+  const attachEraAttr = (geo: BufferGeometry, cap: number): InstancedBufferAttribute => {
+    const arr = new Float32Array(cap);
+    arr.fill(1.0);
+    const attr = new InstancedBufferAttribute(arr, 1);
+    attr.setUsage(DynamicDrawUsage);
+    geo.setAttribute('aEra', attr);
+    return attr;
+  };
+  const buildingVisualEra = (b: BuildingEntity): number => {
+    if (b.level >= 5 || b.type === 'manufactory') return 3;
+    if (b.level === 4 || b.type === 'gunsmith' || b.type === 'powderMill' || b.type === 'townHall') return 2;
+    return 1;
+  };
+
   const disposableGeos: BufferGeometry[] = [];
   const allMeshes: InstancedMesh[] = [];
   const siteSlots: Mesh[] = [];
 
   // 1. Pre-warmed dynamic building pools for every loaded BuildingKind (0 new pipelines in play!)
-  const dynamicBuildingPools = new Map<BuildingKind, { meshes: InstancedMesh[]; cap: number }>();
+  const dynamicBuildingPools = new Map<
+    BuildingKind,
+    { meshes: InstancedMesh[]; eraAttrs: InstancedBufferAttribute[]; cap: number }
+  >();
   for (const [kind, tpl] of buildingTemplates) {
-    const parts = extractPartsFromRoot(tpl.lod0, buildingMaterial);
-    for (const p of parts) {
-      p.geometry.computeBoundingBox();
-      disposableGeos.push(p.geometry);
-    }
+    const parts = extractPartsFromRoot(tpl.lod0, dynBuildingMat);
     const cap =
       kind === 'house_l1' || kind === 'farm_l1' || kind === 'watchtower_l1' || kind === 'camp_tent_l1' || kind === 'ruin_house'
         ? 48
         : 20;
+    const eraAttrs: InstancedBufferAttribute[] = [];
+    for (const p of parts) {
+      p.geometry.computeBoundingBox();
+      eraAttrs.push(attachEraAttr(p.geometry, cap));
+      disposableGeos.push(p.geometry);
+    }
     const meshes = createPreWarmedPool(scene, `DynBld_${kind}`, parts, cap, true);
     allMeshes.push(...meshes);
-    dynamicBuildingPools.set(kind, { meshes, cap });
+    dynamicBuildingPools.set(kind, { meshes, eraAttrs, cap });
   }
 
-  // 1b. Pre-warmed high-detail L1/L2/L3 architectural pools from FPS/marchland (shared buildingMaterial -> 0 extra shaders!)
-  const marchlandLevelPools = new Map<MarchlandBuildingLevelKey, { mesh: InstancedMesh; cap: number }>();
+  // 1b. Pre-warmed high-detail L1/L2/L3 architectural pools from FPS/marchland with per-instance ERA_LOOK!
+  const marchlandLevelPools = new Map<
+    MarchlandBuildingLevelKey,
+    { mesh: InstancedMesh; eraAttr: InstancedBufferAttribute; cap: number }
+  >();
   if (marchlandBuildingLevels) {
     for (const [key, geo] of marchlandBuildingLevels) {
       geo.computeBoundingBox();
       disposableGeos.push(geo);
       const cap = key.startsWith('house_') || key.startsWith('farm_') || key.startsWith('watchtower_') ? 48 : 20;
-      const im = new InstancedMesh(geo, buildingMaterial, cap);
+      const eraAttr = attachEraAttr(geo, cap);
+      const im = new InstancedMesh(geo, dynBuildingMat, cap);
       im.name = `MarchlandBld_${key}`;
       im.castShadow = true;
       im.receiveShadow = true;
@@ -457,7 +484,7 @@ export function buildSimWorldRenderer(opts: {
       im.instanceMatrix.needsUpdate = true;
       scene.add(im);
       allMeshes.push(im);
-      marchlandLevelPools.set(key, { mesh: im, cap });
+      marchlandLevelPools.set(key, { mesh: im, eraAttr, cap });
     }
   }
 
@@ -686,9 +713,11 @@ export function buildSimWorldRenderer(opts: {
     'bakery',
     'tavern',
     'brewery',
-    'ironSmelter',
+    'smelter',
+    'smithy',
     'armourer',
-    'weaponsmith',
+    'gunsmith',
+    'manufactory',
     'butcher',
   ]);
   const chimneyEmitters: Vector3[] = [];
@@ -727,7 +756,14 @@ export function buildSimWorldRenderer(opts: {
       TEMP_QUAT.identity();
       for (const reg of state.regiments) {
         if (reg.garrisonedInBuildingId !== null) continue;
-        const isBig = reg.unitType === 'lightCav' || reg.unitType === 'heavyCav' || reg.unitType === 'cannon' || reg.unitType === 'mortar';
+        const isBig =
+          reg.unitType === 'lightCav' ||
+          reg.unitType === 'heavyCav' ||
+          reg.unitType === 'cuirassiers' ||
+          reg.unitType === 'dragoons' ||
+          reg.unitType === 'hussars' ||
+          reg.unitType === 'cannon' ||
+          reg.unitType === 'mortar';
         const rad = isBig ? 2.15 : 1.15;
         for (const s of reg.soldiers) {
           if (!s.alive || uc >= DYN_UNIT_CONTACT_CAP) continue;
@@ -934,6 +970,8 @@ export function buildSimWorldRenderer(opts: {
       const mPool = !b.isFortressDonzon ? marchlandLevelPools.get(mKey) : undefined;
 
       // Course-by-course shader construction clipping for active construction sites!
+      const bEra = buildingVisualEra(b);
+      const eraLift = b.level >= 5 ? 1.12 : b.level === 4 ? 1.06 : 1.0;
       if (b.buildProgress < 1 && siteSlotIdx < siteSlots.length) {
         const kind: BuildingKind = b.isFortressDonzon ? 'fortress_donzon' : BUILDING_DEFS[b.type].modelKind;
         const fallbackPool = dynamicBuildingPools.get(kind);
@@ -943,7 +981,7 @@ export function buildSimWorldRenderer(opts: {
           slot.geometry = siteGeo;
           slot.position.set(b.x, y, b.z);
           slot.rotation.set(0, b.yawRad, 0);
-          const levelScale = mPool ? 1.0 : b.level === 3 ? 1.18 : b.level === 2 ? 1.09 : 1.0;
+          const levelScale = mPool ? eraLift : b.level >= 5 ? 1.32 : b.level === 4 ? 1.25 : b.level === 3 ? 1.18 : b.level === 2 ? 1.09 : 1.0;
           slot.scale.set(levelScale, levelScale, levelScale);
           const topH = (siteGeo.boundingBox?.max.y ?? 6.5) * levelScale;
           const footingM = 0.35;
@@ -951,6 +989,7 @@ export function buildSimWorldRenderer(opts: {
             ? (b.buildProgress / 0.12) * footingM
             : footingM + ((b.buildProgress - 0.12) / 0.88) * Math.max(2.0, topH - footingM);
           slot.userData['cutY'] = y + cutH;
+          slot.userData['era'] = bEra;
           slot.visible = true;
         }
       } else if (mPool) {
@@ -958,9 +997,10 @@ export function buildSimWorldRenderer(opts: {
         if (idx < mPool.cap) {
           TEMP_POS.set(b.x, y, b.z);
           TEMP_QUAT.setFromAxisAngle(UP, b.yawRad);
-          TEMP_SCALE.set(1.0, scaleY, 1.0);
+          TEMP_SCALE.set(eraLift, scaleY * eraLift, eraLift);
           TEMP_MAT.compose(TEMP_POS, TEMP_QUAT, TEMP_SCALE);
           mPool.mesh.setMatrixAt(idx, TEMP_MAT);
+          mPool.eraAttr.setX(idx, bEra);
           marchlandCounts.set(mKey, idx + 1);
         }
       } else {
@@ -969,17 +1009,20 @@ export function buildSimWorldRenderer(opts: {
         if (!pool) continue;
         const idx = poolCounts.get(kind) ?? 0;
         if (idx >= pool.cap) continue;
-        const levelScale = b.level === 3 ? 1.18 : b.level === 2 ? 1.09 : 1.0;
+        const levelScale = b.level >= 5 ? 1.32 : b.level === 4 ? 1.25 : b.level === 3 ? 1.18 : b.level === 2 ? 1.09 : 1.0;
         TEMP_POS.set(b.x, y, b.z);
         TEMP_QUAT.setFromAxisAngle(UP, b.yawRad);
         TEMP_SCALE.set(levelScale, scaleY * levelScale, levelScale);
         TEMP_MAT.compose(TEMP_POS, TEMP_QUAT, TEMP_SCALE);
-        for (const m of pool.meshes) m.setMatrixAt(idx, TEMP_MAT);
+        for (let pi = 0; pi < pool.meshes.length; pi++) {
+          pool.meshes[pi]!.setMatrixAt(idx, TEMP_MAT);
+          pool.eraAttrs[pi]?.setX(idx, bEra);
+        }
         poolCounts.set(kind, idx + 1);
       }
 
       if ((b.buildProgress < 1 || b.upgradingToLevel !== null) && scafCount < 24) {
-        const scafLevelMul = b.level === 3 ? 1.15 : b.level === 2 ? 1.07 : 1.0;
+        const scafLevelMul = b.level >= 4 ? 1.22 : b.level === 3 ? 1.15 : b.level === 2 ? 1.07 : 1.0;
         const r = BUILDING_DEFS[b.type].radiusM * 1.45 * scafLevelMul;
         const prog = b.buildProgress < 1 ? b.buildProgress : 0.75;
         TEMP_POS.set(b.x, y, b.z);
@@ -1008,7 +1051,10 @@ export function buildSimWorldRenderer(opts: {
         TEMP_QUAT.setFromAxisAngle(UP, g.yawRad);
         TEMP_SCALE.set(1, 1, 1);
         TEMP_MAT.compose(TEMP_POS, TEMP_QUAT, TEMP_SCALE);
-        for (const m of gatePool.meshes) m.setMatrixAt(idx, TEMP_MAT);
+        for (let pi = 0; pi < gatePool.meshes.length; pi++) {
+          gatePool.meshes[pi]!.setMatrixAt(idx, TEMP_MAT);
+          gatePool.eraAttrs[pi]?.setX(idx, 1);
+        }
         poolCounts.set('gate_l1', idx + 1);
       }
     }
@@ -1018,6 +1064,8 @@ export function buildSimWorldRenderer(opts: {
       const ghostType = placementGhost.buildingType ?? 'house';
       const mGhostKey = `${ghostType}_1` as MarchlandBuildingLevelKey;
       const mGhostPool = placementGhost.mode === 'building' ? marchlandLevelPools.get(mGhostKey) : undefined;
+      const ghostEra =
+        ghostType === 'manufactory' ? 3 : ghostType === 'gunsmith' || ghostType === 'powderMill' || ghostType === 'townHall' ? 2 : 1;
       if (mGhostPool) {
         const idx = marchlandCounts.get(mGhostKey) ?? 0;
         if (idx < mGhostPool.cap) {
@@ -1027,6 +1075,7 @@ export function buildSimWorldRenderer(opts: {
           TEMP_SCALE.set(1, 1, 1);
           TEMP_MAT.compose(TEMP_POS, TEMP_QUAT, TEMP_SCALE);
           mGhostPool.mesh.setMatrixAt(idx, TEMP_MAT);
+          mGhostPool.eraAttr.setX(idx, ghostEra);
           marchlandCounts.set(mGhostKey, idx + 1);
         }
       } else {
@@ -1043,7 +1092,10 @@ export function buildSimWorldRenderer(opts: {
             TEMP_QUAT.setFromAxisAngle(UP, placementGhost.yawRad);
             TEMP_SCALE.set(1, 1, 1);
             TEMP_MAT.compose(TEMP_POS, TEMP_QUAT, TEMP_SCALE);
-            for (const m of gPool.meshes) m.setMatrixAt(idx, TEMP_MAT);
+            for (let pi = 0; pi < gPool.meshes.length; pi++) {
+              gPool.meshes[pi]!.setMatrixAt(idx, TEMP_MAT);
+              gPool.eraAttrs[pi]?.setX(idx, ghostEra);
+            }
             poolCounts.set(ghostKind, idx + 1);
           }
         }
@@ -1052,9 +1104,11 @@ export function buildSimWorldRenderer(opts: {
 
     for (const [kind, pool] of dynamicBuildingPools) {
       commitPool(pool.meshes, poolCounts.get(kind) ?? 0);
+      for (const ea of pool.eraAttrs) ea.needsUpdate = true;
     }
     for (const [key, pool] of marchlandLevelPools) {
       commitPool([pool.mesh], marchlandCounts.get(key) ?? 0);
+      pool.eraAttr.needsUpdate = true;
     }
     commitPool([dynPlinthMesh], plinthCount);
     commitPool([dynScafMesh], scafCount);
@@ -1087,8 +1141,17 @@ export function buildSimWorldRenderer(opts: {
       }
       if (b.buildProgress >= 1 && CHIMNEY_TYPES.has(b.type) && chimneyEmitters.length < 48) {
         const y = terrain.heightAt(b.x, b.z);
-        const roofH = b.type === 'keep' ? 9.2 : b.type === 'tavern' ? 7.0 : b.level >= 2 ? 6.6 : 5.4;
-        const off = b.type === 'keep' ? 1.8 : 0.95;
+        const roofH =
+          b.type === 'manufactory'
+            ? 12.7
+            : b.type === 'keep'
+              ? 9.2 + (b.level >= 4 ? 1.8 : 0)
+              : b.type === 'tavern'
+                ? 7.0
+                : b.level >= 2
+                  ? 6.6
+                  : 5.4;
+        const off = b.type === 'manufactory' ? -4.8 : b.type === 'keep' ? 1.8 : 0.95;
         chimneyEmitters.push(
           new Vector3(b.x + Math.cos(b.yawRad) * off, y + roofH, b.z - Math.sin(b.yawRad) * off),
         );

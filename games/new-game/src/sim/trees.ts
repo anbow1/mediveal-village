@@ -8,22 +8,25 @@ import { ECONOMY, WORLD } from '../config.ts';
 import type { BuildingEntity, TreeEntity } from './types.ts';
 
 const CELL_M = ECONOMY.forestCellSizeM; // 12 m
-const GRID_N = Math.ceil(WORLD.sizeM / CELL_M); // 47 x 47
 
 export class ForestGrid {
+  private readonly gridN: number;
+  private readonly halfSizeM: number;
   private readonly initialCount: Uint16Array;
   private readonly matureCount: Uint16Array;
 
-  constructor(trees: readonly TreeEntity[]) {
-    this.initialCount = new Uint16Array(GRID_N * GRID_N);
-    this.matureCount = new Uint16Array(GRID_N * GRID_N);
+  constructor(trees: readonly TreeEntity[], worldSizeM: number = WORLD.sizeM) {
+    this.gridN = Math.ceil(worldSizeM / CELL_M);
+    this.halfSizeM = worldSizeM * 0.5;
+    this.initialCount = new Uint16Array(this.gridN * this.gridN);
+    this.matureCount = new Uint16Array(this.gridN * this.gridN);
     this.rebuild(trees);
   }
 
   private cellIndex(x: number, z: number): number {
-    const gx = Math.max(0, Math.min(GRID_N - 1, Math.floor((x + WORLD.halfSizeM) / CELL_M)));
-    const gz = Math.max(0, Math.min(GRID_N - 1, Math.floor((z + WORLD.halfSizeM) / CELL_M)));
-    return gz * GRID_N + gx;
+    const gx = Math.max(0, Math.min(this.gridN - 1, Math.floor((x + this.halfSizeM) / CELL_M)));
+    const gz = Math.max(0, Math.min(this.gridN - 1, Math.floor((z + this.halfSizeM) / CELL_M)));
+    return gz * this.gridN + gx;
   }
 
   rebuild(trees: readonly TreeEntity[]): void {

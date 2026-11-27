@@ -245,7 +245,7 @@ describe('Stage 6 living town economy & logistics', () => {
     market.buildProgress = 1;
 
     const tradableGoods = ALL_GOODS.filter((g) => g !== 'gold');
-    expect(tradableGoods).toHaveLength(20);
+    expect(tradableGoods).toHaveLength(22);
     for (const g of tradableGoods) {
       const before = stock[g] ?? 0;
       const buyRes = sim.execute({ type: 'marketTrade', side: 0, action: 'buy', good: g });

@@ -458,6 +458,10 @@ export class SoundEngine {
           kind = 'arrowFire';
           gain = 0.45;
           break;
+        case 'musketShot':
+          kind = 'gunshot';
+          gain = 0.72;
+          break;
         case 'cannonMuzzle':
           kind = 'cannonFire';
           gain = 1.0;

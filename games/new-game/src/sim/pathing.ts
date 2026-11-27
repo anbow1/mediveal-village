@@ -20,6 +20,7 @@ export const CELL_FOREST = 1 << 3;
 export const CELL_GATE_S0 = 1 << 4;
 export const CELL_GATE_S1 = 1 << 5;
 export const CELL_WALL = 1 << 6;
+export const CELL_GATE_S2 = 1 << 7;
 
 export interface PathPoint {
   readonly x: number;
@@ -27,9 +28,9 @@ export interface PathPoint {
 }
 
 export class NavGrid {
-  readonly n = PATH_GRID_N;
+  readonly n: number;
   readonly cellM = PATH_CELL_M;
-  readonly halfM = WORLD.halfSizeM;
+  readonly halfM: number;
   /** Static base flags (water + impassable steep/mountain terrain). */
   private readonly baseFlags: Uint8Array;
   /** Live flags combining static terrain + dynamic roads, forests, buildings, walls, and gates. */
@@ -45,6 +46,8 @@ export class NavGrid {
   private searchGen = 1;
 
   constructor(terrain: TerrainField) {
+    this.n = Math.round(terrain.config.sizeM / PATH_CELL_M);
+    this.halfM = terrain.halfSizeM;
     const total = this.n * this.n;
     this.baseFlags = new Uint8Array(total);
     this.flags = new Uint8Array(total);
@@ -128,10 +131,10 @@ export class NavGrid {
       this.stampCircleFlag(w.x, w.z, 1.35, CELL_BLOCKED | CELL_WALL);
     }
 
-    // 5. Gates carve a clear passage for their owning side (and block the enemy!)
+    // 5. Gates carve a clear passage for their owning side (and block enemies!)
     for (const g of gates) {
       if (g.destroyed || g.hp <= 0) continue;
-      const gFlag = g.side === 0 ? CELL_GATE_S0 : CELL_GATE_S1;
+      const gFlag = g.side === 0 ? CELL_GATE_S0 : g.side === 1 ? CELL_GATE_S1 : CELL_GATE_S2;
       const radCells = Math.ceil(3.6 / this.cellM);
       const cgx = this.worldToCell(g.x);
       const cgz = this.worldToCell(g.z);
@@ -204,9 +207,14 @@ export class NavGrid {
     if (gx < 0 || gz < 0 || gx >= this.n || gz >= this.n) return false;
     const f = this.flags[gz * this.n + gx]!;
     if ((f & CELL_BLOCKED) !== 0) return false;
-    // Enemy gate acts as a wall for the opposing side
-    const enemyGate = side === 0 ? CELL_GATE_S1 : CELL_GATE_S0;
-    if ((f & enemyGate) !== 0) return false;
+    // Any other side's gate acts as a wall
+    const enemyGateMask =
+      side === 0
+        ? CELL_GATE_S1 | CELL_GATE_S2
+        : side === 1
+          ? CELL_GATE_S0 | CELL_GATE_S2
+          : CELL_GATE_S0 | CELL_GATE_S1;
+    if ((f & enemyGateMask) !== 0) return false;
     return true;
   }
 

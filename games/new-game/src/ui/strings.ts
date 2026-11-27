@@ -65,6 +65,9 @@ export interface Strings {
   readonly modeNames: Record<GameMode, string>;
   readonly difficultyNames: Record<Difficulty, string>;
   readonly personalityNames: Record<AiPersonality, string>;
+  readonly startAgeLabel: string;
+  readonly fastAgesLabel: string;
+  readonly eraNames: readonly [string, string, string];
   readonly controlsHint: string;
 
   // Tabs & panels
@@ -125,6 +128,9 @@ export interface Strings {
   // Regiment inspector
   readonly moraleLabel: string;
   readonly fatigueLabel: string;
+  readonly ammoLabel: string;
+  readonly dismountBtn: string;
+  readonly remountBtn: string;
   readonly captainAlive: string;
   readonly captainFallen: string;
   readonly veteranLabel: string;
@@ -144,6 +150,10 @@ export interface Strings {
   readonly disbandBtn: string;
   readonly priorityHeader: string;
   readonly unitCounterHint: Record<UnitTypeId, string>;
+  readonly jumpKeepBtn: string;
+  readonly jumpRival1Btn: string;
+  readonly jumpRival2Btn: string;
+  readonly captureYieldHints: Record<'mine' | 'quarry' | 'village', string>;
 
   // Dictionaries
   readonly buildings: Record<BuildingTypeId, string>;
@@ -223,6 +233,7 @@ const EN: Strings = {
     forest: 'Ancient Forest (M2)',
     valley: 'Mountain Valley (M3–M4)',
     fortress: 'Citadel Fortress (M5)',
+    triangle: 'Three Lords (860 m)',
   },
   modeNames: {
     skirmish: 'Skirmish',
@@ -240,6 +251,9 @@ const EN: Strings = {
     raider: 'Raider (Fast Flanking)',
     knight: 'Knight (Heavy Cavalry & Siege)',
   },
+  startAgeLabel: 'Starting Age',
+  fastAgesLabel: 'Fast Ages (-35% Era cost & time)',
+  eraNames: ['Middle Ages', 'Early Modern', '19th Century'],
   controlsHint: 'L-drag: select · R-click: order · R-hold+drag / Ctrl: position & facing · Shift: queue · Space: Active Pause · G: road · R: rotate · Ctrl+1–9: groups',
 
   tabBuild: 'Build',
@@ -312,6 +326,9 @@ const EN: Strings = {
 
   moraleLabel: 'Morale',
   fatigueLabel: 'Fatigue',
+  ammoLabel: 'Powder',
+  dismountBtn: 'Dismount',
+  remountBtn: 'Mount',
   captainAlive: 'Captain alive',
   captainFallen: 'Captain fallen (-1 Atk, -10 Morale)',
   veteranLabel: 'Veteran',
@@ -322,6 +339,7 @@ const EN: Strings = {
     schiltron: 'Schiltron',
     wedge: 'Wedge',
     loose: 'Loose',
+    square: 'Square',
   },
   stances: {
     hold: 'Hold',
@@ -329,6 +347,7 @@ const EN: Strings = {
     skirmish: 'Skirmish',
     shieldWall: 'Shield Wall',
     pikeWall: 'Pike Wall',
+    volleyFire: 'Volley Fire',
   },
   ranksLabel: 'Ranks',
   setPoseBtn: '⌖ Set Position (Ctrl)',
@@ -342,6 +361,14 @@ const EN: Strings = {
   mergeBtn: 'Merge',
   disbandBtn: 'Disband',
   priorityHeader: 'Pri.',
+  jumpKeepBtn: 'Keep',
+  jumpRival1Btn: 'Crimson',
+  jumpRival2Btn: 'Ochre',
+  captureYieldHints: {
+    mine: '+8 Iron Ore, +6 Gold/min',
+    quarry: '+10 Stone, +6 Gold/min',
+    village: '+18 Gold, +6 Grain/min',
+  },
   unitCounterHint: {
     militia: 'Cheap home defence (115 m keep limit). Refit at Barracks later.',
     pikemen: 'Counters Light & Heavy Cavalry cleanly; weak to Swordsmen.',
@@ -353,6 +380,12 @@ const EN: Strings = {
     heavyCav: 'Devastating flank shock vs Swordsmen & Ranged; countered by Pikemen.',
     cannon: '88 m flat trajectory breaches walls & towers; protect from Cavalry.',
     mortar: '112 m high-arc siege shells over walls; minimum range 35 m.',
+    musketeers: 'Era 2 matchlock volleys pierce 75% of armour & shields; protect with Pikes from Cavalry.',
+    cuirassiers: 'Era 2 breastplate heavy shock cavalry; crushes Musketeers & Swordsmen, weak to Pikes.',
+    dragoons: 'Era 2 mounted carbine skirmishers; outmanoeuvre slow infantry and harass flanks.',
+    lineInfantry: 'Era 3 flintlock & bayonet line; deadly volleys AND anti-cavalry bayonets.',
+    riflemen: 'Era 3 long-range 110 m sharpshooters; outrange Line Infantry, vulnerable to Cavalry.',
+    hussars: 'Era 3 swift shock cavalry; shreds Riflemen & Artillery, weak to Line bayonets & Pikes.',
   },
 
   buildings: {
@@ -363,6 +396,9 @@ const EN: Strings = {
     tavern: 'Tavern',
     chapel: 'Chapel',
     well: 'Well',
+    cathedral: 'Cathedral',
+    townHall: 'Town Hall',
+    manufactory: 'Manufactory',
     woodcutter: 'Woodcutter',
     sawmill: 'Sawmill',
     forester: 'Forester',
@@ -384,6 +420,8 @@ const EN: Strings = {
     armourer: 'Armourer',
     fletcher: 'Fletcher',
     stable: 'Stable',
+    gunsmith: 'Gunsmith',
+    powderMill: 'Powder Mill',
     barracks: 'Barracks',
     gunFoundry: 'Gun Foundry',
     watchtower: 'Watchtower',
@@ -402,6 +440,12 @@ const EN: Strings = {
     heavyCav: 'Heavy Cavalry',
     cannon: 'Field Cannon',
     mortar: 'Siege Mortar',
+    musketeers: 'Musketeers',
+    cuirassiers: 'Cuirassiers',
+    dragoons: 'Dragoons',
+    lineInfantry: 'Line Infantry',
+    riflemen: 'Riflemen',
+    hussars: 'Hussars',
   },
   goods: {
     gold: 'Gold',
@@ -425,6 +469,8 @@ const EN: Strings = {
     mail: 'Mail',
     bows: 'Bows',
     horses: 'Horses',
+    muskets: 'Muskets',
+    powder: 'Gunpowder',
   },
   placementReasons: {
     ok: 'Valid placement',
@@ -439,6 +485,8 @@ const EN: Strings = {
     needsLake: 'Must be <= 16 m from water',
     needsStone: 'Must be <= 15 m from stone outcrop',
     needsOre: 'Must be <= 15 m from iron ore',
+    needsKeep: 'Requires a higher Keep level / Era',
+    onlyOne: 'Unique Great Building (only 1 per town)',
     maxBuildings: 'Building cap (64) reached',
     insufficientResources: 'Not enough gold',
   },
@@ -488,6 +536,11 @@ const EN: Strings = {
       title: 'V. The Citadel Donżon',
       objective: 'Breach the fortress walls and defeat the inner courtyard guard.',
       briefing: 'Your army and siege train await at the southern settlement across the river. Build up your supply base first, then cross the ford with cannons and mortars to breach the twin stone rings.',
+    },
+    6: {
+      title: 'VI. The Gunpowder Bastion',
+      objective: 'Silence the Era 2 bastion cannons and defeat the Gunpowder Guard.',
+      briefing: 'A new age has dawned. Command an Early Modern host of Musketeers, Dragoons, Cuirassiers and field guns against a fortified gunpowder bastion. Keep your Powder Mill supplied and form Squares against enemy cavalry sorties!',
     },
   },
   tutorialSteps: {
@@ -552,6 +605,7 @@ const PL: Strings = {
     forest: 'Bór (M2)',
     valley: 'Dolina (M3–M4)',
     fortress: 'Twierdza (M5)',
+    triangle: 'Trzech panów (860 m)',
   },
   modeNames: {
     skirmish: 'Potyczka',
@@ -569,6 +623,9 @@ const PL: Strings = {
     raider: 'Zagończyk (Szybkie najazdy)',
     knight: 'Rycerz (Ciężka jazda i oblężenie)',
   },
+  startAgeLabel: 'Epoka startowa',
+  fastAgesLabel: 'Szybkie epoki (-35% kosztu i czasu)',
+  eraNames: ['Średniowiecze', 'Wczesna nowożytność', 'XIX wiek'],
   controlsHint: 'LPM: zaznacz · PPM: rozkaz · Przytrzymaj PPM+obrót / Ctrl: pozycja i kierunek · Shift: kolejka · Spacja: Pauza · G: droga · R: obrót · Ctrl+1–9: grupy',
 
   tabBuild: 'Budowa',
@@ -641,6 +698,9 @@ const PL: Strings = {
 
   moraleLabel: 'Morale',
   fatigueLabel: 'Zmęczenie',
+  ammoLabel: 'Proch',
+  dismountBtn: 'Spiesz',
+  remountBtn: 'Na koń',
   captainAlive: 'Kapitan żywy',
   captainFallen: 'Kapitan poległ (-1 Atak, -10 Morale)',
   veteranLabel: 'Weteran',
@@ -651,6 +711,7 @@ const PL: Strings = {
     schiltron: 'Jeż',
     wedge: 'Klin',
     loose: 'Luźny',
+    square: 'Czworobok',
   },
   stances: {
     hold: 'Stój',
@@ -658,6 +719,7 @@ const PL: Strings = {
     skirmish: 'Harcownik',
     shieldWall: 'Mur tarcz',
     pikeWall: 'Ściana pik',
+    volleyFire: 'Ogień salwowy',
   },
   ranksLabel: 'Szeregi',
   setPoseBtn: '⌖ Ustaw pozycję (Ctrl)',
@@ -671,6 +733,14 @@ const PL: Strings = {
   mergeBtn: 'Połącz',
   disbandBtn: 'Rozwiąż',
   priorityHeader: 'Prio.',
+  jumpKeepBtn: 'Gród',
+  jumpRival1Btn: 'Karmazyn',
+  jumpRival2Btn: 'Ochra',
+  captureYieldHints: {
+    mine: '+8 Rudy, +6 Złota/min',
+    quarry: '+10 Kamienia, +6 Złota/min',
+    village: '+18 Złota, +6 Zboża/min',
+  },
   unitCounterHint: {
     militia: 'Milicja z dzidą i tarczą (limit 115 m od grodu). Przezbrój później w koszarach.',
     pikemen: 'Skórznie, pika i mniejsza tarcza — kontrują lekką i ciężką jazdę.',
@@ -682,6 +752,12 @@ const PL: Strings = {
     heavyCav: 'Rycerze ciężkozbrojni z kopią, mieczem i tarczą — miażdżąca szarża.',
     cannon: 'Płaski ogień 88 m burzy mury i baszty; chroń przed jazdą.',
     mortar: 'Stromy ostrzał 112 m ponad murami; minimalny zasięg 35 m.',
+    musketeers: 'Epoka II: salwy muszkietów przebijają 75% pancerza i tarcz; osłaniaj pikinierami przed jazdą.',
+    cuirassiers: 'Epoka II: kirys i szarża ciężkiej jazdy; rozbija muszkieterów i mieczników, słabsi na piki.',
+    dragoons: 'Epoka II: konni strzelcy z karabinkiem; szybkie oskrzydlenie i nękanie piechoty.',
+    lineInfantry: 'Epoka III: karabiny skałkowe i bagnety — zabójcze salwy ORAZ skuteczna obrona przed jazdą.',
+    riflemen: 'Epoka III: gwintowane sztucery na 110 m — przewyższają zasięgiem piechotę liniową, słabi na jazdę.',
+    hussars: 'Epoka III: błyskawiczna szarża kawalerii — miażdży strzelców i działa, słabi na bagnety i piki.',
   },
 
   buildings: {
@@ -692,6 +768,9 @@ const PL: Strings = {
     tavern: 'Karczma',
     chapel: 'Kaplica',
     well: 'Studnia',
+    cathedral: 'Katedra',
+    townHall: 'Ratusz',
+    manufactory: 'Manufaktura',
     woodcutter: 'Drwal',
     sawmill: 'Tartak',
     forester: 'Leśniczówka',
@@ -713,6 +792,8 @@ const PL: Strings = {
     armourer: 'Płatnerz',
     fletcher: 'Łuczarz',
     stable: 'Stajnia',
+    gunsmith: 'Rusznikarz',
+    powderMill: 'Prochownia',
     barracks: 'Koszary',
     gunFoundry: 'Ludwisarnia',
     watchtower: 'Baszta',
@@ -731,6 +812,12 @@ const PL: Strings = {
     heavyCav: 'Rycerze ciężkozbrojni',
     cannon: 'Działo polowe',
     mortar: 'Moździerz',
+    musketeers: 'Muszkieterzy',
+    cuirassiers: 'Kirasjerzy',
+    dragoons: 'Dragoni',
+    lineInfantry: 'Piechota liniowa',
+    riflemen: 'Strzelcy',
+    hussars: 'Huzarzy',
   },
   goods: {
     gold: 'Złoto',
@@ -754,6 +841,8 @@ const PL: Strings = {
     mail: 'Kolczugi',
     bows: 'Łuki',
     horses: 'Konie',
+    muskets: 'Muszkiety',
+    powder: 'Proch',
   },
   placementReasons: {
     ok: 'Miejsce prawidłowe',
@@ -768,6 +857,8 @@ const PL: Strings = {
     needsLake: 'Wymaga wody w promieniu 16 m',
     needsStone: 'Wymaga skał w promieniu 15 m',
     needsOre: 'Wymaga rudy żelaza w promieniu 15 m',
+    needsKeep: 'Wymaga wyższego poziomu Grodu / Epoki',
+    onlyOne: 'Unikalna Wielka Budowla (tylko 1 na osadę)',
     maxBuildings: 'Osiągnięto limit 64 budynków',
     insufficientResources: 'Za mało złota',
   },
@@ -817,6 +908,11 @@ const PL: Strings = {
       title: 'V. Donżon Twierdzy',
       objective: 'Wyłom mur twierdzy i pokonaj gwardię na wewnętrznym dziedzińcu.',
       briefing: 'Twoje oddziały i artyleria czekają przy południowej osadzie po Twojej stronie rzeki. Najpierw rozbuduj zaplecze, potem przepraw działa i moździerze i zdobądź twierdzę.',
+    },
+    6: {
+      title: 'VI. Bastion Epoki Prochu',
+      objective: 'Uciszyć działa bastionu Epoki 2 i pokonać Gwardię Prochową.',
+      briefing: 'Nadeszła nowa epoka. Poprowadź wczesnonowożytną armię muszkieterów, dragonów, kirasjerów i dział polowych przeciw ufortyfikowanemu bastionowi. Dbaj o dostawy prochu z Prochowni i formuj Czworobok przeciw wypadom jazdy!',
     },
   },
   tutorialSteps: {

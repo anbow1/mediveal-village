@@ -174,6 +174,30 @@ describe('Stage 6 campaign missions 1-5, defence, tutorial & deterministic save/
     }
     stepSeconds(m5, 1.0);
     expect(m5.state.scenario.outcome).toBe('victory');
+
+    // --- Mission 6: The Gunpowder Bastion (Era 2 Keep L4, Gunsmith/PowderMill, Musketeers & Field Cannons!) ---
+    const m6 = new SimEngine({ mapId: 'fortress', mode: 'campaign', missionId: 6, seed: 106 });
+    expect(m6.state.buildings.find((b) => b.side === 0 && b.type === 'keep')?.level).toBe(4);
+    expect(m6.state.buildings.some((b) => b.side === 0 && b.type === 'gunsmith')).toBe(true);
+    expect(m6.state.buildings.some((b) => b.side === 0 && b.type === 'powderMill')).toBe(true);
+    expect(m6.state.regiments.some((r) => r.side === 0 && r.unitType === 'musketeers')).toBe(true);
+    const m6Guards = m6.state.regiments.filter((r) => r.side === 1 && r.scenarioTag === 'm6_guard');
+    expect(m6Guards.length).toBeGreaterThanOrEqual(2);
+    for (const r of m6Guards) {
+      for (const s of r.soldiers) s.alive = false;
+    }
+    stepSeconds(m6, 1.0);
+    expect(m6.state.scenario.outcome).toBe('victory');
+    expect(m6.state.scenario.outcomeReason).toBe('bastionCaptured');
+  }, 15_000);
+
+  it('spawns Era 2-3 firearm regiments in Defence mode when startAge >= 2', () => {
+    const defEra2 = new SimEngine({ mapId: 'crossing', mode: 'defence', startAge: 2, disableAi: true, seed: 912 });
+    defEra2.state.timeS = CAMPAIGN.defenceFirstWaveS - 0.3;
+    stepSeconds(defEra2, 1.0);
+    expect(defEra2.state.scenario.waveIndex).toBe(1);
+    const enemyTypes = new Set(defEra2.state.regiments.filter((r) => r.side === 1).map((r) => r.unitType));
+    expect(enemyTypes.has('musketeers') || enemyTypes.has('pikemen') || enemyTypes.has('crossbowmen')).toBe(true);
   });
 
   it('spawns Defence waves starting at minute 25, escalates every 5 min, scales with difficulty, and awards victory at 75 min', () => {

@@ -5,10 +5,13 @@ import {
   BUILDING_DEFS,
   COMBAT,
   ECONOMY,
+  GREAT,
+  SQUARE_FORMATION,
   STANCES,
   UNIT_DEFS,
   type GoodId,
   type ResourceMap,
+  type UnitClass,
   type UnitTypeId,
 } from '../config.ts';
 import { consumeRationsFromStock, findKeep, recordConsumed, recordProduced, spawnCitizen } from './economy.ts';
@@ -24,6 +27,12 @@ import type {
   SoldierEntity,
   WallSegmentEntity,
 } from './types.ts';
+
+/** Returns a regiment's effective tactical class (dismounted Dragoons fight as foot ranged infantry, not cavalry). */
+export function effectiveUnitClass(reg: RegimentEntity): UnitClass {
+  if (reg.unitType === 'dragoons' && reg.dismounted) return 'ranged';
+  return UNIT_DEFS[reg.unitType].unitClass;
+}
 
 /** Deterministic seeded PRNG step mutating `state.rngState` (xorshift32). */
 export function nextSimRand(state: SimWorldState): number {
@@ -87,7 +96,25 @@ export function computeFormationSlotOffset(
   unitClass: 'infantry' | 'ranged' | 'cavalry' | 'siege',
 ): { right: number; forward: number } {
   const baseSpacing = unitClass === 'cavalry' ? 2.15 : unitClass === 'siege' ? 4.4 : 1.48;
-  const spacing = formation === 'loose' ? baseSpacing * 1.65 : formation === 'schiltron' ? baseSpacing * 0.88 : baseSpacing;
+  const spacing =
+    formation === 'loose'
+      ? baseSpacing * 1.65
+      : formation === 'schiltron' || formation === 'square'
+        ? baseSpacing * 0.88
+        : baseSpacing;
+
+  if (formation === 'square') {
+    // Hollow Infantry Square: distribute soldiers cleanly around the 4 outer faces (front, right, rear, left).
+    const perFace = Math.max(1, Math.ceil(totalAlive / 4));
+    const face = Math.floor(slotIdx / perFace) % 4;
+    const posInFace = slotIdx % perFace;
+    const halfSpan = Math.max(spacing * 0.9, (perFace - 1) * spacing * 0.5 + spacing * 0.35);
+    const t = perFace <= 1 ? 0 : (posInFace / (perFace - 1)) * 2 - 1;
+    if (face === 0) return { right: t * halfSpan, forward: halfSpan };
+    if (face === 1) return { right: halfSpan, forward: -t * halfSpan };
+    if (face === 2) return { right: -t * halfSpan, forward: -halfSpan };
+    return { right: -halfSpan, forward: t * halfSpan };
+  }
 
   if (formation === 'schiltron') {
     const ring = Math.floor(slotIdx / 8);
@@ -211,6 +238,10 @@ export function spawnRegiment(
     garrisonedInBuildingId: null,
     noUpkeep: opts?.noUpkeep,
     scenarioTag: opts?.scenarioTag,
+    ammoVolleys: def.firearm ? COMBAT.firearmMaxAmmoVolleys : undefined,
+    maxAmmoVolleys: def.firearm ? COMBAT.firearmMaxAmmoVolleys : undefined,
+    ammoResupplyTimerS: 0,
+    dismounted: false,
   };
   state.regiments.push(reg);
   return reg;
@@ -228,9 +259,10 @@ export function refreshRegimentStats(state: SimWorldState, reg: RegimentEntity):
   const sideState = state.sides[reg.side];
   let maxM = def.morale + reg.veteranTier * COMBAT.vetMaxMoraleBonusPerTier;
   if (!reg.captainAlive && def.unitClass !== 'siege') maxM -= COMBAT.missingCaptainMaxMoralePenalty;
-  if (sideState.hasChapel) maxM += ECONOMY.chapelMoraleBonus;
-  if (sideState.armyStarving && !reg.noUpkeep) maxM -= ECONOMY.starvingArmyMoralePenalty;
-  if (sideState.unpaidPenaltyActive && !reg.noUpkeep) maxM -= COMBAT.unpaidMoralePenalty;
+  if (sideState?.hasChapel) maxM += ECONOMY.chapelMoraleBonus;
+  if (sideState?.hasCathedral) maxM += GREAT.cathedralMorale;
+  if (sideState?.armyStarving && !reg.noUpkeep) maxM -= ECONOMY.starvingArmyMoralePenalty;
+  if (sideState?.unpaidPenaltyActive && !reg.noUpkeep) maxM -= COMBAT.unpaidMoralePenalty;
   if (reg.formation === 'loose') maxM -= 6;
   reg.maxMorale = Math.max(12, maxM);
   if (reg.morale > reg.maxMorale) reg.morale = reg.maxMorale;
@@ -242,8 +274,8 @@ export function classifyAttackArc(
   attackerZ: number,
   defender: RegimentEntity,
 ): 'front' | 'flank' | 'rear' {
-  // Schiltron has all-round frontage against cavalry and infantry!
-  if (defender.formation === 'schiltron') return 'front';
+  // Schiltron and Hollow Square have all-round 360-degree frontage against cavalry and flanking!
+  if (defender.formation === 'schiltron' || defender.formation === 'square') return 'front';
   const toAttX = attackerX - defender.x;
   const toAttZ = attackerZ - defender.z;
   const len = Math.hypot(toAttX, toAttZ);
@@ -288,23 +320,28 @@ function applyDamageToRegiment(
   isMissile: boolean,
   arc: 'front' | 'flank' | 'rear',
   extraMoraleShock = 0,
+  isFirearm = false,
+  isSiege = false,
 ): number {
   const def = UNIT_DEFS[defender.unitType];
   const aliveList = defender.soldiers.filter((s) => s.alive);
   if (aliveList.length === 0) return 0;
 
-  // Front-arc shield block for missiles (Shield Wall doubles arrow block, capped at 0.85)
+  // Front-arc shield block for missiles (Shield Wall doubles arrow block, capped at 0.85;
+  // musket balls pierce shields just like armour per marchland missiles.ts!)
   if (isMissile && arc === 'front' && def.shieldBlock > 0) {
-    const effBlock =
+    const rawBlock =
       defender.stance === 'shieldWall'
         ? Math.min(0.85, def.shieldBlock * STANCES.shieldWall.arrowBlockMul)
         : def.shieldBlock;
+    const effBlock = isFirearm ? rawBlock * (1 - armorPierce) : rawBlock;
     if (nextSimRand(state) < effBlock) return 0;
   }
 
   const effArmor = def.armour * (1 - armorPierce);
   const arcMul = arc === 'rear' ? COMBAT.rearDamageMul : arc === 'flank' ? COMBAT.flankDamageMul : 1.0;
-  const dmg = Math.max(1, rawDamage * (1 - effArmor) * arcMul);
+  const squareSiegeMul = isSiege && defender.formation === 'square' ? SQUARE_FORMATION.siegeDamageMul : 1.0;
+  const dmg = Math.max(1, rawDamage * (1 - effArmor) * arcMul * squareSiegeMul);
 
   // Pick a live soldier (weighted toward front ranks)
   const victim = aliveList[Math.floor(nextSimRand(state) * Math.min(aliveList.length, 6))] ?? aliveList[0]!;
@@ -379,8 +416,9 @@ function stepRecruitmentQueues(state: SimWorldState, dtS: number): void {
 
 /** Pays army upkeep (0.2 gold/man/min) and soldier food rations (0.25 rations/man/min) from Keep stock. */
 function stepArmyLogistics(state: SimWorldState, dtS: number): void {
-  for (const side of [0, 1] as const) {
-    const s = state.sides[side];
+  for (const s of state.sides) {
+    if (s.absent) continue;
+    const side = s.side;
     let payingMen = 0;
     for (const reg of state.regiments) {
       if (reg.side !== side || reg.noUpkeep) continue;
@@ -542,18 +580,21 @@ function stepFortifications(state: SimWorldState, dtS: number, terrain: TerrainF
   }
 }
 
-/** Updates 3 strategic capture points (20 s uncontested within 30 m -> mine/quarry/village income!). */
+/** Updates 3 strategic capture points (20 s uncontested within 30 m -> mine/quarry/village income; supports 2 or 3 sides!). */
 function stepCapturePoints(state: SimWorldState, dtS: number): void {
   const radSq = COMBAT.captureRadiusM * COMBAT.captureRadiusM;
   for (const cp of state.capturePoints) {
-    let has0 = false;
-    let has1 = false;
+    let presentSide: SideId | null = null;
+    let contested = false;
     for (const reg of state.regiments) {
       if (reg.routing || reg.garrisonedInBuildingId !== null || countAliveSoldiers(reg) === 0) continue;
       const dSq = (reg.x - cp.x) * (reg.x - cp.x) + (reg.z - cp.z) * (reg.z - cp.z);
       if (dSq <= radSq) {
-        if (reg.side === 0) has0 = true;
-        else has1 = true;
+        if (presentSide === null) presentSide = reg.side;
+        else if (presentSide !== reg.side) {
+          contested = true;
+          break;
+        }
       }
     }
 
@@ -573,49 +614,36 @@ function stepCapturePoints(state: SimWorldState, dtS: number): void {
       }
     };
 
-    if (has0 && !has1) {
-      if (cp.owner !== 0) {
-        if (cp.capturingSide !== 0) {
-          cp.capturingSide = 0;
+    if (presentSide !== null && !contested) {
+      if (cp.owner !== presentSide) {
+        if (cp.capturingSide !== presentSide) {
+          cp.capturingSide = presentSide;
           cp.captureProgressS = 0;
         }
         cp.captureProgressS += dtS;
         if (cp.captureProgressS >= COMBAT.captureTimeS) {
-          cp.owner = 0;
+          cp.owner = presentSide;
           cp.capturingSide = null;
           cp.captureProgressS = 0;
-          transferCapturedStructures(0);
-          pushAlert(state, 0, 'pointCaptured', cp.x, cp.z, cp.label);
+          transferCapturedStructures(presentSide);
+          pushAlert(state, presentSide, 'pointCaptured', cp.x, cp.z, cp.label);
         }
       }
-    } else if (has1 && !has0) {
-      if (cp.owner !== 1) {
-        if (cp.capturingSide !== 1) {
-          cp.capturingSide = 1;
-          cp.captureProgressS = 0;
-        }
-        cp.captureProgressS += dtS;
-        if (cp.captureProgressS >= COMBAT.captureTimeS) {
-          cp.owner = 1;
-          cp.capturingSide = null;
-          cp.captureProgressS = 0;
-          transferCapturedStructures(1);
-          pushAlert(state, 1, 'pointCaptured', cp.x, cp.z, cp.label);
-        }
-      }
-    } else if (has0 && has1) {
+    } else if (contested) {
       // Contested: progress pauses (nobody captures)
     } else {
       cp.captureProgressS = Math.max(0, cp.captureProgressS - dtS * 0.5);
     }
 
     if (cp.owner !== null) {
-      const income: ResourceMap = COMBAT.captureIncomePerMin[cp.kind];
       const s = state.sides[cp.owner];
-      for (const g of Object.keys(income) as GoodId[]) {
-        const amt = ((income[g] ?? 0) / 60) * dtS;
-        s.stock[g] = (s.stock[g] ?? 0) + amt;
-        recordProduced(s, g, amt);
+      if (s && !s.absent) {
+        const income: ResourceMap = COMBAT.captureIncomePerMin[cp.kind];
+        for (const g of Object.keys(income) as GoodId[]) {
+          const amt = ((income[g] ?? 0) / 60) * dtS;
+          s.stock[g] = (s.stock[g] ?? 0) + amt;
+          recordProduced(s, g, amt);
+        }
       }
     }
   }
@@ -704,29 +732,37 @@ function stepProjectiles(state: SimWorldState, dtS: number, nav: NavGrid): boole
           ? 0.58
           : p.kind === 'mortar'
             ? 0.65
-            : p.kind === 'bolt'
-              ? 0.26
-              : 0.145;
+            : p.kind === 'musketball'
+              ? 0.36
+              : p.kind === 'bolt'
+                ? 0.26
+                : 0.145;
       acc *= p.shooterAccuracyMul;
       if (reg.formation === 'loose') acc *= 1 - COMBAT.missileLooseReduction;
-      if (nav.isForestCellAt(reg.x, reg.z)) acc *= 1 - COMBAT.missileForestCover;
+      if (nav.isForestCellAt(reg.x, reg.z)) {
+        if (!p.ignoresForestCover) acc *= 1 - COMBAT.missileForestCover;
+        if (reg.unitType === 'riflemen') acc *= 1 - COMBAT.riflemenForestCoverBonus;
+      }
       // Shorter range is noticeably more accurate
       const flightDist = Math.hypot(p.targetX - p.startX, p.targetZ - p.startZ);
       acc *= Math.max(0.75, Math.min(1.25, 1.25 - flightDist / 160));
 
+      const isFirearm = p.kind === 'musketball';
+      const isSiege = p.kind === 'cannonball' || p.kind === 'mortar';
       if (p.splashRadiusM > 0) {
-        // Artillery splash can hit multiple men in dense formations
+        // Artillery splash can hit multiple men in dense formations (and deals 1.4x vs packed Squares!)
         const splashRolls = p.kind === 'mortar' ? 3 : 2;
         for (let r = 0; r < splashRolls; r++) {
           if (nextSimRand(state) < acc) {
             const arc = classifyAttackArc(p.startX, p.startZ, reg);
-            applyDamageToRegiment(state, reg, shooter, p.damage, p.armorPierce, true, arc, p.kind === 'mortar' ? 5 : 3);
+            applyDamageToRegiment(state, reg, shooter, p.damage, p.armorPierce, true, arc, p.kind === 'mortar' ? 5 : 3, false, isSiege);
           }
         }
       } else if (nextSimRand(state) < acc) {
         const arc = classifyAttackArc(p.startX, p.startZ, reg);
-        applyDamageToRegiment(state, reg, shooter, p.damage, p.armorPierce, true, arc, 0.4);
-        state.fxEvents.push({ kind: 'arrowHit', x: p.targetX, y: p.targetY, z: p.targetZ, intensity: 0.5 });
+        const moraleShock = (isFirearm ? 0.85 : 0.4) + (p.extraMoraleShock ?? 0);
+        applyDamageToRegiment(state, reg, shooter, p.damage, p.armorPierce, true, arc, moraleShock, isFirearm, false);
+        state.fxEvents.push({ kind: 'arrowHit', x: p.targetX, y: p.targetY, z: p.targetZ, intensity: isFirearm ? 0.7 : 0.5 });
       }
       if (isDirect && p.splashRadiusM === 0) break;
     }
@@ -772,6 +808,9 @@ export function stepCombat(
         reg.refittingTo = null;
         reg.refitTimerS = 0;
         reg.maxMen = Math.max(aliveMen, getRegimentMaxMen(state, reg.unitType));
+        reg.ammoVolleys = newDef.firearm ? COMBAT.firearmMaxAmmoVolleys : undefined;
+        reg.maxAmmoVolleys = newDef.firearm ? COMBAT.firearmMaxAmmoVolleys : undefined;
+        reg.dismounted = false;
         const moraleFrac = reg.morale / Math.max(1, reg.maxMorale);
         for (const s of reg.soldiers) {
           if (!s.alive) continue;
@@ -1103,10 +1142,44 @@ export function stepCombat(
       meleeTarget = nearestEnemy;
     }
 
+    // 7b. Field blackpowder logistics: resupply firearm pouches near Keep/Storehouse/Barracks (or via field courier)
+    if (def.firearm) {
+      const maxAmmo = reg.maxAmmoVolleys ?? COMBAT.firearmMaxAmmoVolleys;
+      if (reg.ammoVolleys === undefined) reg.ammoVolleys = maxAmmo;
+      if (reg.ammoVolleys < maxAmmo) {
+        reg.ammoResupplyTimerS = (reg.ammoResupplyTimerS ?? 0) + dtS;
+        const nearDepot = state.buildings.some(
+          (b) =>
+            b.side === reg.side &&
+            b.hp > 0 &&
+            b.buildProgress >= 1 &&
+            (b.type === 'keep' || b.type === 'storehouse' || b.type === 'barracks') &&
+            Math.hypot(b.x - reg.x, b.z - reg.z) <= COMBAT.firearmResupplyRadiusM,
+        );
+        const interval = nearDepot ? COMBAT.firearmResupplyIntervalS : COMBAT.firearmResupplyIntervalS * 2;
+        if (reg.ammoResupplyTimerS >= interval && (nearDepot || reg.outOfCombatS >= 4)) {
+          const sideState = state.sides[reg.side];
+          const canUsePowder = reg.noUpkeep || (sideState.stock.powder ?? 0) >= 1;
+          if (canUsePowder) {
+            reg.ammoResupplyTimerS = 0;
+            if (!reg.noUpkeep) {
+              sideState.stock.powder = Math.max(0, (sideState.stock.powder ?? 0) - 1);
+              recordConsumed(sideState, 'powder', 1);
+            }
+            reg.ammoVolleys = Math.min(maxAmmo, reg.ammoVolleys + (nearDepot ? 2 : 1));
+          }
+        }
+      } else {
+        reg.ammoResupplyTimerS = 0;
+      }
+    }
+
     // 8. Fatigue update
+    const regEffClass = effectiveUnitClass(reg);
+    const regWalkMs = reg.unitType === 'dragoons' && reg.dismounted ? COMBAT.dragoonDismountedWalkMs : def.walkSpeedMs;
     if (inMeleeRange) {
       reg.fatigue = Math.min(1, reg.fatigue + COMBAT.fatigueMeleePerS * dtS);
-    } else if (reg.currentSpeedMs > def.walkSpeedMs * 1.25) {
+    } else if (reg.currentSpeedMs > regWalkMs * 1.25) {
       reg.fatigue = Math.min(1, reg.fatigue + COMBAT.fatigueRunPerS * dtS);
     } else if (reg.currentSpeedMs < 0.2) {
       reg.fatigue = Math.max(0, reg.fatigue - COMBAT.fatigueRecoverIdlePerS * dtS);
@@ -1117,26 +1190,29 @@ export function stepCombat(
       reg.outOfCombatS = 0;
       const arc = classifyAttackArc(reg.x, reg.z, meleeTarget);
       const tgtDef = UNIT_DEFS[meleeTarget.unitType];
+      const tgtEffClass = effectiveUnitClass(meleeTarget);
       const elevDiff = terrain.heightAt(reg.x, reg.z) - terrain.heightAt(meleeTarget.x, meleeTarget.z);
       const uphillPen = elevDiff < -COMBAT.elevationHeightThresholdM ? COMBAT.uphillMeleeAttackPenalty : 0;
 
       const chargeMul =
         (reg.formation === 'wedge' ? 1.3 : 1.0) *
         (elevDiff > COMBAT.elevationHeightThresholdM ? 1 + COMBAT.downhillChargeBonusFrac : 1.0);
-      // Braced pikes/halberds negate frontal cavalry charge bonus (Pike Wall always negates frontal charges!)
+      // Braced pikes/halberds, Pike Wall, and 360-degree Infantry Squares negate cavalry charges!
       const cavBlockedByPikes =
-        (def.unitClass === 'cavalry' &&
+        (regEffClass === 'cavalry' &&
           tgtDef.antiCavBonus > 0 &&
           arc === 'front' &&
           meleeTarget.currentSpeedMs < 2.2) ||
-        (meleeTarget.stance === 'pikeWall' && arc === 'front');
+        (meleeTarget.stance === 'pikeWall' && arc === 'front') ||
+        (regEffClass === 'cavalry' && meleeTarget.formation === 'square');
 
       const chargeAtk = reg.chargeTimerS > 0 && !cavBlockedByPikes ? def.chargeAttackBonus * chargeMul : 0;
       const pikeWallCavMul = reg.stance === 'pikeWall' ? STANCES.pikeWall.antiCavMul : 1.0;
-      const antiCavAtk =
-        tgtDef.unitClass === 'cavalry'
-          ? def.antiCavBonus * (reg.formation === 'schiltron' ? 1.35 : 1.0) * pikeWallCavMul
-          : 0;
+      const baseAntiCav =
+        reg.formation === 'square'
+          ? Math.max(SQUARE_FORMATION.antiCavFlatBonus, def.antiCavBonus) * SQUARE_FORMATION.antiCavMul
+          : def.antiCavBonus * (reg.formation === 'schiltron' ? 1.35 : 1.0) * pikeWallCavMul;
+      const antiCavAtk = tgtEffClass === 'cavalry' ? baseAntiCav : 0;
       const arcAtk = arc === 'rear' ? COMBAT.rearAttackBonus : arc === 'flank' ? COMBAT.flankAttackBonus : 0;
       const capPen = !reg.captainAlive ? COMBAT.missingCaptainAttackPenalty : 0;
       const fatPen = reg.fatigue > 0.7 ? COMBAT.fatigueExhaustedAttackPenalty : 0;
@@ -1147,7 +1223,9 @@ export function stepCombat(
             ? STANCES.pikeWall.defenceBonus
             : meleeTarget.stance === 'shieldWall'
               ? STANCES.shieldWall.defenceBonus
-              : 0
+              : meleeTarget.formation === 'square' && regEffClass === 'cavalry'
+                ? 2
+                : 0
           : 0;
       const effAtk = def.attack + reg.veteranTier * COMBAT.vetAttackBonusPerTier + chargeAtk + antiCavAtk + arcAtk - capPen - fatPen - uphillPen;
       const effDef = tgtDef.defence + shieldDef + stanceDef + meleeTarget.veteranTier * COMBAT.vetDefenceBonusPerTier - (arc === 'rear' ? 4 : arc === 'flank' ? 2 : 0);
@@ -1157,8 +1235,12 @@ export function stepCombat(
         Math.min(COMBAT.maxHitChance, COMBAT.baseHitChance + (effAtk - effDef) * COMBAT.hitChancePerPoint),
       );
 
-      const antiCavDmgBonus = tgtDef.unitClass === 'cavalry' && def.antiCavBonus > 0 ? def.antiCavBonus * 0.55 : 0;
-      const meleeAp = tgtDef.unitClass === 'cavalry' && def.antiCavBonus > 0 ? 0.48 : 0;
+      const hasAntiCav = def.antiCavBonus > 0 || reg.formation === 'square';
+      const antiCavDmgBonus =
+        tgtEffClass === 'cavalry' && hasAntiCav
+          ? Math.max(def.antiCavBonus, reg.formation === 'square' ? SQUARE_FORMATION.antiCavFlatBonus : 0) * 0.55
+          : 0;
+      const meleeAp = tgtEffClass === 'cavalry' && hasAntiCav ? 0.48 : 0;
       const chargeDmgMul = reg.chargeTimerS > 0 && !cavBlockedByPikes ? 1.5 : 1.0;
       const swingIntervalS = reg.unitType === 'swordsmen' ? 1.28 : reg.unitType === 'halberdiers' ? 1.54 : COMBAT.meleeSwingIntervalS;
 
@@ -1233,6 +1315,8 @@ export function stepCombat(
     if (def.ranged && !inMeleeRange && !reg.holdFire && reg.currentSpeedMs < 0.6) {
       const rSpec = def.ranged;
       const regElev = terrain.heightAt(reg.x, reg.z);
+      const isVolleyStance = Boolean(def.firearm && reg.stance === 'volleyFire');
+      const rangeStanceMul = isVolleyStance ? STANCES.volleyFire.rangeMul : 1.0;
 
       // Select target: explicit order target or nearest enemy in range
       let fireRegTarget: RegimentEntity | null = null;
@@ -1244,12 +1328,18 @@ export function stepCombat(
           const explicit = state.regiments.find((r) => r.id === reg.order?.targetRegimentId && countAliveSoldiers(r) > 0 && r.garrisonedInBuildingId === null);
           if (explicit) {
             const d = Math.hypot(explicit.x - reg.x, explicit.z - reg.z);
-            const effMax = rSpec.maxRangeM * (regElev - terrain.heightAt(explicit.x, explicit.z) > COMBAT.elevationHeightThresholdM ? 1 + COMBAT.downhillRangeBonusFrac : 1);
+            const effMax =
+              rSpec.maxRangeM *
+              rangeStanceMul *
+              (regElev - terrain.heightAt(explicit.x, explicit.z) > COMBAT.elevationHeightThresholdM ? 1 + COMBAT.downhillRangeBonusFrac : 1);
             if (d >= rSpec.minRangeM && d <= effMax) fireRegTarget = explicit;
           }
         }
         if (!fireRegTarget && nearestEnemy) {
-          const effMax = rSpec.maxRangeM * (regElev - terrain.heightAt(nearestEnemy.x, nearestEnemy.z) > COMBAT.elevationHeightThresholdM ? 1 + COMBAT.downhillRangeBonusFrac : 1);
+          const effMax =
+            rSpec.maxRangeM *
+            rangeStanceMul *
+            (regElev - terrain.heightAt(nearestEnemy.x, nearestEnemy.z) > COMBAT.elevationHeightThresholdM ? 1 + COMBAT.downhillRangeBonusFrac : 1);
           if (nearestEnemyDist >= rSpec.minRangeM && nearestEnemyDist <= effMax) {
             fireRegTarget = nearestEnemy;
           }
@@ -1267,30 +1357,59 @@ export function stepCombat(
       if (tgtPos) {
         reg.yawRad = Math.atan2(tgtPos.x - reg.x, tgtPos.z - reg.z);
         const dist = Math.hypot(tgtPos.x - reg.x, tgtPos.z - reg.z);
-        const accMul = 1 + reg.veteranTier * COMBAT.vetAccuracyBonusPerTier;
+        const elevAdvantage = regElev - terrain.heightAt(tgtPos.x, tgtPos.z) > COMBAT.elevationHeightThresholdM;
+        const spreadInv = 1 / Math.max(0.4, rSpec.spreadFactor ?? 1.0);
+        const dragoonAccMul = reg.unitType === 'dragoons' && reg.dismounted ? COMBAT.dragoonDismountedAccMul : 1.0;
+        const volleyAccMul = isVolleyStance ? STANCES.volleyFire.accuracyBonus : 1.0;
+        const elevAccMul = def.firearm && elevAdvantage ? 1.08 : 1.0;
+        const accMul =
+          (1 + reg.veteranTier * COMBAT.vetAccuracyBonusPerTier) *
+          spreadInv *
+          dragoonAccMul *
+          volleyAccMul *
+          elevAccMul;
+
+        const squareReloadMul = reg.formation === 'square' ? SQUARE_FORMATION.reloadMul : 1.0;
+        const dragoonReloadMul = reg.unitType === 'dragoons' && reg.dismounted ? COMBAT.dragoonDismountedReloadMul : 1.0;
+        const lowAmmoReloadMul =
+          def.firearm && (reg.ammoVolleys ?? COMBAT.firearmMaxAmmoVolleys) <= 0.01 ? COMBAT.firearmLowAmmoReloadMul : 1.0;
+        const effReloadS = rSpec.reloadS * squareReloadMul * dragoonReloadMul * lowAmmoReloadMul;
 
         for (const s of reg.soldiers) {
           if (!s.alive) continue;
           s.rangedCooldownS -= dtS;
           if (s.rangedCooldownS <= 0) {
-            s.rangedCooldownS = rSpec.reloadS * (0.92 + nextSimRand(state) * 0.16);
+            s.rangedCooldownS = effReloadS * (0.92 + nextSimRand(state) * 0.16);
+            if (def.firearm && reg.ammoVolleys !== undefined && reg.ammoVolleys > 0) {
+              reg.ammoVolleys = Math.max(0, reg.ammoVolleys - 1 / Math.max(1, aliveMen));
+            }
             s.clip = 'attack';
             s.attackAnimTimerS = 0.7;
             s.sinceAttackS = 0;
-            const sy = terrain.heightAt(s.x, s.z) + 1.45;
+            const sy = terrain.heightAt(s.x, s.z) + (regEffClass === 'cavalry' ? 2.0 : 1.45);
             const ty = terrain.heightAt(tgtPos.x, tgtPos.z) + 1.05;
-            const spread = rSpec.kind === 'mortar' ? 2.6 : rSpec.kind === 'cannonball' ? 1.8 : 2.8;
+            const elevSpreadMul = def.firearm && elevAdvantage ? 0.85 : 1.0;
+            const spread =
+              (rSpec.kind === 'mortar'
+                ? 2.6
+                : rSpec.kind === 'cannonball'
+                  ? 1.8
+                  : rSpec.kind === 'musketball'
+                    ? 2.2 * (rSpec.spreadFactor ?? 1.0)
+                    : 2.8) * elevSpreadMul;
             const tx = tgtPos.x + (nextSimRand(state) - 0.5) * spread;
             const tz = tgtPos.z + (nextSimRand(state) - 0.5) * spread;
-            const flightS = Math.max(0.25, dist / rSpec.projectileSpeedMs);
+            const flightS = Math.max(0.08, dist / rSpec.projectileSpeedMs);
             const arcH =
               rSpec.kind === 'mortar'
                 ? Math.min(48, Math.max(18, dist * 0.36))
                 : rSpec.kind === 'cannonball'
                   ? Math.min(3.5, dist * 0.03)
-                  : rSpec.kind === 'bolt'
-                    ? Math.min(5, dist * 0.06)
-                    : Math.min(15, dist * 0.16);
+                  : rSpec.kind === 'musketball'
+                    ? Math.min(1.2, dist * 0.012)
+                    : rSpec.kind === 'bolt'
+                      ? Math.min(5, dist * 0.06)
+                      : Math.min(15, dist * 0.16);
 
             state.projectiles.push({
               id: state.nextEntityId++,
@@ -1317,10 +1436,14 @@ export function stepCombat(
               targetBuildingId: fireBldTarget?.id ?? null,
               targetWallId: fireWallTarget?.id ?? null,
               shooterAccuracyMul: accMul,
+              extraMoraleShock: isVolleyStance ? STANCES.volleyFire.moraleShockBonus : undefined,
+              ignoresForestCover: reg.unitType === 'riflemen' ? true : undefined,
             });
 
             if (rSpec.kind === 'cannonball' || rSpec.kind === 'mortar') {
               state.fxEvents.push({ kind: 'cannonMuzzle', x: s.x, y: sy, z: s.z, intensity: rSpec.kind === 'mortar' ? 1.3 : 1.0 });
+            } else if (rSpec.kind === 'musketball') {
+              state.fxEvents.push({ kind: 'musketShot', x: s.x, y: sy, z: s.z, intensity: 1.0 });
             }
           }
         }
@@ -1351,14 +1474,26 @@ function applyChargeImpact(
 ): void {
   const def = UNIT_DEFS[attacker.unitType];
   const tgtDef = UNIT_DEFS[defender.unitType];
+  const attClass = effectiveUnitClass(attacker);
   const arc = classifyAttackArc(attacker.x, attacker.z, defender);
 
-  // Frontal charge into braced pikes/halberds severely punishes cavalry (Pike Wall deals 2x counter-charge!)
-  if (def.unitClass === 'cavalry' && tgtDef.antiCavBonus > 0 && arc === 'front' && (defender.currentSpeedMs < 2.2 || defender.stance === 'pikeWall')) {
-    const pwMul = defender.stance === 'pikeWall' ? STANCES.pikeWall.antiCavMul : 1.0;
+  // Charge into braced pikes/halberds, Pike Wall, OR 360-degree Hollow Square severely punishes cavalry!
+  const blockedBySquare = attClass === 'cavalry' && defender.formation === 'square';
+  const blockedByPikes =
+    attClass === 'cavalry' &&
+    tgtDef.antiCavBonus > 0 &&
+    arc === 'front' &&
+    (defender.currentSpeedMs < 2.2 || defender.stance === 'pikeWall');
+  if (blockedBySquare || blockedByPikes) {
+    const mult = blockedBySquare
+      ? SQUARE_FORMATION.antiCavMul
+      : defender.stance === 'pikeWall'
+        ? STANCES.pikeWall.antiCavMul
+        : 1.0;
+    const antiBonus = blockedBySquare ? Math.max(SQUARE_FORMATION.antiCavFlatBonus, tgtDef.antiCavBonus) : tgtDef.antiCavBonus;
     const counterHits = Math.min(6, Math.ceil(countAliveSoldiers(defender) * 0.42));
     for (let k = 0; k < counterHits; k++) {
-      applyDamageToRegiment(state, attacker, defender, (tgtDef.meleeDamage + tgtDef.antiCavBonus * 0.85) * pwMul, 0.48, false, 'front', 7);
+      applyDamageToRegiment(state, attacker, defender, (tgtDef.meleeDamage + antiBonus * 0.85) * mult, 0.48, false, 'front', 7);
     }
     return;
   }
@@ -1369,14 +1504,14 @@ function applyChargeImpact(
   const arcShock = arc === 'rear' ? COMBAT.rearMoraleShock : arc === 'flank' ? COMBAT.flankMoraleShock : 0;
   const shock = (def.chargeMoraleShock * wedgeMul + arcShock) * downhillMul;
 
-  const impactSwings = Math.min(countAliveSoldiers(attacker), def.unitClass === 'cavalry' ? 6 : 4);
+  const impactSwings = Math.min(countAliveSoldiers(attacker), attClass === 'cavalry' ? 6 : 4);
   for (let i = 0; i < impactSwings; i++) {
     applyDamageToRegiment(
       state,
       defender,
       attacker,
       (def.meleeDamage * 1.5 + def.chargeAttackBonus * 0.75) * wedgeMul * downhillMul,
-      def.unitClass === 'cavalry' ? 0.25 : 0.0,
+      attClass === 'cavalry' ? 0.25 : 0.0,
       false,
       arc,
       i === 0 ? shock : 0,
@@ -1422,6 +1557,7 @@ function moveRegimentAlongPath(
   let formSpeedMul = 1.0;
   if (reg.formation === 'column') formSpeedMul = 1.2;
   else if (reg.formation === 'schiltron') formSpeedMul = 0.5;
+  else if (reg.formation === 'square') formSpeedMul = SQUARE_FORMATION.speedMul;
   const stanceSpeedMul =
     reg.stance === 'shieldWall'
       ? STANCES.shieldWall.speedMul
@@ -1430,7 +1566,10 @@ function moveRegimentAlongPath(
         : 1.0;
   const fatigueMul = 1 - reg.fatigue * 0.22;
   const terrainMul = nav.speedMultiplierAt(reg.x, reg.z);
-  const baseSpd = run && reg.stance !== 'shieldWall' && reg.stance !== 'pikeWall' ? def.runSpeedMs : def.walkSpeedMs;
+  const walkMs = reg.unitType === 'dragoons' && reg.dismounted ? COMBAT.dragoonDismountedWalkMs : def.walkSpeedMs;
+  const runMs = reg.unitType === 'dragoons' && reg.dismounted ? COMBAT.dragoonDismountedRunMs : def.runSpeedMs;
+  const baseSpd =
+    run && reg.stance !== 'shieldWall' && reg.stance !== 'pikeWall' && reg.formation !== 'square' ? runMs : walkMs;
   const speed = baseSpd * formSpeedMul * stanceSpeedMul * fatigueMul * terrainMul;
   const step = speed * dtS;
 
@@ -1496,10 +1635,13 @@ function updateSoldierSlotPositions(
   const rx = Math.cos(reg.yawRad);
   const rz = -Math.sin(reg.yawRad);
   const regMoving = reg.currentSpeedMs > 0.12;
+  const effClass = effectiveUnitClass(reg);
+  const walkMs = reg.unitType === 'dragoons' && reg.dismounted ? COMBAT.dragoonDismountedWalkMs : def.walkSpeedMs;
+  const runMs = reg.unitType === 'dragoons' && reg.dismounted ? COMBAT.dragoonDismountedRunMs : def.runSpeedMs;
   const baseCatchUp = regMoving
-    ? Math.max(reg.currentSpeedMs * 1.3, def.walkSpeedMs * 1.05)
-    : def.walkSpeedMs * 1.15;
-  const maxCatchUp = Math.max(def.runSpeedMs * 1.3, def.walkSpeedMs * 1.3);
+    ? Math.max(reg.currentSpeedMs * 1.3, walkMs * 1.05)
+    : walkMs * 1.15;
+  const maxCatchUp = Math.max(runMs * 1.3, walkMs * 1.3);
 
   for (const s of reg.soldiers) {
     if (!s.alive) {
@@ -1511,7 +1653,7 @@ function updateSoldierSlotPositions(
   for (let idx = 0; idx < totalAlive; idx++) {
     const s = aliveList[idx]!;
     s.sinceAttackS = (s.sinceAttackS ?? 99) + dtS;
-    const off = computeFormationSlotOffset(idx, totalAlive, effWidth, effFormation, def.unitClass);
+    const off = computeFormationSlotOffset(idx, totalAlive, effWidth, effFormation, effClass);
     let tx = reg.x + rx * off.right + fx * off.forward;
     let tz = reg.z + rz * off.right + fz * off.forward;
 

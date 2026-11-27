@@ -137,10 +137,13 @@ const GOOD_COLORS: Partial<Record<GoodId, number>> = {
   mail: 0x99a3ad,
   bows: 0x855c33,
   horses: 0x6e4324,
+  muskets: 0x5c4632,
+  powder: 0x3b3835,
 };
 
 const COL_COBALT = new Color(0x2856a8);
 const COL_CRIMSON = new Color(0xa82a2a);
+const COL_OCHRE = new Color(0xc8971e);
 const COL_ROUT = new Color(0xe8e4d8);
 const COL_GOLD = new Color(0xd9a838);
 const COL_VALID = new Color(0x3dc468);
@@ -343,7 +346,7 @@ export function buildCombatFx(scene: Scene): CombatFxHandles {
   // Soft feathered billboarding TSL smoke/dust wisp material (matches chimney smoke realism — zero hard opaque spheres!)
   // Volumetric lit blackpowder smoke (ported from FPS/marchland shotSmokeView.ts):
   // thin at the rim, thick in the core via view-space normal dot Z -> soft billowing 3D cloud lit by sun & sky!
-  const puffFadeAttr = new InstancedBufferAttribute(new Float32Array(180), 1);
+  const puffFadeAttr = new InstancedBufferAttribute(new Float32Array(260), 1);
   puffFadeAttr.setUsage(DynamicDrawUsage);
   const puffGeo = new IcosahedronGeometry(1, 1);
   puffGeo.setAttribute('aFade', puffFadeAttr);
@@ -410,12 +413,12 @@ export function buildCombatFx(scene: Scene): CombatFxHandles {
   geos.push(shellGeo);
   const shellMesh = makeInstanced(scene, 'Fx_Shells', shellGeo, solidMat, 48, false);
 
-  // 6. Volumetric Fresnel blackpowder smoke & dust clouds (cap 180) + crisp muzzle flashes (cap 24)
-  const puffMesh = makeInstanced(scene, 'Fx_BattleSmoke', puffGeo, smokeMat, 180, false);
+  // 6. Volumetric Fresnel blackpowder smoke & dust clouds (cap 260) + crisp muzzle flashes (cap 36)
+  const puffMesh = makeInstanced(scene, 'Fx_BattleSmoke', puffGeo, smokeMat, 260, false);
   puffMesh.renderOrder = 6;
   const flashGeo = new IcosahedronGeometry(1, 0);
   geos.push(flashGeo);
-  const flashMesh = makeInstanced(scene, 'Fx_MuzzleFlash', flashGeo, flashMat, 24, false);
+  const flashMesh = makeInstanced(scene, 'Fx_MuzzleFlash', flashGeo, flashMat, 36, false);
   flashMesh.renderOrder = 7;
 
   // 7. Regiment Heraldic Standards (3.4 m spear flagpole + swallowtail pennant, cap 64)
@@ -442,7 +445,7 @@ export function buildCombatFx(scene: Scene): CombatFxHandles {
   const flashes: FlashParticle[] = [];
 
   const spawnFlash = (x: number, y: number, z: number, size: number, maxAgeS = 0.14): void => {
-    if (flashes.length >= 24) flashes.shift();
+    if (flashes.length >= 36) flashes.shift();
     flashes.push({ x, y, z, size, ageS: 0, maxAgeS });
   };
 
@@ -458,7 +461,7 @@ export function buildCombatFx(scene: Scene): CombatFxHandles {
     endScale: number,
     color: Color,
   ): void => {
-    if (puffs.length >= 180) puffs.shift();
+    if (puffs.length >= 260) puffs.shift();
     puffs.push({
       x,
       y,
@@ -486,12 +489,12 @@ export function buildCombatFx(scene: Scene): CombatFxHandles {
             ev.x + Math.cos(ang) * r,
             ev.y + 0.95 + (i % 2) * 0.28,
             ev.z + Math.sin(ang) * r,
-            Math.cos(ang) * 0.78 + 0.35,
-            0.42 + (i % 4) * 0.22,
-            Math.sin(ang) * 0.78 + 0.2,
-            3.8 + (i % 3) * 0.6,
+            Math.cos(ang) * 0.78 + 0.45,
+            0.38 + (i % 4) * 0.18,
+            Math.sin(ang) * 0.78 + 0.22,
+            4.8 + (i % 3) * 0.7,
             0.55,
-            2.15,
+            2.35,
             COL_SMOKE,
           );
         }
@@ -513,6 +516,25 @@ export function buildCombatFx(scene: Scene): CombatFxHandles {
             i % 2 === 0 ? COL_DUST : COL_SMOKE,
           );
         }
+      } else if (ev.kind === 'musketShot') {
+        // Crisp muzzle flash + lingering low-drifting white blackpowder volley smoke curtain!
+        spawnFlash(ev.x, ev.y + 1.15, ev.z, 0.4, 0.08);
+        const drift = ((ev.x * 13 + ev.z * 7) % 10) * 0.06;
+        spawnPuff(
+          ev.x,
+          ev.y + 1.28,
+          ev.z,
+          0.42 + drift * 0.3,
+          0.24,
+          0.18 - drift * 0.15,
+          4.8 + drift,
+          0.34,
+          1.72,
+          COL_SMOKE,
+        );
+      } else if (ev.kind === 'arrowHit' && ev.intensity >= 0.65) {
+        // Crisp dirt/spark puff where musket balls strike armour or earth
+        spawnPuff(ev.x, ev.y + 0.45, ev.z, 0.22, 0.65, -0.14, 1.15, 0.22, 0.78, COL_DUST);
       } else if (ev.kind === 'buildHammer' || ev.kind === 'woodChop') {
         spawnPuff(ev.x, ev.y + 0.8, ev.z, 0.25, 0.75, 0.12, 1.35, 0.4, 1.15, COL_DUST);
       }
@@ -548,8 +570,9 @@ export function buildCombatFx(scene: Scene): CombatFxHandles {
       if (alive <= 0) continue;
       const def = UNIT_DEFS[reg.unitType];
 
-      // Sculpted Cavalry Warhorses (skipped when 40-bone marchland warhorses are active)
-      if (!skipProceduralUnits && def.unitClass === 'cavalry') {
+      // Sculpted Cavalry Warhorses (skipped when 40-bone marchland warhorses are active or Dragoons are dismounted)
+      if (!skipProceduralUnits && def.unitClass === 'cavalry' && !reg.dismounted) {
+        const isHeavyHorse = reg.unitType === 'heavyCav' || reg.unitType === 'cuirassiers';
         for (const s of reg.soldiers) {
           if (!s.alive || horseCount >= 84) continue;
           const y = heightAt(s.x, s.z);
@@ -558,13 +581,13 @@ export function buildCombatFx(scene: Scene): CombatFxHandles {
           TEMP_POS.set(s.x, y + bob, s.z);
           TEMP_EULER.set(pitch, s.yawRad, 0, 'YXZ');
           TEMP_QUAT.setFromEuler(TEMP_EULER);
-          const sc = reg.unitType === 'heavyCav' ? 1.07 : 0.97;
+          const sc = isHeavyHorse ? 1.07 : 0.97;
           TEMP_SCALE.set(sc, sc, sc);
           TEMP_MAT.compose(TEMP_POS, TEMP_QUAT, TEMP_SCALE);
           horseMesh.setMatrixAt(horseCount, TEMP_MAT);
           horseMesh.setColorAt(
             horseCount,
-            reg.unitType === 'heavyCav' ? COL_HORSE_DAPPLE : s.tintVar > 1.0 ? COL_HORSE_BAY : COL_HORSE_CHESTNUT,
+            isHeavyHorse ? COL_HORSE_DAPPLE : s.tintVar > 1.0 ? COL_HORSE_BAY : COL_HORSE_CHESTNUT,
           );
           horseCount++;
         }
@@ -596,7 +619,7 @@ export function buildCombatFx(scene: Scene): CombatFxHandles {
         TEMP_SCALE.set(moraleScale, moraleScale, moraleScale);
         TEMP_MAT.compose(TEMP_POS, TEMP_QUAT, TEMP_SCALE);
         bannerMesh.setMatrixAt(bannerCount, TEMP_MAT);
-        const col = reg.routing ? COL_ROUT : reg.side === 0 ? COL_COBALT : COL_CRIMSON;
+        const col = reg.routing ? COL_ROUT : reg.side === 0 ? COL_COBALT : reg.side === 1 ? COL_CRIMSON : COL_OCHRE;
         if (reg.veteranTier > 0 && !reg.routing) {
           COL_TMP.copy(col).lerp(COL_GOLD, reg.veteranTier === 2 ? 0.42 : 0.22);
           bannerMesh.setColorAt(bannerCount, COL_TMP);
@@ -615,7 +638,7 @@ export function buildCombatFx(scene: Scene): CombatFxHandles {
         TEMP_SCALE.set(rad, 1, rad);
         TEMP_MAT.compose(TEMP_POS, TEMP_QUAT, TEMP_SCALE);
         ringMesh.setMatrixAt(ringCount, TEMP_MAT);
-        ringMesh.setColorAt(ringCount, reg.side === 0 ? COL_GOLD : COL_CRIMSON);
+        ringMesh.setColorAt(ringCount, reg.side === 0 ? COL_GOLD : reg.side === 1 ? COL_CRIMSON : COL_OCHRE);
         ringCount++;
       }
     }
@@ -644,7 +667,10 @@ export function buildCombatFx(scene: Scene): CombatFxHandles {
       TEMP_SCALE.set(6.2 * pulse, 1, 6.2 * pulse);
       TEMP_MAT.compose(TEMP_POS, TEMP_QUAT, TEMP_SCALE);
       ringMesh.setMatrixAt(ringCount, TEMP_MAT);
-      ringMesh.setColorAt(ringCount, cp.owner === 0 ? COL_COBALT : cp.owner === 1 ? COL_CRIMSON : COL_GOLD);
+      ringMesh.setColorAt(
+        ringCount,
+        cp.owner === 0 ? COL_COBALT : cp.owner === 1 ? COL_CRIMSON : cp.owner === 2 ? COL_OCHRE : COL_GOLD,
+      );
       ringCount++;
     }
 
@@ -892,7 +918,7 @@ export function buildCombatFx(scene: Scene): CombatFxHandles {
         if (shellCount >= 48) continue;
         TEMP_POS.set(p.x, p.y, p.z);
         TEMP_QUAT.identity();
-        const s = p.kind === 'mortar' ? 1.45 : 1.0;
+        const s = p.kind === 'mortar' ? 1.45 : p.kind === 'musketball' ? 0.34 : 1.0;
         TEMP_SCALE.set(s, s, s);
         TEMP_MAT.compose(TEMP_POS, TEMP_QUAT, TEMP_SCALE);
         shellMesh.setMatrixAt(shellCount, TEMP_MAT);
@@ -919,7 +945,7 @@ export function buildCombatFx(scene: Scene): CombatFxHandles {
         puffs.splice(i, 1);
         continue;
       }
-      if (puffCount >= 180) continue;
+      if (puffCount >= 260) continue;
       const u = pf.ageS / pf.maxAgeS;
       const sc = Math.max(0.05, pf.startScale + (pf.endScale - pf.startScale) * Math.sqrt(u));
       TEMP_POS.set(pf.x, pf.y, pf.z);
@@ -951,7 +977,7 @@ export function buildCombatFx(scene: Scene): CombatFxHandles {
         flashes.splice(i, 1);
         continue;
       }
-      if (flashCount >= 24) continue;
+      if (flashCount >= 36) continue;
       const u = fl.ageS / fl.maxAgeS;
       const sc = Math.max(0.05, fl.size * (1 - u * 0.72));
       TEMP_POS.set(fl.x, fl.y, fl.z);

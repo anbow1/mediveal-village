@@ -11,7 +11,7 @@
 import { WORLD } from '../config.ts';
 import { fbm2, noise2 } from '../core/noise.ts';
 
-export type MapLayoutId = 'crossing' | 'openField' | 'forest' | 'valley' | 'fortress';
+export type MapLayoutId = 'crossing' | 'openField' | 'forest' | 'valley' | 'fortress' | 'triangle';
 export type TerrainProfileId = 'slice' | MapLayoutId;
 
 export interface LakeBasinSpec {
@@ -243,9 +243,9 @@ export class TerrainField {
       h += ridge;
     }
 
-    // Distant perimeter mountain horizon frame near map edge (> 215 m from center)
+    // Distant perimeter mountain horizon frame near map edge (205..278 m on 560 m maps; 355..428 m on 860 m map)
     const edgeDist = Math.max(Math.abs(x), Math.abs(z));
-    const rimT = smoothstep(205, 278, edgeDist);
+    const rimT = smoothstep(this.halfSizeM - 75, this.halfSizeM - 2, edgeDist);
     const rimNoise = fbm2(x * 0.012 + 3.1, z * 0.012 + 8.4, 3, s + 91, 2.1, 0.5) * 0.5 + 0.5;
     h += rimT * (4.5 + Math.max(0, rimNoise) * 13.5);
 

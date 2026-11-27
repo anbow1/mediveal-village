@@ -2,6 +2,7 @@
 // Matches docs/ECONOMY.md & docs/BUILDINGS.md canonical rules and numbers.
 
 import {
+  AI_AGES,
   ALL_GOODS,
   BUILDING_DEFS,
   CARRIER_PRIORITY,
@@ -11,9 +12,13 @@ import {
   FOOD_GOODS,
   FOOD_RATIONS_PER_UNIT,
   GOOD_TO_WORKSHOP,
+  GREAT,
   isEquipmentWorkshop,
+  isFirearmWorkshop,
   KEEP_BAYS,
+  MEDIEVAL_MAX_LEVEL,
   TRANSPORT_LEVELS,
+  type EraNumber,
   type GoodId,
   type ResourceMap,
 } from '../config.ts';
@@ -27,6 +32,28 @@ import type {
   SimWorldState,
   TownsfolkEntity,
 } from './types.ts';
+
+/** Returns the Era (1 = Middle Ages, 2 = Early Modern, 3 = 19th Century) corresponding to a Keep level 1..5. */
+export function eraOfKeepLevel(keepLevel: number): EraNumber {
+  if (keepLevel <= MEDIEVAL_MAX_LEVEL) return 1;
+  return keepLevel >= 5 ? 3 : 2;
+}
+
+/** Returns the current Era (1..3) of `side` from its Keep level. */
+export function eraOfSide(state: SimWorldState, side: SideId): EraNumber {
+  const keep = findKeep(state, side);
+  return keep ? eraOfKeepLevel(keep.level) : 1;
+}
+
+/** Workshop speed multiplier granted by a completed Manufactory (1.2x). */
+export function greatWorkSpeedFactor(state: SimWorldState, side: SideId): number {
+  return state.sides[side]?.hasManufactory ? GREAT.manufactoryWorkSpeedMultiplier : 1.0;
+}
+
+/** House gold tax multiplier granted by a completed Town Hall (1.25x). */
+export function greatTaxFactor(state: SimWorldState, side: SideId): number {
+  return state.sides[side]?.hasTownHall ? GREAT.townHallGoldMultiplier : 1.0;
+}
 
 export interface ProductionRateEntry {
   readonly good: GoodId;
@@ -187,7 +214,8 @@ export function computeBuildingStripTransform(
 export function distributeQueuedEquipmentOrders(state: SimWorldState, side: SideId): void {
   const eqOrders = state.sides[side].equipmentOrders;
   if (!eqOrders) return;
-  for (const g of EQUIPMENT_GOODS) {
+  const orderGoods: readonly GoodId[] = [...EQUIPMENT_GOODS, 'muskets', 'powder'];
+  for (const g of orderGoods) {
     const amt = Math.floor(eqOrders[g] ?? 0);
     if (amt <= 0) continue;
     const wType = GOOD_TO_WORKSHOP[g];
@@ -471,12 +499,12 @@ function assignCarrierJob(state: SimWorldState, c: TownsfolkEntity): void {
     if (tryPickFood(h, ECONOMY.houseFoodTargetRations - h.houseFoodRations - incoming)) return;
   }
 
-  // Tier 2: Timber / planks / stone to construction or upgrade sites
+  // Tier 2: Timber / planks / stone / iron to construction or upgrade sites
   const sites = buildings
     .filter((b) => b.side === side && b.hp > 0 && (b.buildProgress < 1 || b.upgradingToLevel !== null))
     .sort((a, b) => Math.hypot(a.x - c.x, a.z - c.z) - Math.hypot(b.x - c.x, b.z - c.z));
   for (const s of sites) {
-    for (const matGood of ['timber', 'planks', 'stone'] as const) {
+    for (const matGood of ['timber', 'planks', 'stone', 'iron'] as const) {
       const needed = (s.buildCostNeeded[matGood] ?? 0) - (s.buildCostDelivered[matGood] ?? 0) - getReserved(s.id, matGood);
       if (needed <= 0) continue;
       const src = findSourceForGood(state, side, matGood, s.x, s.z, true, s.id);
@@ -659,17 +687,18 @@ export function stepEconomy(
   forest: ForestGrid,
   aiProdMul: number,
 ): { forestChanged: boolean } {
-  // 1. 1-second automatic role allocation
+  // 1. 1-second automatic role allocation across all active sides
   state.roleAllocTimerS += dtS;
   if (state.roleAllocTimerS >= 1.0) {
     state.roleAllocTimerS -= 1.0;
-    allocateRolesForSide(state, 0);
-    allocateRolesForSide(state, 1);
+    for (const s of state.sides) {
+      if (!s.absent) allocateRolesForSide(state, s.side);
+    }
   }
 
   // 1b. Transport Upgrade timers (L1 On Foot -> L2 Handcarts -> L3 Horse & Wagon)
-  for (const sideId of [0, 1] as const) {
-    const sideSt = state.sides[sideId];
+  for (const sideSt of state.sides) {
+    if (sideSt.absent) continue;
     if (sideSt.upgradingTransportTo !== null) {
       sideSt.transportUpgradeTimerS -= dtS;
       if (sideSt.transportUpgradeTimerS <= 0) {
@@ -690,16 +719,24 @@ export function stepEconomy(
   const workerAtShop = new Map<number, TownsfolkEntity>();
   for (const b of state.buildings) buildingById.set(b.id, b);
 
-  // Track active Chapels & Wells per side
-  const sideHasChapel: [boolean, boolean] = [false, false];
+  // Track active Chapels, Great Buildings (Cathedral, Town Hall, Manufactory) & Wells per side
+  for (const s of state.sides) {
+    s.hasChapel = false;
+    s.hasCathedral = false;
+    s.hasTownHall = false;
+    s.hasManufactory = false;
+  }
   const wells: BuildingEntity[] = [];
   for (const b of state.buildings) {
     if (b.hp <= 0 || b.buildProgress < 1) continue;
-    if (b.type === 'chapel' && !b.paused) sideHasChapel[b.side] = true;
-    if (b.type === 'well' && !b.paused) wells.push(b);
+    const st = state.sides[b.side];
+    if (!st || st.absent) continue;
+    if (b.type === 'chapel' && !b.paused) st.hasChapel = true;
+    else if (b.type === 'cathedral' && !b.paused) st.hasCathedral = true;
+    else if (b.type === 'townHall' && !b.paused) st.hasTownHall = true;
+    else if (b.type === 'manufactory' && !b.paused) st.hasManufactory = true;
+    else if (b.type === 'well' && !b.paused) wells.push(b);
   }
-  state.sides[0].hasChapel = sideHasChapel[0];
-  state.sides[1].hasChapel = sideHasChapel[1];
 
   // 3. Step townsfolk (threat fleeing, carriers, builders, field workers, recruits)
   const enemyFleeSq = ECONOMY.workerFleeRadiusM * ECONOMY.workerFleeRadiusM;
@@ -1178,14 +1215,28 @@ export function stepEconomy(
       b.status = 'constructing';
       const maxAllowed = computeMaterialDeliveryFraction(b);
       const builders = buildersAtSite.get(b.id) ?? 0;
+      const buildDuration = def.buildBuilderS ?? ECONOMY.buildBaseBuilderS;
       if (builders > 0 && b.buildProgress < maxAllowed) {
-        b.buildProgress = Math.min(maxAllowed, b.buildProgress + (dtS * builders) / ECONOMY.buildBaseBuilderS);
+        b.buildProgress = Math.min(maxAllowed, b.buildProgress + (dtS * builders) / buildDuration);
         if (b.buildProgress >= 0.9999) {
           b.buildProgress = 1;
           b.hp = b.maxHp;
           b.buildCostNeeded = {};
           b.buildCostDelivered = {};
           b.status = 'idle';
+          if (def.unique) {
+            state.alerts.push({
+              id: state.nextAlertId++,
+              timeS: state.timeS,
+              side: 0,
+              kind: 'greatBuilding',
+              x: b.x,
+              z: b.z,
+              detail: `completed:${b.type}:${b.side}`,
+            });
+            if (state.alerts.length > 24) state.alerts.shift();
+            state.fxEvents.push({ kind: 'horn', x: b.x, y: terrain.heightAt(b.x, b.z) + 5, z: b.z, intensity: 1.15 });
+          }
           state.visualRevision++;
           state.fxEvents.push({ kind: 'buildHammer', x: b.x, y: terrain.heightAt(b.x, b.z), z: b.z, intensity: 1.0 });
         }
@@ -1193,16 +1244,21 @@ export function stepEconomy(
       continue;
     }
 
-    // Active upgrade (advances proportionally as materials arrive; scales HP x1/x2/x3 on completion per docs/MANUAL.md §7.5!)
+    // Active upgrade (advances proportionally as materials arrive; scales HP with level!)
     if (b.upgradingToLevel !== null) {
       b.status = 'upgrading';
       const matFrac = computeMaterialDeliveryFraction(b);
       const builders = Math.max(matFrac > 0 ? 1 : 0, buildersAtSite.get(b.id) ?? 0);
-      const targetDuration = b.type === 'keep' ? ECONOMY.keepLevels[b.upgradingToLevel - 1]!.upgradeS : ECONOMY.upgradeBuilderS;
+      const baseKeepDuration = b.type === 'keep' ? ECONOMY.keepLevels[b.upgradingToLevel - 1]!.upgradeS : ECONOMY.upgradeBuilderS;
+      const targetDuration =
+        b.type === 'keep' && b.upgradingToLevel >= 4 && state.scenario.fastAges
+          ? Math.max(10, Math.round(baseKeepDuration * AI_AGES.fastAgesTimeMul))
+          : baseKeepDuration;
       const maxTimerAllowed = matFrac * targetDuration;
       if (builders > 0 && b.upgradeTimerS < maxTimerAllowed) {
         b.upgradeTimerS = Math.min(maxTimerAllowed, b.upgradeTimerS + dtS * builders);
         if (b.upgradeTimerS >= targetDuration - 0.001) {
+          const prevEra = b.type === 'keep' ? eraOfKeepLevel(b.level) : 1;
           b.level = b.upgradingToLevel;
           b.upgradingToLevel = null;
           b.upgradeTimerS = 0;
@@ -1212,8 +1268,33 @@ export function stepEconomy(
           if (b.type === 'keep') {
             const kLvl = ECONOMY.keepLevels[b.level - 1]!;
             b.maxHp = kLvl.maxHp;
+            const newEra = eraOfKeepLevel(b.level);
+            if (newEra > prevEra) {
+              state.alerts.push({
+                id: state.nextAlertId++,
+                timeS: state.timeS,
+                side: b.side,
+                kind: 'eraAdvanced',
+                x: b.x,
+                z: b.z,
+                detail: `era_${newEra}:${b.side}`,
+              });
+              if (b.side !== 0) {
+                state.alerts.push({
+                  id: state.nextAlertId++,
+                  timeS: state.timeS,
+                  side: 0,
+                  kind: 'eraAdvanced',
+                  x: b.x,
+                  z: b.z,
+                  detail: `era_${newEra}:${b.side}`,
+                });
+              }
+              while (state.alerts.length > 24) state.alerts.shift();
+              state.fxEvents.push({ kind: 'horn', x: b.x, y: terrain.heightAt(b.x, b.z) + 5, z: b.z, intensity: 1.2 });
+            }
           } else {
-            // Every building scales HP x1 / x2 / x3 with level (docs/MANUAL.md §7.5)
+            // Every building scales HP with level
             b.maxHp = BUILDING_DEFS[b.type].maxHp * b.level;
           }
           b.hp = Math.round(b.maxHp * Math.max(0.5, hpRatio));
@@ -1242,7 +1323,7 @@ export function stepEconomy(
       continue;
     }
 
-    // House: food, wine, tax, newcomers (Well bonus within 40 m)
+    // House: food, wine, tax (Town Hall +25%), newcomers (Well 0.75x & Cathedral 0.75x)
     if (b.type === 'house') {
       const cap = ECONOMY.houseCapacityByLevel[b.level - 1]!;
       const eatRations = (b.residents * ECONOMY.residentRationsPerMin / 60) * dtS;
@@ -1263,7 +1344,11 @@ export function stepEconomy(
 
       if (!b.hungry) {
         b.status = 'working';
-        const tax = (b.residents * ECONOMY.taxPerFedPersonPerMin / 60) * (hasWine ? ECONOMY.wineTaxMultiplier : 1.0) * dtS;
+        const tax =
+          (b.residents * ECONOMY.taxPerFedPersonPerMin / 60) *
+          (hasWine ? ECONOMY.wineTaxMultiplier : 1.0) *
+          greatTaxFactor(state, b.side) *
+          dtS;
         sideState.stock.gold += tax;
         recordProduced(sideState, 'gold', tax);
 
@@ -1279,7 +1364,8 @@ export function stepEconomy(
           const interval =
             ECONOMY.newcomerIntervalS *
             (hasWine ? ECONOMY.wineGrowthMultiplier : 1.0) *
-            (nearWell ? ECONOMY.wellGrowthMultiplier : 1.0);
+            (nearWell ? ECONOMY.wellGrowthMultiplier : 1.0) *
+            (sideState.hasCathedral ? GREAT.cathedralGrowthMultiplier : 1.0);
           b.growthTimerS += dtS;
           if (b.growthTimerS >= interval) {
             b.growthTimerS -= interval;
@@ -1348,7 +1434,8 @@ export function stepEconomy(
       const speedMul =
         ECONOMY.levelSpeedMul[b.level - 1]! *
         (home?.hungry ? ECONOMY.hungryWorkSpeedMul : 1.0) *
-        (b.side === 1 ? aiProdMul : 1.0);
+        greatWorkSpeedFactor(state, b.side) *
+        (b.side !== 0 ? aiProdMul : 1.0);
 
       // Farmer prioritizes: ready (harvest) -> sowing -> uncleared (clear/plant)
       const active =
@@ -1428,10 +1515,13 @@ export function stepEconomy(
       }
 
       const home = buildingById.get(worker.homeBuildingId);
+      const firearmSurgeMul = isFirearmWorkshop(b.type) && (b.pendingOrders ?? 0) > 0 ? 1.25 : 1.0;
       const speedMul =
         ECONOMY.levelSpeedMul[b.level - 1]! *
         (home?.hungry ? ECONOMY.hungryWorkSpeedMul : 1.0) *
-        (b.side === 1 ? aiProdMul : 1.0);
+        greatWorkSpeedFactor(state, b.side) *
+        firearmSurgeMul *
+        (b.side !== 0 ? aiProdMul : 1.0);
 
       b.status = 'working';
       b.cycleTimerS += dtS * speedMul;
@@ -1459,6 +1549,8 @@ export function stepEconomy(
             b.cycleTimerS = 0;
             b.status = 'idle';
           }
+        } else if (isFirearmWorkshop(b.type) && (b.pendingOrders ?? 0) > 0) {
+          b.pendingOrders = Math.max(0, (b.pendingOrders ?? 0) - Math.max(1, totalOut));
         }
       }
     } else if (def.workers > 0) {

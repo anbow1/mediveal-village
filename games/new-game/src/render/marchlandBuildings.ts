@@ -7,8 +7,11 @@
 // and ZERO extra GPU shader pipelines!
 
 import {
+  BoxGeometry,
   BufferGeometry,
   Color,
+  ConeGeometry,
+  CylinderGeometry,
   Float32BufferAttribute,
   Mesh,
   type Material,
@@ -214,10 +217,172 @@ function convertMarchlandGlbToBuildingGeometry(root: Object3D): BufferGeometry |
 
 export type MarchlandBuildingLevelKey = `${BuildingTypeId}_${1 | 2 | 3}`;
 
+interface PartBox {
+  readonly kind: 'box' | 'cyl' | 'cone';
+  readonly w: number;
+  readonly h: number;
+  readonly d: number;
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+  readonly mat: string;
+}
+
+function buildProceduralBuildingGeometry(specs: readonly PartBox[]): BufferGeometry {
+  const parts: BufferGeometry[] = [];
+  for (const s of specs) {
+    const raw =
+      s.kind === 'cyl'
+        ? new CylinderGeometry(s.w * 0.5, s.d * 0.5, s.h, 8)
+        : s.kind === 'cone'
+          ? new ConeGeometry(s.w * 0.5, s.h, 4)
+          : new BoxGeometry(s.w, s.h, s.d);
+    if (s.kind === 'cone') raw.rotateY(Math.PI * 0.25);
+    raw.translate(s.x, s.y, s.z);
+    const g = raw.index ? raw.toNonIndexed() : raw;
+    if (raw.index) raw.dispose();
+    if (!g.getAttribute('normal')) g.computeVertexNormals();
+    for (const k of Object.keys(g.attributes)) {
+      if (k !== 'position' && k !== 'normal') g.deleteAttribute(k);
+    }
+
+    const tag = resolveSurfaceTag(s.mat);
+    const pos = g.getAttribute('position');
+    const nor = g.getAttribute('normal');
+    const count = pos.count;
+    const uv0 = new Float32Array(count * 2);
+    const uv1 = new Float32Array(count * 2);
+    const col = new Float32Array(count * 3);
+    const layerEnc = tag.layer / 15.0;
+    const ironEnc = tag.isIron ? 0.0 : 1.0;
+
+    for (let i = 0; i < count; i++) {
+      const px = pos.getX(i);
+      const py = pos.getY(i);
+      const pz = pos.getZ(i);
+      const nx = Math.abs(nor.getX(i));
+      const ny = Math.abs(nor.getY(i));
+      const nz = Math.abs(nor.getZ(i));
+      if (ny >= nx && ny >= nz) {
+        uv0[i * 2] = px * tag.uvScale;
+        uv0[i * 2 + 1] = pz * tag.uvScale;
+      } else if (nx >= nz) {
+        uv0[i * 2] = pz * tag.uvScale;
+        uv0[i * 2 + 1] = py * tag.uvScale;
+      } else {
+        uv0[i * 2] = px * tag.uvScale;
+        uv0[i * 2 + 1] = py * tag.uvScale;
+      }
+      uv1[i * 2] = layerEnc;
+      uv1[i * 2 + 1] = ironEnc;
+      const h01 = Math.max(0, Math.min(1, (py + 0.25) / 5.5));
+      const ao = 0.78 + 0.22 * h01;
+      col[i * 3] = tag.r * ao;
+      col[i * 3 + 1] = tag.g * ao;
+      col[i * 3 + 2] = tag.b * ao;
+    }
+    g.setAttribute('uv', new Float32BufferAttribute(uv0, 2));
+    g.setAttribute('uv1', new Float32BufferAttribute(uv1, 2));
+    g.setAttribute('color', new Float32BufferAttribute(col, 3));
+    parts.push(g);
+  }
+  const merged = mergeGeometries(parts, false) ?? new BoxGeometry(1, 1, 1);
+  for (const p of parts) p.dispose();
+  merged.computeBoundingSphere();
+  return merged;
+}
+
+function registerAgesProceduralBuildings(result: Map<MarchlandBuildingLevelKey, BufferGeometry>): void {
+  // 1. Gunsmith (Early Modern brick/stone bore-shop with forge chimney & musket awning)
+  const gunsmithGeo = buildProceduralBuildingGeometry([
+    { kind: 'box', w: 5.4, h: 0.7, d: 4.8, x: 0, y: 0.35, z: 0, mat: 'rubble#b4ada2' },
+    { kind: 'box', w: 5.0, h: 2.9, d: 4.4, x: 0, y: 2.15, z: 0, mat: 'plaster#dfd3be' },
+    { kind: 'box', w: 5.6, h: 0.28, d: 5.0, x: 0, y: 3.74, z: 0, mat: 'beam#6e543a' },
+    { kind: 'cone', w: 6.4, h: 2.2, d: 6.4, x: 0, y: 4.95, z: 0, mat: 'tiles#b45a40' },
+    { kind: 'box', w: 1.05, h: 6.2, d: 1.05, x: -1.7, y: 3.1, z: -1.4, mat: 'ashlar#a8a096' },
+    { kind: 'box', w: 2.4, h: 0.22, d: 1.6, x: 0.2, y: 2.35, z: 2.7, mat: 'boards#7d5d3d' },
+    { kind: 'box', w: 1.1, h: 1.9, d: 0.2, x: 0.2, y: 1.15, z: 2.25, mat: 'beam#4d3826' },
+  ]);
+  for (const l of [1, 2, 3] as const) result.set(`gunsmith_${l}`, gunsmithGeo.clone());
+  gunsmithGeo.dispose();
+
+  // 2. Powder Mill (heavy blast-walled stone & timber blackpowder mill with slate roof & drying shed)
+  const powderMillGeo = buildProceduralBuildingGeometry([
+    { kind: 'box', w: 5.8, h: 1.4, d: 5.2, x: 0, y: 0.7, z: 0, mat: 'rubble#9f998e' },
+    { kind: 'box', w: 4.6, h: 2.4, d: 4.2, x: 0, y: 2.6, z: -0.2, mat: 'boards#8c7256' },
+    { kind: 'cone', w: 5.9, h: 2.1, d: 5.9, x: 0, y: 4.85, z: -0.2, mat: 'shingles#646c74' },
+    { kind: 'cyl', w: 2.2, h: 0.45, d: 2.2, x: 2.5, y: 1.4, z: 0, mat: 'beam#5e462e' },
+    { kind: 'box', w: 1.6, h: 1.8, d: 1.6, x: -2.2, y: 0.9, z: 1.6, mat: 'ashlar#b4aea4' },
+  ]);
+  for (const l of [1, 2, 3] as const) result.set(`powderMill_${l}`, powderMillGeo.clone());
+  powderMillGeo.dispose();
+
+  // 3. Cathedral (Unique Great Building: Gothic cruciform ashlar stone cathedral with twin bell towers & spires!)
+  const cathedralGeo = buildProceduralBuildingGeometry([
+    { kind: 'box', w: 7.4, h: 1.0, d: 11.4, x: 0, y: 0.5, z: 0, mat: 'rubble#b5afa4' },
+    // Main Nave
+    { kind: 'box', w: 5.6, h: 6.4, d: 9.8, x: 0, y: 4.2, z: -0.2, mat: 'ashlar#dcd6ca' },
+    { kind: 'cone', w: 7.4, h: 3.0, d: 7.4, x: 0, y: 8.9, z: -0.6, mat: 'shingles#505b66' },
+    // Transept arms
+    { kind: 'box', w: 9.2, h: 5.4, d: 3.6, x: 0, y: 3.7, z: -1.4, mat: 'ashlar#d5cfc2' },
+    // Twin Western Bell Towers flanking front portal (+Z)
+    { kind: 'box', w: 2.4, h: 10.6, d: 2.4, x: -2.5, y: 5.8, z: 3.6, mat: 'ashlar#e0dad0' },
+    { kind: 'box', w: 2.4, h: 10.6, d: 2.4, x: 2.5, y: 5.8, z: 3.6, mat: 'ashlar#e0dad0' },
+    { kind: 'cone', w: 2.6, h: 4.6, d: 2.6, x: -2.5, y: 13.4, z: 3.6, mat: 'shingles#47525c' },
+    { kind: 'cone', w: 2.6, h: 4.6, d: 2.6, x: 2.5, y: 13.4, z: 3.6, mat: 'shingles#47525c' },
+    // Central crossing fleche spire & rose window accent
+    { kind: 'cone', w: 1.5, h: 5.2, d: 1.5, x: 0, y: 12.2, z: -1.4, mat: 'shingles#3f4a54' },
+    { kind: 'cyl', w: 1.8, h: 0.3, d: 1.8, x: 0, y: 5.4, z: 4.75, mat: 'glass#38506b' },
+    { kind: 'box', w: 2.0, h: 3.0, d: 0.4, x: 0, y: 2.0, z: 4.75, mat: 'beam#4d3826' },
+  ]);
+  for (const l of [1, 2, 3] as const) result.set(`cathedral_${l}`, cathedralGeo.clone());
+  cathedralGeo.dispose();
+
+  // 4. Town Hall (Unique Great Building: Early Modern classical Rathaus with portico, mansard roof & clock belfry!)
+  const townHallGeo = buildProceduralBuildingGeometry([
+    { kind: 'box', w: 9.6, h: 1.1, d: 7.6, x: 0, y: 0.55, z: 0, mat: 'rubble#b4ada2' },
+    { kind: 'box', w: 9.0, h: 5.4, d: 6.8, x: 0, y: 3.8, z: -0.2, mat: 'plaster#ede5d6' },
+    { kind: 'box', w: 9.4, h: 0.45, d: 7.2, x: 0, y: 6.6, z: -0.2, mat: 'ashlar#d2cbbd' },
+    // Steep mansard tile roof
+    { kind: 'box', w: 8.6, h: 2.2, d: 6.2, x: 0, y: 7.8, z: -0.2, mat: 'tiles#b0543a' },
+    // Front colonnade portico (+Z)
+    { kind: 'box', w: 5.2, h: 0.6, d: 2.0, x: 0, y: 5.1, z: 3.6, mat: 'ashlar#dfd8cb' },
+    { kind: 'cyl', w: 0.45, h: 4.2, d: 0.45, x: -2.0, y: 2.9, z: 4.1, mat: 'ashlar#e5dfd2' },
+    { kind: 'cyl', w: 0.45, h: 4.2, d: 0.45, x: -0.7, y: 2.9, z: 4.1, mat: 'ashlar#e5dfd2' },
+    { kind: 'cyl', w: 0.45, h: 4.2, d: 0.45, x: 0.7, y: 2.9, z: 4.1, mat: 'ashlar#e5dfd2' },
+    { kind: 'cyl', w: 0.45, h: 4.2, d: 0.45, x: 2.0, y: 2.9, z: 4.1, mat: 'ashlar#e5dfd2' },
+    // Central civic clock-belfry tower
+    { kind: 'box', w: 2.5, h: 5.0, d: 2.5, x: 0, y: 10.6, z: 0.3, mat: 'ashlar#e0d9cc' },
+    { kind: 'cone', w: 2.9, h: 3.4, d: 2.9, x: 0, y: 14.8, z: 0.3, mat: 'shingles#47535e' },
+  ]);
+  for (const l of [1, 2, 3] as const) result.set(`townHall_${l}`, townHallGeo.clone());
+  townHallGeo.dispose();
+
+  // 5. Manufactory (Unique Great Building: 19th-Century brick industrial hall with clerestory roof & tall smokestack!)
+  const manufactoryGeo = buildProceduralBuildingGeometry([
+    { kind: 'box', w: 10.6, h: 1.0, d: 7.4, x: 0, y: 0.5, z: 0, mat: 'rubble#9e968b' },
+    // Main brick factory hall
+    { kind: 'box', w: 10.0, h: 5.2, d: 6.6, x: 0, y: 3.6, z: 0, mat: 'tiles#a64d3a' },
+    // Clerestory glass skylight ridge
+    { kind: 'box', w: 8.6, h: 1.4, d: 3.2, x: 0, y: 6.9, z: 0, mat: 'shingles#505760' },
+    { kind: 'box', w: 8.8, h: 0.65, d: 3.3, x: 0, y: 6.6, z: 0, mat: 'glass#3a4d5c' },
+    // Side boiler annex
+    { kind: 'box', w: 3.2, h: 3.6, d: 4.4, x: -5.4, y: 2.3, z: -0.6, mat: 'ashlar#a8a098' },
+    // Tall 19th-century square brick smokestack
+    { kind: 'box', w: 1.7, h: 12.6, d: 1.7, x: -4.8, y: 6.3, z: -2.2, mat: 'tiles#964332' },
+    { kind: 'box', w: 2.05, h: 0.5, d: 2.05, x: -4.8, y: 12.6, z: -2.2, mat: 'iron#42464c' },
+    // Double arched factory freight doors
+    { kind: 'box', w: 2.8, h: 3.0, d: 0.35, x: 0.8, y: 2.0, z: 3.35, mat: 'beam#4d3928' },
+  ]);
+  for (const l of [1, 2, 3] as const) result.set(`manufactory_${l}`, manufactoryGeo.clone());
+  manufactoryGeo.dispose();
+}
+
 /**
  * Loads L1/L2/L3 high-detail architectural GLB meshes from `assets/marchland/buildings/`
  * with bounded concurrency (avoids Safari/WebKit connection starvation on iPad/mobile)
- * and skips the optional 15 MB override pack on `minimal` preset to keep 3 GB tablets well under RAM limits.
+ * and registers lightweight procedural meshes for the 5 Ages & Great Buildings (`gunsmith`,
+ * `powderMill`, `cathedral`, `townHall`, `manufactory`).
  */
 export async function loadMarchlandBuildingLevels(
   loader: AssetLoader,
@@ -225,6 +390,8 @@ export async function loadMarchlandBuildingLevels(
   onProgress?: (done: number, total: number) => void,
 ): Promise<Map<MarchlandBuildingLevelKey, BufferGeometry>> {
   const result = new Map<MarchlandBuildingLevelKey, BufferGeometry>();
+  // Always register procedural Era 2-3 & Great Building meshes (tiny, zero extra textures/shaders!)
+  registerAgesProceduralBuildings(result);
   if (quality === 'minimal') return result;
 
   // On `low` (tablets / 3 GB RAM), load L1 architectural overrides (20 GLBs instead of 60)

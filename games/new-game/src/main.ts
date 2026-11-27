@@ -2,6 +2,7 @@ import './ui/style.css';
 import {
   EXPOSURE,
   LIGHTING_PRESETS,
+  type EraNumber,
   type LangCode,
   type LightingPresetId,
   type QualityPreset,
@@ -62,8 +63,14 @@ function parsePersonality(raw: string | null): AiPersonality {
 
 function parseMission(raw: string | null): CampaignMissionId | undefined {
   const n = Number(raw);
-  if (n === 1 || n === 2 || n === 3 || n === 4 || n === 5) return n;
+  if (n === 1 || n === 2 || n === 3 || n === 4 || n === 5 || n === 6) return n;
   return undefined;
+}
+
+function parseStartAge(raw: string | null): EraNumber {
+  const n = Number(raw);
+  if (n === 2 || n === 3) return n;
+  return 1;
 }
 
 const params = new URLSearchParams(window.location.search);
@@ -88,6 +95,8 @@ Game.boot({
   missionId: parseMission(params.get('mission')),
   difficulty: parseDifficulty(params.get('diff')),
   aiPersonality: parsePersonality(params.get('ai')),
+  startAge: parseStartAge(params.get('age')),
+  fastAges: params.get('fastAges') === '1' || params.has('fastages'),
   showcaseMode: !params.has('mode') || params.get('showcase') === '1',
 }).catch((err: unknown) => {
   console.error('[boot] fatal error:', err);
