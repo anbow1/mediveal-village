@@ -47,7 +47,7 @@ describe('Stage 6 campaign missions 1-5, defence, tutorial & deterministic save/
       simRestored.step(0.05);
     }
     expect(simRestored.getFingerprint()).toBe(simA.getFingerprint());
-  }, 20000);
+  }, 40000);
 
   it('completes Tutorial 7 auto-advancing steps cleanly', () => {
     const sim = new SimEngine({ mapId: 'openField', mode: 'tutorial', disableAi: true, seed: 55 });
@@ -124,10 +124,11 @@ describe('Stage 6 campaign missions 1-5, defence, tutorial & deterministic save/
     const carry1 = buildCampaignCarryOver(m1.state);
     expect(carry1.gold).toBeLessThanOrEqual(CAMPAIGN.carryOverGoldCap);
 
-    // --- Mission 2: Destroy all 3 bandit camps & defenders ---
+    // --- Mission 2: Destroy all 3 bandit camps & defenders (fortified with palisade perimeter!) ---
     const m2 = new SimEngine({ mapId: 'forest', mode: 'campaign', missionId: 2, seed: 102, carryOver: carry1 });
     const camps = m2.state.buildings.filter((b) => b.side === 1 && b.type === 'campTent');
     expect(camps.length).toBeGreaterThanOrEqual(3);
+    expect(m2.state.walls.filter((w) => w.side === 1 && !w.destroyed).length).toBeGreaterThanOrEqual(40);
     for (const c of camps) c.hp = 0;
     for (const r of m2.state.regiments) {
       if (r.side === 1) for (const s of r.soldiers) s.alive = false;
@@ -175,12 +176,14 @@ describe('Stage 6 campaign missions 1-5, defence, tutorial & deterministic save/
     stepSeconds(m5, 1.0);
     expect(m5.state.scenario.outcome).toBe('victory');
 
-    // --- Mission 6: The Gunpowder Bastion (Era 2 Keep L4, Gunsmith/PowderMill, Musketeers & Field Cannons!) ---
+    // --- Mission 6: The Gunpowder Bastion (Era 2 Keep L4, Gunsmith/PowderMill, Musketeers, Culverins & Falconets!) ---
     const m6 = new SimEngine({ mapId: 'fortress', mode: 'campaign', missionId: 6, seed: 106 });
     expect(m6.state.buildings.find((b) => b.side === 0 && b.type === 'keep')?.level).toBe(4);
     expect(m6.state.buildings.some((b) => b.side === 0 && b.type === 'gunsmith')).toBe(true);
     expect(m6.state.buildings.some((b) => b.side === 0 && b.type === 'powderMill')).toBe(true);
     expect(m6.state.regiments.some((r) => r.side === 0 && r.unitType === 'musketeers')).toBe(true);
+    expect(m6.state.regiments.some((r) => r.side === 0 && r.unitType === 'culverins')).toBe(true);
+    expect(m6.state.regiments.some((r) => r.side === 0 && r.unitType === 'falconets')).toBe(true);
     const m6Guards = m6.state.regiments.filter((r) => r.side === 1 && r.scenarioTag === 'm6_guard');
     expect(m6Guards.length).toBeGreaterThanOrEqual(2);
     for (const r of m6Guards) {

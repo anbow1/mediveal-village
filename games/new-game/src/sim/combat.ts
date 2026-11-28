@@ -2,16 +2,20 @@
 // Matches docs/UNITS.md, docs/GAMEPLAY.md §5–§6, and BRIEF.md F15–F17.
 
 import {
+  ARMY_CAPTAIN,
   BUILDING_DEFS,
   COMBAT,
   ECONOMY,
   GREAT,
+  GUNS,
+  SHATTER,
   SQUARE_FORMATION,
   STANCES,
   UNIT_DEFS,
   type GoodId,
   type ResourceMap,
   type UnitClass,
+  type UnitDef,
   type UnitTypeId,
 } from '../config.ts';
 import { consumeRationsFromStock, findKeep, recordConsumed, recordProduced, spawnCitizen } from './economy.ts';
@@ -85,6 +89,104 @@ export function getRegimentMaxMen(state: SimWorldState, unitType: UnitTypeId): n
   if (def.unitClass === 'siege') return def.count;
   if (state.scenario.mode === 'campaign') return COMBAT.campaignRegimentMaxMen;
   return def.count;
+}
+
+/** Ensures each living side with eligible regiments has exactly one senior Army Captain (PLAN.md §3.5). */
+export function syncArmyCaptains(state: SimWorldState): void {
+  for (const side of [0, 1, 2] as const) {
+    let chosen: RegimentEntity | null = null;
+    const eligible: RegimentEntity[] = [];
+    for (const r of state.regiments) {
+      if (r.side !== side) continue;
+      const isElig =
+        UNIT_DEFS[r.unitType].unitClass !== 'siege' &&
+        r.captainAlive &&
+        !r.shattered &&
+        r.garrisonedInBuildingId === null &&
+        countAliveSoldiers(r) > 0;
+      if (isElig) {
+        eligible.push(r);
+        if (r.isArmyCaptain && !chosen) chosen = r;
+      } else {
+        r.isArmyCaptain = false;
+      }
+    }
+    if (!chosen && eligible.length > 0) {
+      eligible.sort((a, b) => {
+        const sa = a.veteranTier * 1000 + a.kills;
+        const sb = b.veteranTier * 1000 + b.kills;
+        if (sb !== sa) return sb - sa;
+        return a.id - b.id;
+      });
+      chosen = eligible[0]!;
+    }
+    for (const r of eligible) {
+      r.isArmyCaptain = r === chosen;
+    }
+  }
+}
+
+/** True when `reg` is the side's Army Captain or within `ARMY_CAPTAIN.auraRadiusM` of a steady friendly Army Captain. */
+export function isNearArmyCaptain(state: SimWorldState, reg: RegimentEntity): boolean {
+  if (reg.isArmyCaptain && reg.captainAlive && !reg.routing) return true;
+  const radSq = ARMY_CAPTAIN.auraRadiusM * ARMY_CAPTAIN.auraRadiusM;
+  for (const other of state.regiments) {
+    if (
+      other.side === reg.side &&
+      other.isArmyCaptain &&
+      other.captainAlive &&
+      !other.routing &&
+      other.garrisonedInBuildingId === null &&
+      countAliveSoldiers(other) > 0
+    ) {
+      const dx = other.x - reg.x;
+      const dz = other.z - reg.z;
+      if (dx * dx + dz * dz <= radSq) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Advances an artillery piece's limbering / unlimbering state machine (marchland `movement.ts`).
+ * Returns `true` while the gun is busy hitching or unhitching its team (cannot move or fire).
+ */
+function stepGunLimber(reg: RegimentEntity, def: UnitDef, wantsMove: boolean, dtS: number): boolean {
+  const limberS = def.limberS ?? 0;
+  if (limberS <= 0) return false;
+  const isLimbered = reg.limbered === true;
+  const desiredTarget: 'limbered' | 'unlimbered' = wantsMove ? 'limbered' : 'unlimbered';
+
+  if ((reg.limberTimerS ?? 0) > 0) {
+    if (reg.limberTarget && reg.limberTarget !== desiredTarget) {
+      // Crew reversed halfway through hitching/unhitching
+      reg.limberTarget = desiredTarget;
+      reg.limberTimerS = Math.max(0.1, limberS - (reg.limberTimerS ?? 0));
+    }
+    reg.limberTimerS = (reg.limberTimerS ?? 0) - dtS;
+    if (reg.limberTimerS <= 0) {
+      reg.limberTimerS = 0;
+      reg.limbered = desiredTarget === 'limbered';
+      reg.limberTarget = undefined;
+      return false;
+    }
+    reg.currentSpeedMs = 0;
+    return true;
+  }
+
+  if (wantsMove && !isLimbered) {
+    reg.limberTarget = 'limbered';
+    reg.limberTimerS = limberS;
+    reg.currentSpeedMs = 0;
+    return true;
+  }
+  if (!wantsMove && isLimbered) {
+    reg.limberTarget = 'unlimbered';
+    reg.limberTimerS = limberS;
+    reg.currentSpeedMs = 0;
+    return true;
+  }
+  return false;
 }
 
 /** Computes target local (right, forward) formation offsets for each soldier slot. */
@@ -242,6 +344,10 @@ export function spawnRegiment(
     maxAmmoVolleys: def.firearm ? COMBAT.firearmMaxAmmoVolleys : undefined,
     ammoResupplyTimerS: 0,
     dismounted: false,
+    limbered: false,
+    limberTimerS: 0,
+    routCount: 0,
+    shattered: false,
   };
   state.regiments.push(reg);
   return reg;
@@ -259,6 +365,7 @@ export function refreshRegimentStats(state: SimWorldState, reg: RegimentEntity):
   const sideState = state.sides[reg.side];
   let maxM = def.morale + reg.veteranTier * COMBAT.vetMaxMoraleBonusPerTier;
   if (!reg.captainAlive && def.unitClass !== 'siege') maxM -= COMBAT.missingCaptainMaxMoralePenalty;
+  if (isNearArmyCaptain(state, reg)) maxM += ARMY_CAPTAIN.moraleBonus;
   if (sideState?.hasChapel) maxM += ECONOMY.chapelMoraleBonus;
   if (sideState?.hasCathedral) maxM += GREAT.cathedralMorale;
   if (sideState?.armyStarving && !reg.noUpkeep) maxM -= ECONOMY.starvingArmyMoralePenalty;
@@ -375,8 +482,8 @@ function applyDamageToRegiment(
     const wedgeFlankExtra = defender.formation === 'wedge' && arc !== 'front' ? 1.35 : 1.0;
     defender.morale = Math.max(0, defender.morale - COMBAT.moraleLossPerCasualtyFrac * lossFrac * wedgeFlankExtra);
 
-    // Track Mission 5 lost player cannons
-    if (defender.side === 0 && (defender.unitType === 'cannon' || defender.unitType === 'mortar')) {
+    // Track Mission 5/6 lost player artillery pieces
+    if (defender.side === 0 && def.unitClass === 'siege') {
       state.scenario.playerCannonsLost++;
     }
   }
@@ -386,8 +493,16 @@ function applyDamageToRegiment(
   }
   defender.outOfCombatS = 0;
 
-  if (!defender.routing && defender.morale <= COMBAT.routThresholdMorale && countAliveSoldiers(defender) > 0) {
+  const remainingAlive = countAliveSoldiers(defender);
+  if (!defender.routing && defender.morale <= COMBAT.routThresholdMorale && remainingAlive > 0) {
     defender.routing = true;
+    defender.routCount = (defender.routCount ?? 0) + 1;
+    if (
+      defender.routCount >= SHATTER.maxRouts ||
+      remainingAlive < defender.maxMen * SHATTER.minStrengthFrac
+    ) {
+      defender.shattered = true;
+    }
     defender.order = null;
     defender.orderQueue = [];
     defender.path = [];
@@ -749,6 +864,9 @@ function stepProjectiles(state: SimWorldState, dtS: number, nav: NavGrid): boole
 
       const isFirearm = p.kind === 'musketball';
       const isSiege = p.kind === 'cannonball' || p.kind === 'mortar';
+      if ((p.kind === 'arrow' || p.kind === 'bolt') && UNIT_DEFS[reg.unitType].shieldBlock >= 0.2) {
+        reg.aiShieldWallTimerS = 4.0;
+      }
       if (p.splashRadiusM > 0) {
         // Artillery splash can hit multiple men in dense formations (and deals 1.4x vs packed Squares!)
         const splashRolls = p.kind === 'mortar' ? 3 : 2;
@@ -767,6 +885,59 @@ function stepProjectiles(state: SimWorldState, dtS: number, nav: NavGrid): boole
       if (isDirect && p.splashRadiusM === 0) break;
     }
 
+    // 4. Rolling cannonball through-hits: roundshot bounces & skids `rollDistM` past impact, bowling through deep files!
+    if (p.kind === 'cannonball' && (p.rollDistM ?? 0) > 0) {
+      const fdx = p.targetX - p.startX;
+      const fdz = p.targetZ - p.startZ;
+      const fLen = Math.hypot(fdx, fdz);
+      if (fLen > 1e-3) {
+        const dirX = fdx / fLen;
+        const dirZ = fdz / fLen;
+        const rollDist = p.rollDistM!;
+        let rollHits = 0;
+        for (const reg of state.regiments) {
+          if (rollHits >= GUNS.rollMaxHits) break;
+          if (reg.side === p.side || reg.garrisonedInBuildingId !== null || countAliveSoldiers(reg) === 0) continue;
+          const rx = reg.x - p.targetX;
+          const rz = reg.z - p.targetZ;
+          const proj = rx * dirX + rz * dirZ;
+          if (proj < -1.5 || proj > rollDist + 2.0) continue;
+          const lateral = Math.abs(rx * dirZ - rz * dirX);
+          if (lateral > 4.2) continue;
+          // Count living soldiers lying along the rolling bounce corridor
+          const corridorMen = reg.soldiers.filter((s) => {
+            if (!s.alive) return false;
+            const sx = s.x - p.targetX;
+            const sz = s.z - p.targetZ;
+            const sp = sx * dirX + sz * dirZ;
+            if (sp < 0.2 || sp > rollDist) return false;
+            return Math.abs(sx * dirZ - sz * dirX) <= 1.85;
+          });
+          const attempts = Math.min(GUNS.rollMaxHits - rollHits, Math.max(1, corridorMen.length));
+          const arc = classifyAttackArc(p.startX, p.startZ, reg);
+          for (let k = 0; k < attempts; k++) {
+            if (nextSimRand(state) < GUNS.rollHitChance) {
+              const taper = Math.max(0.5, 1.0 - rollHits * 0.14);
+              applyDamageToRegiment(
+                state,
+                reg,
+                shooter,
+                p.damage * taper,
+                p.armorPierce,
+                true,
+                arc,
+                GUNS.rollMoraleShock,
+                false,
+                true,
+              );
+              rollHits++;
+              if (rollHits >= GUNS.rollMaxHits) break;
+            }
+          }
+        }
+      }
+    }
+
     state.projectiles.splice(i, 1);
   }
   return navDirty;
@@ -781,11 +952,14 @@ export function stepCombat(
 ): { navDirty: boolean } {
   let navDirty = false;
 
+  syncArmyCaptains(state);
   stepRecruitmentQueues(state, dtS);
   stepArmyLogistics(state, dtS);
   stepFortifications(state, dtS, terrain);
   stepCapturePoints(state, dtS);
   if (stepProjectiles(state, dtS, nav)) navDirty = true;
+
+  const shatteredToDisband: RegimentEntity[] = [];
 
   // Step every active regiment
   for (const reg of state.regiments) {
@@ -797,6 +971,7 @@ export function stepCombat(
     refreshRegimentStats(state, reg);
     reg.outOfCombatS += dtS;
     if (reg.chargeTimerS > 0) reg.chargeTimerS = Math.max(0, reg.chargeTimerS - dtS);
+    if ((reg.aiShieldWallTimerS ?? 0) > 0) reg.aiShieldWallTimerS = Math.max(0, (reg.aiShieldWallTimerS ?? 0) - dtS);
 
     // 1. Active refitting (20 s stationary near barracks)
     if (reg.refittingTo !== null) {
@@ -825,19 +1000,24 @@ export function stepCombat(
       continue;
     }
 
-    // 2. Routing & Rallying
+    // 2. Routing, Rallying & Permanent Shatter (RULES.md §9)
     const keep = findKeep(state, reg.side);
+    const armyCapRallyMul = isNearArmyCaptain(state, reg) ? ARMY_CAPTAIN.rallySpeedMul : 1.0;
     if (reg.routing) {
-      const rallyMul = reg.captainAlive || def.unitClass === 'siege' ? 1.0 : COMBAT.missingCaptainRallySpeedMul;
-      if (reg.outOfCombatS > 4) {
+      const rallyMul = (reg.captainAlive || def.unitClass === 'siege' ? 1.0 : COMBAT.missingCaptainRallySpeedMul) * armyCapRallyMul;
+      if (!reg.shattered && reg.outOfCombatS > 4) {
         reg.morale = Math.min(reg.maxMorale, reg.morale + COMBAT.moraleRecoveryOutOfCombatPerS * rallyMul * dtS);
       }
-      if (reg.morale >= COMBAT.rallyThresholdMorale && aliveMen >= 2) {
+      if (!reg.shattered && reg.morale >= COMBAT.rallyThresholdMorale && aliveMen >= 2) {
         reg.routing = false;
       } else if (keep) {
         const dx = keep.x - reg.x;
         const dz = keep.z - reg.z;
         const d = Math.hypot(dx, dz);
+        if (reg.shattered && d <= 48) {
+          shatteredToDisband.push(reg);
+          continue;
+        }
         if (d > 8) {
           const spd = def.runSpeedMs * 1.05 * nav.speedMultiplierAt(reg.x, reg.z);
           const nx = reg.x + (dx / d) * spd * dtS;
@@ -849,6 +1029,9 @@ export function stepCombat(
           reg.yawRad = Math.atan2(dx, dz);
           reg.currentSpeedMs = spd;
         }
+      } else if (reg.shattered && reg.outOfCombatS > 12) {
+        shatteredToDisband.push(reg);
+        continue;
       }
       updateSoldierSlotPositions(reg, dtS, terrain, nav, true);
       continue;
@@ -856,7 +1039,7 @@ export function stepCombat(
 
     // Out-of-combat morale recovery & automatic reinforcement near Barracks/Keep
     if (reg.outOfCombatS >= COMBAT.reinforceOutOfCombatS) {
-      const rallyMul = reg.captainAlive || def.unitClass === 'siege' ? 1.0 : COMBAT.missingCaptainRallySpeedMul;
+      const rallyMul = (reg.captainAlive || def.unitClass === 'siege' ? 1.0 : COMBAT.missingCaptainRallySpeedMul) * armyCapRallyMul;
       reg.morale = Math.min(reg.maxMorale, reg.morale + COMBAT.moraleRecoveryOutOfCombatPerS * rallyMul * dtS);
 
       if (aliveMen < reg.maxMen && def.unitClass !== 'siege') {
@@ -963,13 +1146,50 @@ export function stepCombat(
       }
     }
 
-    // 6. Execute active movement / attack / garrison order
+    // 6. Execute active movement / attack / garrison order (artillery limbers before moving & unlimbers to fire!)
     let inMeleeRange = false;
     let meleeTarget: RegimentEntity | null = null;
     let siegeTargetBuilding: BuildingEntity | null = null;
     let siegeTargetWall: WallSegmentEntity | GateEntity | null = null;
 
-    if (reg.order) {
+    let gunBusy = false;
+    if (def.limberS && def.limberS > 0) {
+      let wantsMove = false;
+      if (reg.order && reg.order.kind !== 'halt') {
+        const ord = reg.order;
+        if (ord.kind === 'attack' || ord.kind === 'charge') {
+          if (ord.targetRegimentId !== undefined) {
+            const tgt = state.regiments.find((r) => r.id === ord.targetRegimentId && countAliveSoldiers(r) > 0 && r.garrisonedInBuildingId === null);
+            if (tgt && def.ranged) {
+              const d = Math.hypot(tgt.x - reg.x, tgt.z - reg.z);
+              wantsMove = d > def.ranged.maxRangeM * 0.92 || d < def.ranged.minRangeM;
+            }
+          } else if (ord.targetBuildingId !== undefined) {
+            const tb = state.buildings.find((b) => b.id === ord.targetBuildingId && b.hp > 0);
+            if (tb && def.ranged) {
+              const d = Math.hypot(tb.x - reg.x, tb.z - reg.z);
+              wantsMove = d > def.ranged.maxRangeM * 0.95 || d < def.ranged.minRangeM;
+            }
+          } else if (ord.targetWallId !== undefined) {
+            const tw =
+              state.walls.find((w) => w.id === ord.targetWallId && !w.destroyed && w.hp > 0) ??
+              state.gates.find((g) => g.id === ord.targetWallId && !g.destroyed && g.hp > 0) ??
+              null;
+            if (tw && def.ranged) {
+              const d = Math.hypot(tw.x - reg.x, tw.z - reg.z);
+              wantsMove = d > def.ranged.maxRangeM * 0.95 || d < def.ranged.minRangeM;
+            }
+          } else {
+            wantsMove = Math.hypot(ord.x - reg.x, ord.z - reg.z) > 2.5;
+          }
+        } else {
+          wantsMove = Math.hypot(ord.x - reg.x, ord.z - reg.z) > 2.5;
+        }
+      }
+      gunBusy = stepGunLimber(reg, def, wantsMove, dtS);
+    }
+
+    if (reg.order && !gunBusy) {
       const ord = reg.order;
       if (ord.kind === 'halt') {
         reg.order = null;
@@ -1022,13 +1242,13 @@ export function stepCombat(
             const d = Math.hypot(tgt.x - reg.x, tgt.z - reg.z);
             const engageDist = Math.max(4.5, def.weaponReachM + 2.6);
             if (def.ranged && ord.kind === 'attack' && d <= def.ranged.maxRangeM * 0.92 && d >= def.ranged.minRangeM) {
-              // Ranged/siege stops to fire!
-              reg.yawRad = Math.atan2(tgt.x - reg.x, tgt.z - reg.z);
+              // Ranged/siege stops to fire! (Guns traverse slowly via aimTurnRadS in §11 rather than snapping.)
+              if (!def.limberS) reg.yawRad = Math.atan2(tgt.x - reg.x, tgt.z - reg.z);
               reg.currentSpeedMs = 0;
             } else if (d <= engageDist) {
               inMeleeRange = true;
               meleeTarget = tgt;
-              reg.yawRad = Math.atan2(tgt.x - reg.x, tgt.z - reg.z);
+              if (!def.limberS) reg.yawRad = Math.atan2(tgt.x - reg.x, tgt.z - reg.z);
               if (reg.currentSpeedMs >= COMBAT.chargeMinSpeedMs && reg.chargeTimerS <= 0) {
                 reg.chargeTimerS = COMBAT.chargeDurationS;
                 applyChargeImpact(state, reg, tgt, terrain);
@@ -1053,11 +1273,11 @@ export function stepCombat(
           } else {
             const d = Math.hypot(tb.x - reg.x, tb.z - reg.z);
             if (def.ranged && d <= def.ranged.maxRangeM * 0.95 && d >= def.ranged.minRangeM) {
-              reg.yawRad = Math.atan2(tb.x - reg.x, tb.z - reg.z);
+              if (!def.limberS) reg.yawRad = Math.atan2(tb.x - reg.x, tb.z - reg.z);
               reg.currentSpeedMs = 0;
               siegeTargetBuilding = tb;
             } else if (d <= BUILDING_DEFS[tb.type].radiusM + 4.5) {
-              reg.yawRad = Math.atan2(tb.x - reg.x, tb.z - reg.z);
+              if (!def.limberS) reg.yawRad = Math.atan2(tb.x - reg.x, tb.z - reg.z);
               reg.currentSpeedMs = 0;
               siegeTargetBuilding = tb;
             } else {
@@ -1082,11 +1302,11 @@ export function stepCombat(
           } else {
             const d = Math.hypot(tw.x - reg.x, tw.z - reg.z);
             if (def.ranged && d <= def.ranged.maxRangeM * 0.95 && d >= def.ranged.minRangeM) {
-              reg.yawRad = Math.atan2(tw.x - reg.x, tw.z - reg.z);
+              if (!def.limberS) reg.yawRad = Math.atan2(tw.x - reg.x, tw.z - reg.z);
               reg.currentSpeedMs = 0;
               siegeTargetWall = tw;
             } else if (d <= 5.2) {
-              reg.yawRad = Math.atan2(tw.x - reg.x, tw.z - reg.z);
+              if (!def.limberS) reg.yawRad = Math.atan2(tw.x - reg.x, tw.z - reg.z);
               reg.currentSpeedMs = 0;
               siegeTargetWall = tw;
             } else {
@@ -1311,8 +1531,9 @@ export function stepCombat(
       }
     }
 
-    // 11. Ranged & Artillery Volleys (not while in melee, moving fast, or Hold Fire)
-    if (def.ranged && !inMeleeRange && !reg.holdFire && reg.currentSpeedMs < 0.6) {
+    // 11. Ranged & Artillery Volleys (not while in melee, moving fast, limbered/limbering, or Hold Fire)
+    const gunCanFire = !def.limberS || (!reg.limbered && (reg.limberTimerS ?? 0) <= 0);
+    if (def.ranged && !inMeleeRange && !reg.holdFire && reg.currentSpeedMs < 0.6 && gunCanFire) {
       const rSpec = def.ranged;
       const regElev = terrain.heightAt(reg.x, reg.z);
       const isVolleyStance = Boolean(def.firearm && reg.stance === 'volleyFire');
@@ -1355,95 +1576,109 @@ export function stepCombat(
             : null;
 
       if (tgtPos) {
-        reg.yawRad = Math.atan2(tgtPos.x - reg.x, tgtPos.z - reg.z);
-        const dist = Math.hypot(tgtPos.x - reg.x, tgtPos.z - reg.z);
-        const elevAdvantage = regElev - terrain.heightAt(tgtPos.x, tgtPos.z) > COMBAT.elevationHeightThresholdM;
-        const spreadInv = 1 / Math.max(0.4, rSpec.spreadFactor ?? 1.0);
-        const dragoonAccMul = reg.unitType === 'dragoons' && reg.dismounted ? COMBAT.dragoonDismountedAccMul : 1.0;
-        const volleyAccMul = isVolleyStance ? STANCES.volleyFire.accuracyBonus : 1.0;
-        const elevAccMul = def.firearm && elevAdvantage ? 1.08 : 1.0;
-        const accMul =
-          (1 + reg.veteranTier * COMBAT.vetAccuracyBonusPerTier) *
-          spreadInv *
-          dragoonAccMul *
-          volleyAccMul *
-          elevAccMul;
+        const targetYaw = Math.atan2(tgtPos.x - reg.x, tgtPos.z - reg.z);
+        let inArc = true;
+        if (def.limberS) {
+          // Unlimbered artillery traverses by hand at `aimTurnRadS` and fires only within ±15° (`GUNS.arcRad`)!
+          const dYaw = normalizeAngle(targetYaw - reg.yawRad);
+          const maxTurn = (def.aimTurnRadS ?? 0.14) * dtS;
+          reg.yawRad = normalizeAngle(reg.yawRad + Math.sign(dYaw) * Math.min(Math.abs(dYaw), maxTurn));
+          if (Math.abs(dYaw) > GUNS.arcRad) inArc = false;
+        } else {
+          reg.yawRad = targetYaw;
+        }
 
-        const squareReloadMul = reg.formation === 'square' ? SQUARE_FORMATION.reloadMul : 1.0;
-        const dragoonReloadMul = reg.unitType === 'dragoons' && reg.dismounted ? COMBAT.dragoonDismountedReloadMul : 1.0;
-        const lowAmmoReloadMul =
-          def.firearm && (reg.ammoVolleys ?? COMBAT.firearmMaxAmmoVolleys) <= 0.01 ? COMBAT.firearmLowAmmoReloadMul : 1.0;
-        const effReloadS = rSpec.reloadS * squareReloadMul * dragoonReloadMul * lowAmmoReloadMul;
+        if (inArc) {
+          const dist = Math.hypot(tgtPos.x - reg.x, tgtPos.z - reg.z);
+          const elevAdvantage = regElev - terrain.heightAt(tgtPos.x, tgtPos.z) > COMBAT.elevationHeightThresholdM;
+          const spreadInv = 1 / Math.max(0.4, rSpec.spreadFactor ?? 1.0);
+          const dragoonAccMul = reg.unitType === 'dragoons' && reg.dismounted ? COMBAT.dragoonDismountedAccMul : 1.0;
+          const volleyAccMul = isVolleyStance ? STANCES.volleyFire.accuracyBonus : 1.0;
+          const elevAccMul = def.firearm && elevAdvantage ? 1.08 : 1.0;
+          const accMul =
+            (1 + reg.veteranTier * COMBAT.vetAccuracyBonusPerTier) *
+            spreadInv *
+            dragoonAccMul *
+            volleyAccMul *
+            elevAccMul;
 
-        for (const s of reg.soldiers) {
-          if (!s.alive) continue;
-          s.rangedCooldownS -= dtS;
-          if (s.rangedCooldownS <= 0) {
-            s.rangedCooldownS = effReloadS * (0.92 + nextSimRand(state) * 0.16);
-            if (def.firearm && reg.ammoVolleys !== undefined && reg.ammoVolleys > 0) {
-              reg.ammoVolleys = Math.max(0, reg.ammoVolleys - 1 / Math.max(1, aliveMen));
-            }
-            s.clip = 'attack';
-            s.attackAnimTimerS = 0.7;
-            s.sinceAttackS = 0;
-            const sy = terrain.heightAt(s.x, s.z) + (regEffClass === 'cavalry' ? 2.0 : 1.45);
-            const ty = terrain.heightAt(tgtPos.x, tgtPos.z) + 1.05;
-            const elevSpreadMul = def.firearm && elevAdvantage ? 0.85 : 1.0;
-            const spread =
-              (rSpec.kind === 'mortar'
-                ? 2.6
-                : rSpec.kind === 'cannonball'
-                  ? 1.8
-                  : rSpec.kind === 'musketball'
-                    ? 2.2 * (rSpec.spreadFactor ?? 1.0)
-                    : 2.8) * elevSpreadMul;
-            const tx = tgtPos.x + (nextSimRand(state) - 0.5) * spread;
-            const tz = tgtPos.z + (nextSimRand(state) - 0.5) * spread;
-            const flightS = Math.max(0.08, dist / rSpec.projectileSpeedMs);
-            const arcH =
-              rSpec.kind === 'mortar'
-                ? Math.min(48, Math.max(18, dist * 0.36))
-                : rSpec.kind === 'cannonball'
-                  ? Math.min(3.5, dist * 0.03)
-                  : rSpec.kind === 'musketball'
-                    ? Math.min(1.2, dist * 0.012)
-                    : rSpec.kind === 'bolt'
-                      ? Math.min(5, dist * 0.06)
-                      : Math.min(15, dist * 0.16);
+          const squareReloadMul = reg.formation === 'square' ? SQUARE_FORMATION.reloadMul : 1.0;
+          const dragoonReloadMul = reg.unitType === 'dragoons' && reg.dismounted ? COMBAT.dragoonDismountedReloadMul : 1.0;
+          const lowAmmoReloadMul =
+            def.firearm && (reg.ammoVolleys ?? COMBAT.firearmMaxAmmoVolleys) <= 0.01 ? COMBAT.firearmLowAmmoReloadMul : 1.0;
+          const effReloadS = rSpec.reloadS * squareReloadMul * dragoonReloadMul * lowAmmoReloadMul;
 
-            state.projectiles.push({
-              id: state.nextEntityId++,
-              side: reg.side,
-              kind: rSpec.kind,
-              sourceRegimentId: reg.id,
-              x: s.x,
-              y: sy,
-              z: s.z,
-              startX: s.x,
-              startY: sy,
-              startZ: s.z,
-              targetX: tx,
-              targetY: ty,
-              targetZ: tz,
-              flightTimeS: flightS,
-              elapsedS: 0,
-              arcHeightM: arcH,
-              damage: rSpec.damage,
-              armorPierce: rSpec.armorPierce,
-              splashRadiusM: rSpec.splashRadiusM,
-              buildingDamage: rSpec.buildingDamage,
-              targetRegimentId: fireRegTarget?.id ?? null,
-              targetBuildingId: fireBldTarget?.id ?? null,
-              targetWallId: fireWallTarget?.id ?? null,
-              shooterAccuracyMul: accMul,
-              extraMoraleShock: isVolleyStance ? STANCES.volleyFire.moraleShockBonus : undefined,
-              ignoresForestCover: reg.unitType === 'riflemen' ? true : undefined,
-            });
+          for (const s of reg.soldiers) {
+            if (!s.alive) continue;
+            s.rangedCooldownS -= dtS;
+            if (s.rangedCooldownS <= 0) {
+              s.rangedCooldownS = effReloadS * (0.92 + nextSimRand(state) * 0.16);
+              if (def.firearm && reg.ammoVolleys !== undefined && reg.ammoVolleys > 0) {
+                reg.ammoVolleys = Math.max(0, reg.ammoVolleys - 1 / Math.max(1, aliveMen));
+              }
+              s.clip = 'attack';
+              s.attackAnimTimerS = 0.7;
+              s.sinceAttackS = 0;
+              const sy = terrain.heightAt(s.x, s.z) + (regEffClass === 'cavalry' ? 2.0 : 1.45);
+              const ty = terrain.heightAt(tgtPos.x, tgtPos.z) + 1.05;
+              const elevSpreadMul = def.firearm && elevAdvantage ? 0.85 : 1.0;
+              const spread =
+                (rSpec.kind === 'mortar'
+                  ? 2.6
+                  : rSpec.kind === 'cannonball'
+                    ? 1.8
+                    : rSpec.kind === 'musketball'
+                      ? 2.2 * (rSpec.spreadFactor ?? 1.0)
+                      : 2.8) * elevSpreadMul;
+              const tx = tgtPos.x + (nextSimRand(state) - 0.5) * spread;
+              const tz = tgtPos.z + (nextSimRand(state) - 0.5) * spread;
+              const flightS = Math.max(0.08, dist / rSpec.projectileSpeedMs);
+              const arcH =
+                rSpec.kind === 'mortar'
+                  ? Math.min(48, Math.max(18, dist * 0.36))
+                  : rSpec.kind === 'cannonball'
+                    ? Math.min(3.5, dist * 0.03)
+                    : rSpec.kind === 'musketball'
+                      ? Math.min(1.2, dist * 0.012)
+                      : rSpec.kind === 'bolt'
+                        ? Math.min(5, dist * 0.06)
+                        : Math.min(15, dist * 0.16);
 
-            if (rSpec.kind === 'cannonball' || rSpec.kind === 'mortar') {
-              state.fxEvents.push({ kind: 'cannonMuzzle', x: s.x, y: sy, z: s.z, intensity: rSpec.kind === 'mortar' ? 1.3 : 1.0 });
-            } else if (rSpec.kind === 'musketball') {
-              state.fxEvents.push({ kind: 'musketShot', x: s.x, y: sy, z: s.z, intensity: 1.0 });
+              state.projectiles.push({
+                id: state.nextEntityId++,
+                side: reg.side,
+                kind: rSpec.kind,
+                sourceRegimentId: reg.id,
+                x: s.x,
+                y: sy,
+                z: s.z,
+                startX: s.x,
+                startY: sy,
+                startZ: s.z,
+                targetX: tx,
+                targetY: ty,
+                targetZ: tz,
+                flightTimeS: flightS,
+                elapsedS: 0,
+                arcHeightM: arcH,
+                damage: rSpec.damage,
+                armorPierce: rSpec.armorPierce,
+                splashRadiusM: rSpec.splashRadiusM,
+                buildingDamage: rSpec.buildingDamage,
+                targetRegimentId: fireRegTarget?.id ?? null,
+                targetBuildingId: fireBldTarget?.id ?? null,
+                targetWallId: fireWallTarget?.id ?? null,
+                shooterAccuracyMul: accMul,
+                extraMoraleShock: isVolleyStance ? STANCES.volleyFire.moraleShockBonus : undefined,
+                ignoresForestCover: reg.unitType === 'riflemen' ? true : undefined,
+                rollDistM: rSpec.rollDistM,
+              });
+
+              if (rSpec.kind === 'cannonball' || rSpec.kind === 'mortar') {
+                state.fxEvents.push({ kind: 'cannonMuzzle', x: s.x, y: sy, z: s.z, intensity: rSpec.kind === 'mortar' ? 1.3 : 1.0 });
+              } else if (rSpec.kind === 'musketball') {
+                state.fxEvents.push({ kind: 'musketShot', x: s.x, y: sy, z: s.z, intensity: 1.0 });
+              }
             }
           }
         }
@@ -1452,6 +1687,11 @@ export function stepCombat(
 
     // 12. Update individual soldier slot positions & zero-foot-slide `travelM`
     updateSoldierSlotPositions(reg, dtS, terrain, nav, false);
+  }
+
+  // Disband shattered regiments that have fled back to their Keep / edge (returning surviving citizens to town)
+  for (const r of shatteredToDisband) {
+    disbandRegimentToTown(state, r);
   }
 
   // Prune completely wiped-out regiments

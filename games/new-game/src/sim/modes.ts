@@ -6,6 +6,7 @@ import {
   CAMPAIGN,
   DIFFICULTY_SETTINGS,
   ECONOMY,
+  UNIT_DEFS,
   type BuildingTypeId,
   type UnitTypeId,
 } from '../config.ts';
@@ -190,7 +191,35 @@ export function applyMissionSetup(
     }
     pushAlert(state, 0, 'missionInfo', 86, 0, 'M1: Pay 600g / 200 bread / 40 weapons within 30 min');
   } else if (missionId === 2) {
-    // Mission 2: Camp Across the River — 3 camp regiments + 2 flanking raiding detachments
+    // Mission 2: Camp Across the River — fortified eastern war camp palisade (open western approach gate) + 3 camp regs + 2 flanking raiders
+    const addPalisadeLine = (x0: number, z0: number, x1: number, z1: number): void => {
+      const dx = x1 - x0;
+      const dz = z1 - z0;
+      const dist = Math.hypot(dx, dz);
+      const segs = Math.max(1, Math.ceil(dist / 1.9));
+      const yaw = Math.atan2(-dz, dx);
+      for (let i = 0; i < segs; i++) {
+        const t = segs === 1 ? 0.5 : (i + 0.5) / segs;
+        state.walls.push({
+          id: state.nextEntityId++,
+          side: 1,
+          x: x0 + dx * t,
+          z: z0 + dz * t,
+          yawRad: yaw,
+          hp: Math.round(ECONOMY.wallSegmentHp * 0.65),
+          maxHp: Math.round(ECONOMY.wallSegmentHp * 0.65),
+          destroyed: false,
+        });
+      }
+    };
+    // North, South, East perimeter + Western front wings leaving a 12 m entrance gap at (78, 0..12)
+    addPalisadeLine(78, -16, 122, -16);
+    addPalisadeLine(78, 28, 122, 28);
+    addPalisadeLine(122, -16, 122, 28);
+    addPalisadeLine(78, -16, 78, -2);
+    addPalisadeLine(78, 14, 78, 28);
+    state.visualRevision++;
+
     spawnRegiment(state, 1, 'swordsmen', 92, 0, -Math.PI * 0.5, { count: scaleEnemyMen(16), noUpkeep: true, scenarioTag: 'm2_camp' });
     spawnRegiment(state, 1, 'pikemen', 92, 12, -Math.PI * 0.5, { count: scaleEnemyMen(16), noUpkeep: true, scenarioTag: 'm2_camp' });
     spawnRegiment(state, 1, 'crossbowmen', 106, 6, -Math.PI * 0.5, { count: scaleEnemyMen(14), noUpkeep: true, scenarioTag: 'm2_camp' });
@@ -201,7 +230,7 @@ export function applyMissionSetup(
       spawnRegiment(state, 0, 'pikemen', px + 26, pz + 8, Math.PI * 0.5, { count: 16 });
       spawnRegiment(state, 0, 'archers', px + 14, pz, Math.PI * 0.5, { count: 16 });
     }
-    pushAlert(state, 0, 'missionInfo', 92, 6, 'M2: Clear the enemy war camp across the river');
+    pushAlert(state, 0, 'missionInfo', 92, 6, 'M2: Clear the fortified enemy war camp across the river');
   } else if (missionId === 3) {
     // Mission 3: Retaking the Village (Valley) — 5 enemy regiments + 4-crossbow tower at central village (x=118)
     const vx = 118;
@@ -368,11 +397,11 @@ export function applyMissionSetup(
     stock.muskets = Math.max(stock.muskets, Math.round(36 * diffCfg.playerStockMul));
     stock.powder = Math.max(stock.powder, Math.round(72 * diffCfg.playerStockMul));
 
-    // Player Era 2 siege battery & assault corps south of the river
-    spawnRegiment(state, 0, 'cannon', -14, 148, Math.PI, { count: 2 });
-    spawnRegiment(state, 0, 'cannon', 14, 148, Math.PI, { count: 2 });
+    // Player Era 2 siege battery & assault corps south of the river (culverins + falconets + mortar!)
+    spawnRegiment(state, 0, 'culverins', -14, 148, Math.PI, { count: 2 });
+    spawnRegiment(state, 0, 'falconets', 14, 148, Math.PI, { count: 2 });
     spawnRegiment(state, 0, 'mortar', 0, 156, Math.PI, { count: 1 });
-    if (state.regiments.filter((r) => r.side === 0 && r.unitType !== 'cannon' && r.unitType !== 'mortar').length === 0) {
+    if (state.regiments.filter((r) => r.side === 0 && UNIT_DEFS[r.unitType].unitClass !== 'siege').length === 0) {
       const defaults: readonly [UnitTypeId, number, number][] = [
         ['musketeers', -24, 138],
         ['musketeers', 24, 138],
@@ -386,18 +415,18 @@ export function applyMissionSetup(
       }
     }
 
-    // Crimson Era 2 Gunpowder Bastion defenders + counter-battery field cannons!
+    // Crimson Era 2 Gunpowder Bastion defenders + counter-battery culverins & falconets!
     spawnRegiment(state, 1, 'cuirassiers', -14, -26, 0, { count: scaleEnemyMen(12), noUpkeep: true, scenarioTag: 'm6_guard' });
     spawnRegiment(state, 1, 'musketeers', 0, -24, 0, { count: scaleEnemyMen(16), noUpkeep: true, scenarioTag: 'm6_guard' });
     spawnRegiment(state, 1, 'cuirassiers', 14, -26, 0, { count: scaleEnemyMen(12), noUpkeep: true, scenarioTag: 'm6_guard' });
-    spawnRegiment(state, 1, 'cannon', -22, -14, 0, { count: 2, noUpkeep: true, scenarioTag: 'm6_battery' });
-    spawnRegiment(state, 1, 'cannon', 22, -14, 0, { count: 2, noUpkeep: true, scenarioTag: 'm6_battery' });
+    spawnRegiment(state, 1, 'culverins', -22, -14, 0, { count: 2, noUpkeep: true, scenarioTag: 'm6_battery' });
+    spawnRegiment(state, 1, 'falconets', 22, -14, 0, { count: 2, noUpkeep: true, scenarioTag: 'm6_battery' });
     spawnRegiment(state, 1, 'dragoons', -18, 12, 0, { count: scaleEnemyMen(10), noUpkeep: true, scenarioTag: 'm6_sortie' });
     spawnRegiment(state, 1, 'musketeers', 18, 12, 0, { count: scaleEnemyMen(16), noUpkeep: true, scenarioTag: 'm6_sortie' });
     spawnRegiment(state, 1, 'pikemen', -32, -8, 0, { count: scaleEnemyMen(16), noUpkeep: true, scenarioTag: 'm6_bailey' });
     spawnRegiment(state, 1, 'musketeers', 32, -8, 0, { count: scaleEnemyMen(16), noUpkeep: true, scenarioTag: 'm6_bailey' });
 
-    pushAlert(state, 0, 'missionInfo', 0, 160, 'M6: Silence the Era 2 bastion cannons & crush the Gunpowder Guard');
+    pushAlert(state, 0, 'missionInfo', 0, 160, 'M6: Silence the Era 2 bastion culverins & crush the Gunpowder Guard');
   }
 }
 
@@ -475,17 +504,17 @@ export function stepScenario(state: SimWorldState, dtS: number): void {
       if (era >= 3) {
         pool =
           sc.waveIndex <= 3
-            ? ['musketeers', 'pikemen', 'dragoons']
+            ? ['musketeers', 'pikemen', 'dragoons', 'falconets']
             : sc.waveIndex <= 6
-              ? ['lineInfantry', 'cuirassiers', 'dragoons', 'musketeers']
-              : ['lineInfantry', 'riflemen', 'hussars', 'cuirassiers', 'cannon', 'mortar'];
+              ? ['lineInfantry', 'cuirassiers', 'dragoons', 'horseGuns']
+              : ['lineInfantry', 'riflemen', 'hussars', 'cuirassiers', 'horseGuns', 'fieldGuns'];
       } else if (era === 2) {
         pool =
           sc.waveIndex <= 3
             ? ['pikemen', 'musketeers', 'crossbowmen']
             : sc.waveIndex <= 6
-              ? ['musketeers', 'cuirassiers', 'dragoons', 'halberdiers']
-              : ['musketeers', 'lineInfantry', 'riflemen', 'cuirassiers', 'hussars', 'cannon'];
+              ? ['musketeers', 'cuirassiers', 'dragoons', 'falconets']
+              : ['musketeers', 'lineInfantry', 'riflemen', 'cuirassiers', 'hussars', 'culverins'];
       } else {
         pool =
           sc.waveIndex <= 2
@@ -495,13 +524,13 @@ export function stepScenario(state: SimWorldState, dtS: number): void {
               : sc.waveIndex <= 6
                 ? ['swordsmen', 'halberdiers', 'crossbowmen', 'lightCav']
                 : sc.waveIndex <= 8
-                  ? ['swordsmen', 'musketeers', 'cuirassiers', 'halberdiers', 'cannon']
-                  : ['lineInfantry', 'riflemen', 'hussars', 'heavyCav', 'cannon', 'mortar'];
+                  ? ['swordsmen', 'musketeers', 'cuirassiers', 'halberdiers', 'falconets']
+                  : ['lineInfantry', 'riflemen', 'hussars', 'heavyCav', 'culverins', 'mortar'];
       }
       const spawned: RegimentEntity[] = [];
       for (let k = 0; k < waveCount; k++) {
         const ut = pool[(sc.waveIndex + k) % pool.length]!;
-        const countOpt = ut === 'cannon' || ut === 'mortar' ? undefined : scaleMen(12 + Math.min(6, sc.waveIndex));
+        const countOpt = UNIT_DEFS[ut].unitClass === 'siege' ? undefined : scaleMen(12 + Math.min(6, sc.waveIndex));
         spawned.push(
           spawnRegiment(state, 1, ut, sx, sz + (k - waveCount * 0.5) * 14, Math.atan2(p0Keep.x - sx, p0Keep.z - sz), {
             count: countOpt,
@@ -675,10 +704,10 @@ export function stepScenario(state: SimWorldState, dtS: number): void {
         sc.playerNoRegimentsS = 0;
       }
 
-      // Trigger 1: Gate sortie when any player cannon/mortar comes within 230 m of Donżon (0, -48)!
+      // Trigger 1: Gate sortie when any player artillery comes within trigger distance of Donżon (0, -48)!
       if (!sc.firedTriggers.includes('m5_sortie')) {
         const gunNear = p0Regs.find(
-          (r) => (r.unitType === 'cannon' || r.unitType === 'mortar') && Math.hypot(r.x - 0, r.z - -48) <= CAMPAIGN.m5SortieTriggerM,
+          (r) => UNIT_DEFS[r.unitType].unitClass === 'siege' && Math.hypot(r.x - 0, r.z - -48) <= CAMPAIGN.m5SortieTriggerM,
         );
         if (gunNear) {
           sc.firedTriggers.push('m5_sortie');
@@ -745,7 +774,7 @@ export function stepScenario(state: SimWorldState, dtS: number): void {
       // Trigger 1: Dragoon & Musketeer sortie when player artillery advances within 165 m of Bastion Donżon!
       if (!sc.firedTriggers.includes('m6_sortie')) {
         const gunNear = p0Regs.find(
-          (r) => (r.unitType === 'cannon' || r.unitType === 'mortar') && Math.hypot(r.x - 0, r.z - -48) <= 165,
+          (r) => UNIT_DEFS[r.unitType].unitClass === 'siege' && Math.hypot(r.x - 0, r.z - -48) <= 165,
         );
         if (gunNear) {
           sc.firedTriggers.push('m6_sortie');

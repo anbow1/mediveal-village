@@ -112,8 +112,9 @@ export class NavGrid {
       }
     }
 
-    // 2. Roads (1.4x walk speed, also clears forest flag along road corridor)
+    // 2. Roads (1.4x walk speed, also clears forest flag along road corridor; skip staked planned roads until paved)
     for (const rd of roads) {
+      if (rd.planned) continue;
       this.stampRoad(rd.x0, rd.z0, rd.x1, rd.z1, rd.widthM);
     }
 

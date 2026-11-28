@@ -95,14 +95,19 @@ export class GroundWorksMap {
           const pz = z0 + proj * dz;
           const dist = Math.hypot(wx - px, wz - pz);
           if (dist >= totalR) continue;
-          // Cobble core
-          if (dist < halfWidthM + 0.45) {
-            const ct = Math.max(0, Math.min(1, (halfWidthM + 0.45 - dist) / 0.7));
-            this.setMaxChannel(ix, iz, 1, ct * ct * (3 - 2 * ct));
+          // Crisp cobbled stone carriage-way with subtle worn cart-rut dirt crown down the center
+          if (dist < halfWidthM + 0.48) {
+            const ct = Math.max(0, Math.min(1, (halfWidthM + 0.48 - dist) / 0.58));
+            const cobbleEdge = ct * ct * (3 - 2 * ct);
+            this.setMaxChannel(ix, iz, 1, cobbleEdge);
+            if (dist < halfWidthM * 0.34) {
+              const rutT = 1 - dist / Math.max(0.1, halfWidthM * 0.34);
+              this.setMaxChannel(ix, iz, 0, rutT * 0.38);
+            }
           }
-          // Soft trampled dirt shoulder
+          // Soft trampled dirt shoulder outside the stone curb
           const st = Math.max(0, Math.min(1, (totalR - dist) / (shoulderM + 0.5)));
-          this.setMaxChannel(ix, iz, 0, st * st * (3 - 2 * st) * 0.85);
+          this.setMaxChannel(ix, iz, 0, st * st * (3 - 2 * st) * 0.88);
         }
       }
     }

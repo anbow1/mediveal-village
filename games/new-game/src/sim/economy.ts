@@ -710,8 +710,21 @@ export function stepEconomy(
     }
   }
 
-  // 2. Sapling regrowth (Forester speeds up 2x)
+  // 2. Sapling regrowth (Forester speeds up 2x) & auto-paving of planned roads once stone arrives
   let forestChanged = forest.stepRegrowth(state.trees, state.buildings, dtS);
+  for (const rd of state.roads) {
+    if (!rd.planned) continue;
+    const rdSide = state.sides[rd.side ?? 0];
+    if (!rdSide || rdSide.absent) continue;
+    const need = rd.stoneNeeded ?? 1;
+    if ((rdSide.stock.stone ?? 0) >= need) {
+      rdSide.stock.stone -= need;
+      recordConsumed(rdSide, 'stone', need);
+      rd.planned = false;
+      forestChanged = true;
+      state.visualRevision++;
+    }
+  }
 
   // Build quick building lookup & worker-presence sets
   const buildingById = new Map<number, BuildingEntity>();

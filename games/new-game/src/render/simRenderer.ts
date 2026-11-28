@@ -733,7 +733,7 @@ export function buildSimWorldRenderer(opts: {
   const stampedBuildingIds = new Set<number>();
   const stampedStripCounts = new Map<number, number>();
   const hiddenTreeIds = new Set<number>();
-  let stampedRoadCount = 0;
+  const stampedRoadIndices = new Set<number>();
   let lastRevision = -1;
   let lastConstructingHash = -1;
   let lastGhostHash = -1;
@@ -763,7 +763,11 @@ export function buildSimWorldRenderer(opts: {
           reg.unitType === 'dragoons' ||
           reg.unitType === 'hussars' ||
           reg.unitType === 'cannon' ||
-          reg.unitType === 'mortar';
+          reg.unitType === 'mortar' ||
+          reg.unitType === 'falconets' ||
+          reg.unitType === 'culverins' ||
+          reg.unitType === 'horseGuns' ||
+          reg.unitType === 'fieldGuns';
         const rad = isBig ? 2.15 : 1.15;
         for (const s of reg.soldiers) {
           if (!s.alive || uc >= DYN_UNIT_CONTACT_CAP) continue;
@@ -821,14 +825,14 @@ export function buildSimWorldRenderer(opts: {
     lastConstructingHash = constructingHash;
     lastGhostHash = ghostHash;
 
-    // 1. Stamp newly added roads, newly placed buildings, and Farm/Vineyard ploughed strips into GroundWorksMap!
+    // 1. Stamp newly paved roads (skipping planned roads until stone arrives!), buildings & farm strips into GroundWorksMap!
     let gwDirty = false;
-    if (state.roads.length > stampedRoadCount) {
-      for (let i = stampedRoadCount; i < state.roads.length; i++) {
-        const rd = state.roads[i]!;
-        groundWorks.stampRoadPolyline([[rd.x0, rd.z0], [rd.x1, rd.z1]], rd.widthM * 0.42, 1.2);
-      }
-      stampedRoadCount = state.roads.length;
+    for (let i = 0; i < state.roads.length; i++) {
+      if (stampedRoadIndices.has(i)) continue;
+      const rd = state.roads[i]!;
+      if (rd.planned) continue;
+      groundWorks.stampRoadPolyline([[rd.x0, rd.z0], [rd.x1, rd.z1]], rd.widthM * 0.42, 1.2);
+      stampedRoadIndices.add(i);
       gwDirty = true;
     }
     for (const b of state.buildings) {
@@ -997,7 +1001,11 @@ export function buildSimWorldRenderer(opts: {
         if (idx < mPool.cap) {
           TEMP_POS.set(b.x, y, b.z);
           TEMP_QUAT.setFromAxisAngle(UP, b.yawRad);
-          TEMP_SCALE.set(eraLift, scaleY * eraLift, eraLift);
+          // Organic village variety: deterministic ±5% footprint/height variation on houses so streets feel hand-built
+          const hxVar = b.type === 'house' ? 0.95 + ((b.id * 17) % 11) * 0.01 : 1.0;
+          const hzVar = b.type === 'house' ? 0.95 + ((b.id * 31) % 11) * 0.01 : 1.0;
+          const hyVar = b.type === 'house' ? 0.96 + ((b.id * 13) % 9) * 0.01 : 1.0;
+          TEMP_SCALE.set(eraLift * hxVar, scaleY * eraLift * hyVar, eraLift * hzVar);
           TEMP_MAT.compose(TEMP_POS, TEMP_QUAT, TEMP_SCALE);
           mPool.mesh.setMatrixAt(idx, TEMP_MAT);
           mPool.eraAttr.setX(idx, bEra);
@@ -1010,9 +1018,11 @@ export function buildSimWorldRenderer(opts: {
         const idx = poolCounts.get(kind) ?? 0;
         if (idx >= pool.cap) continue;
         const levelScale = b.level >= 5 ? 1.32 : b.level === 4 ? 1.25 : b.level === 3 ? 1.18 : b.level === 2 ? 1.09 : 1.0;
+        const hxVar = b.type === 'house' ? 0.95 + ((b.id * 17) % 11) * 0.01 : 1.0;
+        const hzVar = b.type === 'house' ? 0.95 + ((b.id * 31) % 11) * 0.01 : 1.0;
         TEMP_POS.set(b.x, y, b.z);
         TEMP_QUAT.setFromAxisAngle(UP, b.yawRad);
-        TEMP_SCALE.set(levelScale, scaleY * levelScale, levelScale);
+        TEMP_SCALE.set(levelScale * hxVar, scaleY * levelScale, levelScale * hzVar);
         TEMP_MAT.compose(TEMP_POS, TEMP_QUAT, TEMP_SCALE);
         for (let pi = 0; pi < pool.meshes.length; pi++) {
           pool.meshes[pi]!.setMatrixAt(idx, TEMP_MAT);

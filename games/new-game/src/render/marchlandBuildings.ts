@@ -43,6 +43,7 @@ const MARCHLAND_BUILDING_PREFIX: Partial<Record<BuildingTypeId, string>> = {
   stable: 'stable',
   barracks: 'barracks',
   watchtower: 'tower',
+  cathedral: 'cathedral',
 };
 
 interface SurfaceTag {

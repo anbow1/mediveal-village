@@ -149,9 +149,13 @@ const UNIT_ICONS: Record<UnitTypeId, string> = {
   musketeers: '🔫',
   cuirassiers: '🛡',
   dragoons: '🐎',
+  falconets: '⇢',
+  culverins: '⇉',
   lineInfantry: '🎖',
   riflemen: '🎯',
   hussars: '🪶',
+  horseGuns: '⇝',
+  fieldGuns: '⇛',
 };
 
 const EQUIP_ORDER_UNITS: readonly UnitTypeId[] = [
@@ -202,9 +206,13 @@ function unitAbbr(u: UnitTypeId): string {
     case 'musketeers': return 'MSK';
     case 'cuirassiers': return 'CUR';
     case 'dragoons': return 'DRG';
+    case 'falconets': return 'FLC';
+    case 'culverins': return 'CLV';
     case 'lineInfantry': return 'LIN';
     case 'riflemen': return 'RFL';
     case 'hussars': return 'HUS';
+    case 'horseGuns': return 'HGN';
+    case 'fieldGuns': return 'FGN';
   }
 }
 
@@ -587,15 +595,30 @@ export class GameHud {
     const toPx = (x: number): number => ((x / worldSizeM) + 0.5) * w;
     const toPy = (z: number): number => ((z / worldSizeM) + 0.5) * h;
 
-    // Roads
+    // Roads (paved solid cobble; planned staked roads dashed pale grey until stone arrives)
     ctx.strokeStyle = 'rgba(196, 174, 132, 0.72)';
     ctx.lineWidth = 1.4;
     ctx.beginPath();
     for (const rd of state.roads) {
+      if (rd.planned) continue;
       ctx.moveTo(toPx(rd.x0), toPy(rd.z0));
       ctx.lineTo(toPx(rd.x1), toPy(rd.z1));
     }
     ctx.stroke();
+    if (state.roads.some((r) => r.planned)) {
+      ctx.save();
+      ctx.setLineDash([3, 3]);
+      ctx.strokeStyle = 'rgba(180, 186, 194, 0.75)';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      for (const rd of state.roads) {
+        if (!rd.planned) continue;
+        ctx.moveTo(toPx(rd.x0), toPy(rd.z0));
+        ctx.lineTo(toPx(rd.x1), toPy(rd.z1));
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
 
     // Stone (pale silver-grey diamond) & Iron Ore (rust-copper diamond) resource outcrops
     for (const oc of state.outcrops) {
@@ -1533,11 +1556,19 @@ export class GameHud {
           break;
         }
       }
-      const garrTag = r.garrisonedInBuildingId !== null ? ' 🏰' : '';
+      const rDef = UNIT_DEFS[r.unitType];
+      const badges: string[] = [];
+      if (r.isArmyCaptain) badges.push('👑');
+      if (r.garrisonedInBuildingId !== null) badges.push('🏰');
+      if (r.shattered || r.routing) badges.push('🏳');
+      else if (rDef.unitClass !== 'siege' && !r.captainAlive) badges.push('⚠');
+      if ((r.limberTimerS ?? 0) > 0) badges.push('⚙');
+      if (rDef.firearm && r.ammoVolleys !== undefined && r.ammoVolleys <= 1.5) badges.push('🧨');
+      const badgeTag = badges.length > 0 ? ` ${badges.join('')}` : '';
       const card = document.createElement('button');
       card.className = `rts-reg-card ${selectedRegimentIds.has(r.id) ? 'selected' : ''} ${r.routing ? 'routing' : ''}`;
       card.innerHTML =
-        `<div class="rc-top"><span>${unitAbbr(r.unitType)}${garrTag}</span><span>${alive}/${r.maxMen}</span></div>` +
+        `<div class="rc-top"><span>${unitAbbr(r.unitType)}${badgeTag}</span><span>${alive}/${r.maxMen}</span></div>` +
         `<div class="rc-bar"><div class="rc-hp" style="width:${hpPct}%"></div></div>` +
         `<div class="rc-bar"><div class="rc-mor" style="width:${morPct}%"></div></div>` +
         (grpTag ? `<span class="rc-grp">${grpTag}</span>` : '') +
@@ -1587,7 +1618,7 @@ export class GameHud {
       const isPose = this.activeTool?.kind === 'regimentPose';
       const savedForms = state.sides[0].savedFormations ?? [];
       const savedSig = savedForms.map((f) => `${f.id}:${f.slots.length}`).join('|');
-      const regSig = `r:${ids.join(',')}:${primary.unitType}:${primary.formation}:${primaryRanks}:${primary.width}:${primary.stance}:${primary.holdFire}:${Boolean(primary.dismounted)}:${primary.routing}:${isPose}:${savedSig}:${this.lang}`;
+      const regSig = `r:${ids.join(',')}:${primary.unitType}:${primary.formation}:${primaryRanks}:${primary.width}:${primary.stance}:${primary.holdFire}:${Boolean(primary.dismounted)}:${primary.routing}:${Boolean(primary.shattered)}:${Boolean(primary.limbered)}:${isPose}:${savedSig}:${this.lang}`;
 
       const ammoMax = primary.maxAmmoVolleys ?? 0;
       const ammoCur = primary.ammoVolleys !== undefined ? Math.ceil(primary.ammoVolleys) : 0;
@@ -1595,10 +1626,27 @@ export class GameHud {
         def.firearm && ammoMax > 0
           ? ` · <span style="color:${ammoCur <= 2 ? '#f0a64c' : '#d8d2c0'}">🧨 ${s.ammoLabel} ${ammoCur}/${ammoMax}</span>`
           : '';
+      const gunStateText =
+        def.limberS && (primary.limberTimerS ?? 0) > 0
+          ? `${primary.limberTarget === 'limbered' ? s.limberingLabel : s.unlimberingLabel} (${Math.ceil(primary.limberTimerS ?? 0)} s)`
+          : def.limberS && primary.limbered
+            ? s.limberedLabel
+            : '';
+      const statusText = primary.shattered
+        ? s.shatteredLabel
+        : primary.routing
+          ? s.routingLabel
+          : def.unitClass === 'siege'
+            ? gunStateText
+            : primary.isArmyCaptain
+              ? `👑 ${s.armyCaptainBadge}`
+              : primary.captainAlive
+                ? s.captainAlive
+                : s.captainFallen;
       const headHtml =
         `<strong>${regs.length > 1 ? `${regs.length}× ` : ''}${UNIT_ICONS[primary.unitType]} ${s.units[primary.unitType]}</strong>` +
         `<span>${alive}/${primary.maxMen} · ${s.ranksLabel}: ${primaryRanks} (${primary.width}×${primaryRanks}) · ${s.moraleLabel} ${Math.round(primary.morale)}/${Math.round(primary.maxMorale)} · ${s.fatigueLabel} ${Math.round(primary.fatigue * 100)}%${ammoHtml}</span>` +
-        `<span class="insp-cap">${primary.routing ? s.routingLabel : def.unitClass === 'siege' ? '' : primary.captainAlive ? s.captainAlive : s.captainFallen}${primary.veteranTier > 0 ? ` · ${s.veteranLabel} ${'★'.repeat(primary.veteranTier)}` : ''}</span>`;
+        `<span class="insp-cap">${statusText}${primary.veteranTier > 0 ? ` · ${s.veteranLabel} ${'★'.repeat(primary.veteranTier)}` : ''}</span>`;
 
       if (!force && regSig === this.lastInspectorSig) {
         const existingHead = this.inspectorEl.querySelector('.insp-head');

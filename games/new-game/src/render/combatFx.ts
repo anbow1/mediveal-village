@@ -262,8 +262,8 @@ function buildArtilleryGeometry(): BufferGeometry {
   return mergePartGeos(parts);
 }
 
-/** Medieval regiment banner standard: 3.4 m spear flagpole + finial + fluttering swallowtail heraldic pennant. */
-function buildBannerGeometry(): BufferGeometry {
+/** Medieval regiment banner standard with distinct heraldic silhouette per faction (gonfalon, swallowtail, guidon). */
+function buildBannerGeometry(shape: 'gonfalon' | 'swallowtail' | 'guidon'): BufferGeometry {
   const parts: BufferGeometry[] = [];
   const pole = new CylinderGeometry(0.032, 0.042, 3.45, 6);
   pole.translate(0, 1.725, 0);
@@ -273,21 +273,48 @@ function buildBannerGeometry(): BufferGeometry {
   finial.translate(0, 3.58, 0);
   parts.push(finial);
 
-  // Heraldic banner hanging from horizontal crossbar, streaming cleanly to the side
   const crossbar = new CylinderGeometry(0.025, 0.025, 0.95, 5);
   crossbar.rotateZ(Math.PI * 0.5);
   crossbar.translate(0.45, 3.24, 0);
   parts.push(crossbar);
 
-  const cloth = new BoxGeometry(0.92, 0.72, 0.045);
-  cloth.translate(0.47, 2.86, 0);
-  parts.push(cloth);
-
-  const tail = new ConeGeometry(0.32, 0.52, 4);
-  tail.rotateZ(-Math.PI * 0.5);
-  tail.scale(1.0, 1.0, 0.18);
-  tail.translate(1.12, 2.86, 0);
-  parts.push(tail);
+  if (shape === 'gonfalon') {
+    // Side 0 (Cobalt): tall rectangular medieval gonfalon with twin bottom lappets
+    const cloth = new BoxGeometry(0.86, 0.92, 0.045);
+    cloth.translate(0.44, 2.76, 0);
+    parts.push(cloth);
+    const lapL = new BoxGeometry(0.32, 0.34, 0.042);
+    lapL.translate(0.24, 2.15, 0);
+    parts.push(lapL);
+    const lapR = new BoxGeometry(0.32, 0.34, 0.042);
+    lapR.translate(0.64, 2.15, 0);
+    parts.push(lapR);
+  } else if (shape === 'swallowtail') {
+    // Side 1 (Crimson): split twin-tail swallowtail war pennant
+    const cloth = new BoxGeometry(0.84, 0.68, 0.045);
+    cloth.translate(0.43, 2.88, 0);
+    parts.push(cloth);
+    const tailTop = new ConeGeometry(0.18, 0.56, 4);
+    tailTop.rotateZ(-Math.PI * 0.5);
+    tailTop.scale(1.0, 1.0, 0.2);
+    tailTop.translate(1.06, 3.04, 0);
+    parts.push(tailTop);
+    const tailBot = new ConeGeometry(0.18, 0.56, 4);
+    tailBot.rotateZ(-Math.PI * 0.5);
+    tailBot.scale(1.0, 1.0, 0.2);
+    tailBot.translate(1.06, 2.72, 0);
+    parts.push(tailBot);
+  } else {
+    // Side 2 (Ochre): long tapered triangular cavalry guidon
+    const cloth = new BoxGeometry(0.48, 0.68, 0.045);
+    cloth.translate(0.25, 2.88, 0);
+    parts.push(cloth);
+    const tip = new ConeGeometry(0.34, 0.95, 4);
+    tip.rotateZ(-Math.PI * 0.5);
+    tip.scale(1.0, 1.0, 0.16);
+    tip.translate(0.95, 2.88, 0);
+    parts.push(tip);
+  }
 
   return mergePartGeos(parts);
 }
@@ -421,10 +448,16 @@ export function buildCombatFx(scene: Scene): CombatFxHandles {
   const flashMesh = makeInstanced(scene, 'Fx_MuzzleFlash', flashGeo, flashMat, 36, false);
   flashMesh.renderOrder = 7;
 
-  // 7. Regiment Heraldic Standards (3.4 m spear flagpole + swallowtail pennant, cap 64)
-  const bannerGeo = buildBannerGeometry();
-  geos.push(bannerGeo);
-  const bannerMesh = makeInstanced(scene, 'Fx_RegimentBanners', bannerGeo, solidMat, 64, false);
+  // 7. Distinct Regiment Heraldic Standards per faction (Side 0 gonfalon, Side 1 swallowtail, Side 2 guidon; cap 64 each)
+  const bannerGeo0 = buildBannerGeometry('gonfalon');
+  const bannerGeo1 = buildBannerGeometry('swallowtail');
+  const bannerGeo2 = buildBannerGeometry('guidon');
+  geos.push(bannerGeo0, bannerGeo1, bannerGeo2);
+  const bannerMeshes: readonly [InstancedMesh, InstancedMesh, InstancedMesh] = [
+    makeInstanced(scene, 'Fx_RegimentBanners_Cobalt', bannerGeo0, solidMat, 64, false),
+    makeInstanced(scene, 'Fx_RegimentBanners_Crimson', bannerGeo1, solidMat, 64, false),
+    makeInstanced(scene, 'Fx_RegimentBanners_Ochre', bannerGeo2, solidMat, 64, false),
+  ];
 
   // 8. Sleek Tactical Ground Rings (cap 256)
   const ringGeo = new RingGeometry(0.91, 1.0, 36);
@@ -561,7 +594,7 @@ export function buildCombatFx(scene: Scene): CombatFxHandles {
 
     let horseCount = 0;
     let cannonCount = 0;
-    let bannerCount = 0;
+    const bannerCounts: [number, number, number] = [0, 0, 0];
     let ringCount = 0;
 
     for (const reg of state.regiments) {
@@ -593,13 +626,14 @@ export function buildCombatFx(scene: Scene): CombatFxHandles {
         }
       }
 
-      // Field Artillery Guns (skipped when marchland cannon/mortar models are active)
+      // Field Artillery Guns (skipped when marchland artillery models are active; trail-first when limbered with horses!)
       if (!skipProceduralUnits && def.unitClass === 'siege') {
+        const limberFlip = reg.limbered && (def.teamHorses ?? 0) > 0 ? Math.PI : 0;
         for (const s of reg.soldiers) {
           if (!s.alive || cannonCount >= 24) continue;
           const y = heightAt(s.x, s.z);
           TEMP_POS.set(s.x, y, s.z);
-          TEMP_EULER.set(reg.unitType === 'mortar' ? -0.52 : -0.05, s.yawRad, 0, 'YXZ');
+          TEMP_EULER.set(reg.unitType === 'mortar' ? -0.52 : -0.05, s.yawRad + limberFlip, 0, 'YXZ');
           TEMP_QUAT.setFromEuler(TEMP_EULER);
           TEMP_SCALE.set(reg.unitType === 'mortar' ? 1.15 : 1.0, 1.0, reg.unitType === 'mortar' ? 0.72 : 1.0);
           TEMP_MAT.compose(TEMP_POS, TEMP_QUAT, TEMP_SCALE);
@@ -609,24 +643,29 @@ export function buildCombatFx(scene: Scene): CombatFxHandles {
         }
       }
 
-      // Regiment heraldic standard (spear flagpole + fluttering banner planted cleanly at regiment center!)
-      if (bannerCount < 64) {
+      // Regiment heraldic standard (distinct shape per faction; taller gold-trimmed standard for the Army Captain!)
+      const bSide = reg.side;
+      const bIdx = bannerCounts[bSide];
+      if (bIdx < 64) {
+        const bMesh = bannerMeshes[bSide];
         const by = heightAt(reg.x, reg.z);
         const flutter = Math.sin(animClockS * 4.5 + reg.id * 1.7) * 0.14;
         TEMP_POS.set(reg.x, by, reg.z);
         TEMP_QUAT.setFromAxisAngle(UP, reg.yawRad + flutter);
-        const moraleScale = reg.routing ? 0.72 : 0.88 + (reg.morale / Math.max(1, reg.maxMorale)) * 0.22;
+        const capMul = reg.isArmyCaptain && !reg.routing ? 1.24 : 1.0;
+        const moraleScale = (reg.routing ? 0.72 : 0.88 + (reg.morale / Math.max(1, reg.maxMorale)) * 0.22) * capMul;
         TEMP_SCALE.set(moraleScale, moraleScale, moraleScale);
         TEMP_MAT.compose(TEMP_POS, TEMP_QUAT, TEMP_SCALE);
-        bannerMesh.setMatrixAt(bannerCount, TEMP_MAT);
-        const col = reg.routing ? COL_ROUT : reg.side === 0 ? COL_COBALT : reg.side === 1 ? COL_CRIMSON : COL_OCHRE;
-        if (reg.veteranTier > 0 && !reg.routing) {
-          COL_TMP.copy(col).lerp(COL_GOLD, reg.veteranTier === 2 ? 0.42 : 0.22);
-          bannerMesh.setColorAt(bannerCount, COL_TMP);
+        bMesh.setMatrixAt(bIdx, TEMP_MAT);
+        const col = reg.routing ? COL_ROUT : bSide === 0 ? COL_COBALT : bSide === 1 ? COL_CRIMSON : COL_OCHRE;
+        if (!reg.routing && (reg.isArmyCaptain || reg.veteranTier > 0)) {
+          const goldBlend = reg.isArmyCaptain ? 0.52 : reg.veteranTier === 2 ? 0.42 : 0.22;
+          COL_TMP.copy(col).lerp(COL_GOLD, goldBlend);
+          bMesh.setColorAt(bIdx, COL_TMP);
         } else {
-          bannerMesh.setColorAt(bannerCount, col);
+          bMesh.setColorAt(bIdx, col);
         }
-        bannerCount++;
+        bannerCounts[bSide] = bIdx + 1;
       }
 
       // Sleek tactical selection ring under selected regiments
@@ -996,7 +1035,9 @@ export function buildCombatFx(scene: Scene): CombatFxHandles {
     finalizeBatch(shellMesh, shellCount);
     finalizeBatch(puffMesh, puffCount);
     finalizeBatch(flashMesh, flashCount);
-    finalizeBatch(bannerMesh, bannerCount);
+    finalizeBatch(bannerMeshes[0], bannerCounts[0]);
+    finalizeBatch(bannerMeshes[1], bannerCounts[1]);
+    finalizeBatch(bannerMeshes[2], bannerCounts[2]);
     finalizeBatch(ringMesh, ringCount);
   };
 
@@ -1012,7 +1053,9 @@ export function buildCombatFx(scene: Scene): CombatFxHandles {
         shellMesh,
         puffMesh,
         flashMesh,
-        bannerMesh,
+        bannerMeshes[0],
+        bannerMeshes[1],
+        bannerMeshes[2],
         ringMesh,
       ]) {
         scene.remove(m);

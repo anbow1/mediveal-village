@@ -494,13 +494,27 @@ export function executeCommand(
     case 'placeRoad': {
       const dist = Math.hypot(cmd.x1 - cmd.x0, cmd.z1 - cmd.z0);
       if (dist < 1.5) return { ok: false, reason: 'tooShort' };
-      const stoneCost = 1;
-      if (sideState.stock.stone < stoneCost) return { ok: false, reason: 'insufficientResources' };
-      sideState.stock.stone -= stoneCost;
-      state.roads.push({ x0: cmd.x0, z0: cmd.z0, x1: cmd.x1, z1: cmd.z1, widthM: 4.0 });
-      onNavDirty();
+      const stoneCost = Math.max(1, Math.min(12, Math.round((dist / 10) * ECONOMY.roadStonePer10M)));
+      if ((sideState.stock.stone ?? 0) >= stoneCost) {
+        sideState.stock.stone -= stoneCost;
+        state.roads.push({ x0: cmd.x0, z0: cmd.z0, x1: cmd.x1, z1: cmd.z1, widthM: 4.0, side: cmd.side });
+        onNavDirty();
+        state.visualRevision++;
+        return { ok: true, reason: 'ok' };
+      }
+      // Deferred / planned road: staked out now and paved automatically as soon as stone reaches the warehouse!
+      state.roads.push({
+        x0: cmd.x0,
+        z0: cmd.z0,
+        x1: cmd.x1,
+        z1: cmd.z1,
+        widthM: 4.0,
+        planned: true,
+        side: cmd.side,
+        stoneNeeded: stoneCost,
+      });
       state.visualRevision++;
-      return { ok: true, reason: 'ok' };
+      return { ok: true, reason: 'planned' };
     }
 
     case 'placeWall': {

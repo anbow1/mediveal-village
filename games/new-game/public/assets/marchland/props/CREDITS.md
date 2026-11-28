@@ -13,11 +13,20 @@ for the game). All licensed **CC BY 4.0**.
 
 - `cannon.json` — the field gun (and the gun on show before the foundry): **"Cannon"** by **Lyskilde**
   (https://sketchfab.com/3d-models/cannon-84d7315b51c9473cb3cfd1501a5e5e03).
-- `fieldgun.json` — the third age's guns (field guns, and smaller the horse guns): **"British field cannon - 1815 -
+- `fieldgun.json` — the third age's guns (the field guns): **"British field cannon - 1815 -
   free download"** by **Andy woodhead** (https://sketchfab.com/3d-models/british-field-cannon-1815-free-download-c027cb2e6e764f4196f27c94b5f770d5).
   Darkened for the game (`prop.py --gain 0.35 --pale 0.22,0.18,0.14`: its pale wheels and carriage read as silver in
-  the sun), about 4 000 triangles so the wheels keep their spokes. The second age's falconets and culverins are
-  `cannon.json`, smaller and larger, until models of their own.
+  the sun), about 4 000 triangles so the wheels keep their spokes.
+- `falconet.json` — the second age's light gun: **"Cannon"** by **Chenchanchong**
+  (https://sketchfab.com/3d-models/cannon-d5a397bd5d1141149129dc08d96b8bab). 2.4 m, 3 000 triangles, `--gain 0.6`.
+- `culverin.json` — the second age's long gun: **"KCISA-수원화성_홍이포(Cannon)"** by **Korea Culture Information Service
+  Agency** (https://sketchfab.com/3d-models/kcisa--cannon-79d751e182a141999390c79caf43b81e): the hongipo, Korea's copy of
+  the Dutch culverin of the 17th century. 3.8 m, 3 000 triangles, `--gain 0.45 --pale 0.24,0.2,0.16` (its pale barrel
+  and carriage darkened).
+- `horsegun.json` — the third age's horse guns: **"12 Pound Cannon"** by **iedalton**
+  (https://sketchfab.com/3d-models/12-pound-cannon-2662865f331146c59129cd7901fa8db1). 2.8 m, 3 500 triangles, `--gain 0.5`.
+
+All under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/).
 - `mortar.json` — the mortar: **"Medieval Mortier"** by **ViktorKom**
   (https://sketchfab.com/3d-models/medieval-mortier-a931843c33b048359019263b70168207).
 

@@ -276,6 +276,20 @@ export interface RegimentEntity {
   ammoResupplyTimerS?: number;
   /** True when Dragoons have dismounted to fight on foot as accurate musketeers. */
   dismounted?: boolean;
+  /** Artillery limber state (true = hitched & able to move; false = unlimbered & able to fire). */
+  limbered?: boolean;
+  /** Seconds remaining in current limbering or unlimbering transition. */
+  limberTimerS?: number;
+  /** Target state of active limbering/unlimbering transition. */
+  limberTarget?: 'limbered' | 'unlimbered';
+  /** Number of times this regiment has routed in battle (3 routs or <25% strength shatters permanently). */
+  routCount?: number;
+  /** Permanently broken — will never rally and disbands upon reaching own Keep/edge. */
+  shattered?: boolean;
+  /** True for the side's single senior Army Captain regiment (+5 morale & 1.25x rally aura within 45 m). */
+  isArmyCaptain?: boolean;
+  /** Timestamp/timer for AI Shield Wall reaction to incoming missile fire. */
+  aiShieldWallTimerS?: number;
 }
 
 export interface ProjectileEntity {
@@ -307,6 +321,8 @@ export interface ProjectileEntity {
   readonly extraMoraleShock?: number;
   /** True if fired by Riflemen skirmishers (ignores forest cover penalty). */
   readonly ignoresForestCover?: boolean;
+  /** Rolling cannonball skid distance past impact point (m). */
+  readonly rollDistM?: number;
 }
 
 export interface CapturePointEntity {
@@ -567,6 +583,10 @@ export interface RoadSegmentRecord {
   readonly x1: number;
   readonly z1: number;
   readonly widthM: number;
+  /** True when the road was staked out without stone in stock; auto-paved once stone arrives. */
+  planned?: boolean;
+  readonly side?: SideId;
+  readonly stoneNeeded?: number;
 }
 
 export interface SimWorldState {

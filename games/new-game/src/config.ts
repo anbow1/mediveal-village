@@ -796,6 +796,25 @@ export const KEEP_BAYS = { count: 10, outM: 2.5, idleFromM: 9 } as const;
 /** Barracks regiment reinforcement rules (FPS/marchland REINFORCE). */
 export const REINFORCE = { radiusM: 36, quietS: 10, minSeconds: 8 } as const;
 
+/** Artillery firing arc (±15°), rolling cannonball through-hits, Army Captain aura & permanent shatter thresholds (marchland RULES.md). */
+export const GUNS = {
+  arcRad: (15 * Math.PI) / 180,
+  rollHitChance: 0.75,
+  rollMaxHits: 4,
+  rollMoraleShock: 1.8,
+} as const;
+
+export const ARMY_CAPTAIN = {
+  auraRadiusM: 45,
+  moraleBonus: 5,
+  rallySpeedMul: 1.25,
+} as const;
+
+export const SHATTER = {
+  maxRouts: 3,
+  minStrengthFrac: 0.25,
+} as const;
+
 export type UnitTypeId =
   | 'militia'
   | 'pikemen'
@@ -810,9 +829,13 @@ export type UnitTypeId =
   | 'musketeers'
   | 'cuirassiers'
   | 'dragoons'
+  | 'falconets'
+  | 'culverins'
   | 'lineInfantry'
   | 'riflemen'
-  | 'hussars';
+  | 'hussars'
+  | 'horseGuns'
+  | 'fieldGuns';
 
 export const MEDIEVAL_UNIT_TYPES: readonly UnitTypeId[] = [
   'militia',
@@ -832,9 +855,13 @@ export const ALL_UNIT_TYPES: readonly UnitTypeId[] = [
   'musketeers',
   'cuirassiers',
   'dragoons',
+  'falconets',
+  'culverins',
   'lineInfantry',
   'riflemen',
   'hussars',
+  'horseGuns',
+  'fieldGuns',
 ];
 
 export type UnitClass = 'infantry' | 'ranged' | 'cavalry' | 'siege';
@@ -875,6 +902,12 @@ export interface UnitDef {
   readonly chargeMoraleShock: number;
   /** True for firearm units (musket ball pierces shields & armour, gunshot & smoke FX). */
   readonly firearm?: boolean;
+  /** Seconds to limber/unlimber an artillery piece before moving or firing (marchland GUNS). */
+  readonly limberS?: number;
+  /** Hand-traverse aiming angular speed when unlimbered (rad/s). */
+  readonly aimTurnRadS?: number;
+  /** Number of draft horses drawing a limbered gun (0 = crew/oxen off-board, 2 or 4 = visible horse team). */
+  readonly teamHorses?: number;
   /** Ranged / siege weapon parameters (undefined for pure melee). */
   readonly ranged?: {
     readonly minRangeM: number;
@@ -887,6 +920,8 @@ export interface UnitDef {
     readonly projectileSpeedMs: number;
     /** Accuracy multiplier relative to baseline firearm/ranged spread (< 1 = tighter aim, e.g. riflemen 0.6). */
     readonly spreadFactor?: number;
+    /** Rolling cannonball bounce/skid distance past impact point (m), bowling through ranks. */
+    readonly rollDistM?: number;
     readonly kind: 'arrow' | 'bolt' | 'cannonball' | 'mortar' | 'musketball';
   };
   /** Militia home-defence radius limit (115 m, no building attacks). */
@@ -898,10 +933,10 @@ export interface UnitDef {
 }
 
 /**
- * Canonical 16 Marchland regiment types across 3 Ages (imported & tuned from anbow1/marchland):
+ * Canonical 20 Marchland regiment types across 3 Ages (imported & tuned from anbow1/marchland):
  *   Era 1 (Middle Ages): militia, pikemen, archers, swordsmen, halberdiers, crossbowmen, lightCav, heavyCav, cannon, mortar
- *   Era 2 (Early Modern, Barracks L4): musketeers, cuirassiers, dragoons
- *   Era 3 (19th Century, Barracks L5): lineInfantry, riflemen, hussars
+ *   Era 2 (Early Modern, Barracks/Foundry L4): musketeers, cuirassiers, dragoons, falconets, culverins
+ *   Era 3 (19th Century, Barracks/Foundry L5): lineInfantry, riflemen, hussars, horseGuns, fieldGuns
  */
 export const UNIT_DEFS: Record<UnitTypeId, UnitDef> = {
   militia: {
@@ -993,7 +1028,8 @@ export const UNIT_DEFS: Record<UnitTypeId, UnitDef> = {
     hp: 80, attack: 0, defence: 0, armour: 0.0, meleeDamage: 0, morale: 55,
     walkSpeedMs: 0.9, runSpeedMs: 0.9, shieldBlock: 0.70, antiCavBonus: 0, weaponReachM: 1.5,
     chargeAttackBonus: 0, chargeMoraleShock: 0,
-    ranged: { minRangeM: 10, maxRangeM: 88, damage: 42, armorPierce: 0.85, reloadS: 12, splashRadiusM: 1.2, buildingDamage: 22, projectileSpeedMs: 105, kind: 'cannonball' },
+    limberS: 12, aimTurnRadS: 0.12, teamHorses: 0,
+    ranged: { minRangeM: 10, maxRangeM: 88, damage: 42, armorPierce: 0.85, reloadS: 12, splashRadiusM: 1.2, buildingDamage: 22, projectileSpeedMs: 105, rollDistM: 12, kind: 'cannonball' },
     refitTargets: [],
     valueGold: 248,
   },
@@ -1004,11 +1040,12 @@ export const UNIT_DEFS: Record<UnitTypeId, UnitDef> = {
     hp: 120, attack: 0, defence: 0, armour: 0.0, meleeDamage: 0, morale: 60,
     walkSpeedMs: 0.6, runSpeedMs: 0.6, shieldBlock: 0.80, antiCavBonus: 0, weaponReachM: 1.5,
     chargeAttackBonus: 0, chargeMoraleShock: 0,
+    limberS: 20, aimTurnRadS: 0.08, teamHorses: 0,
     ranged: { minRangeM: 35, maxRangeM: 112, damage: 24, armorPierce: 0.50, reloadS: 17, splashRadiusM: 3.2, buildingDamage: 80, projectileSpeedMs: 50, kind: 'mortar' },
     refitTargets: [],
     valueGold: 294,
   },
-  // ---- Era 2 · Early Modern (Keep 4, Barracks 4) ----
+  // ---- Era 2 · Early Modern (Keep 4, Barracks/Foundry 4) ----
   musketeers: {
     id: 'musketeers', unitClass: 'ranged', visualArchetype: 'archer',
     barracksLevel: 4, gunFoundryLevel: 0, count: 12, crewCount: 12,
@@ -1041,7 +1078,31 @@ export const UNIT_DEFS: Record<UnitTypeId, UnitDef> = {
     refitTargets: ['hussars'],
     valueGold: 560,
   },
-  // ---- Era 3 · 19th Century (Keep 5, Barracks 5) ----
+  falconets: {
+    id: 'falconets', unitClass: 'siege', visualArchetype: 'citizen',
+    barracksLevel: 0, gunFoundryLevel: 4, count: 2, crewCount: 4,
+    cost: { gold: 110, timber: 6, iron: 8, powder: 6 }, equipPerMan: {},
+    hp: 60, attack: 0, defence: 0, armour: 0.0, meleeDamage: 0, morale: 60,
+    walkSpeedMs: 1.8, runSpeedMs: 1.8, shieldBlock: 0.60, antiCavBonus: 0, weaponReachM: 1.5,
+    chargeAttackBonus: 0, chargeMoraleShock: 0,
+    limberS: 6, aimTurnRadS: 0.30, teamHorses: 2,
+    ranged: { minRangeM: 8, maxRangeM: 110, damage: 45, armorPierce: 0.85, reloadS: 7, splashRadiusM: 1.0, buildingDamage: 14, projectileSpeedMs: 120, rollDistM: 10, kind: 'cannonball' },
+    refitTargets: [],
+    valueGold: 220,
+  },
+  culverins: {
+    id: 'culverins', unitClass: 'siege', visualArchetype: 'citizen',
+    barracksLevel: 0, gunFoundryLevel: 4, count: 2, crewCount: 6,
+    cost: { gold: 220, timber: 10, iron: 16, powder: 12 }, equipPerMan: {},
+    hp: 90, attack: 0, defence: 0, armour: 0.0, meleeDamage: 0, morale: 60,
+    walkSpeedMs: 0.9, runSpeedMs: 0.9, shieldBlock: 0.70, antiCavBonus: 0, weaponReachM: 1.5,
+    chargeAttackBonus: 0, chargeMoraleShock: 0,
+    limberS: 15, aimTurnRadS: 0.10, teamHorses: 4,
+    ranged: { minRangeM: 12, maxRangeM: 170, damage: 60, armorPierce: 0.90, reloadS: 11, splashRadiusM: 1.3, buildingDamage: 40, projectileSpeedMs: 140, rollDistM: 16, kind: 'cannonball' },
+    refitTargets: [],
+    valueGold: 400,
+  },
+  // ---- Era 3 · 19th Century (Keep 5, Barracks/Foundry 5) ----
   lineInfantry: {
     id: 'lineInfantry', unitClass: 'ranged', visualArchetype: 'archer',
     barracksLevel: 5, gunFoundryLevel: 0, count: 12, crewCount: 12,
@@ -1073,6 +1134,30 @@ export const UNIT_DEFS: Record<UnitTypeId, UnitDef> = {
     chargeAttackBonus: 12, chargeMoraleShock: 12,
     refitTargets: [],
     valueGold: 358,
+  },
+  horseGuns: {
+    id: 'horseGuns', unitClass: 'siege', visualArchetype: 'citizen',
+    barracksLevel: 0, gunFoundryLevel: 5, count: 2, crewCount: 6,
+    cost: { gold: 150, timber: 6, iron: 10, powder: 8 }, equipPerMan: {},
+    hp: 70, attack: 0, defence: 0, armour: 0.0, meleeDamage: 0, morale: 65,
+    walkSpeedMs: 2.8, runSpeedMs: 2.8, shieldBlock: 0.65, antiCavBonus: 0, weaponReachM: 1.5,
+    chargeAttackBonus: 0, chargeMoraleShock: 0,
+    limberS: 5, aimTurnRadS: 0.30, teamHorses: 4,
+    ranged: { minRangeM: 8, maxRangeM: 140, damage: 52, armorPierce: 0.90, reloadS: 6, splashRadiusM: 1.1, buildingDamage: 18, projectileSpeedMs: 150, rollDistM: 14, kind: 'cannonball' },
+    refitTargets: [],
+    valueGold: 280,
+  },
+  fieldGuns: {
+    id: 'fieldGuns', unitClass: 'siege', visualArchetype: 'citizen',
+    barracksLevel: 0, gunFoundryLevel: 5, count: 2, crewCount: 8,
+    cost: { gold: 260, timber: 10, iron: 20, powder: 16 }, equipPerMan: {},
+    hp: 100, attack: 0, defence: 0, armour: 0.0, meleeDamage: 0, morale: 65,
+    walkSpeedMs: 1.4, runSpeedMs: 1.4, shieldBlock: 0.70, antiCavBonus: 0, weaponReachM: 1.5,
+    chargeAttackBonus: 0, chargeMoraleShock: 0,
+    limberS: 10, aimTurnRadS: 0.18, teamHorses: 4,
+    ranged: { minRangeM: 12, maxRangeM: 210, damage: 65, armorPierce: 0.95, reloadS: 8, splashRadiusM: 1.4, buildingDamage: 45, projectileSpeedMs: 170, rollDistM: 20, kind: 'cannonball' },
+    refitTargets: [],
+    valueGold: 480,
   },
 };
 

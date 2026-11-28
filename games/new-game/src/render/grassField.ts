@@ -202,12 +202,12 @@ export function buildGrassField(
     {
       name: 'GrassRing0_Near',
       segments: 3,
-      bladesPerTile: isHigh ? 310 : 145,
+      bladesPerTile: isHigh ? 420 : 180,
       minRadiusTiles: 0,
       maxRadiusTiles: 3.8,
-      fadeStartM: 9,
-      fadeEndM: 18,
-      widthScale: 0.92,
+      fadeStartM: 10,
+      fadeEndM: 19,
+      widthScale: 0.90,
     },
     {
       name: 'GrassRing1_Mid',

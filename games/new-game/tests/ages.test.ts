@@ -283,4 +283,100 @@ describe('Ages (3 Eras, Great Buildings, Firearms, Cross-Age Refit & Start Age)'
     expect(sim.state.sides[0].stock.stone).toBeGreaterThan(stone0 + 2.0);
     expect(sim.state.sides[0].stock.grain).toBeGreaterThan(grain0 + 1.0);
   });
+
+  it('implements Era 2-3 artillery (falconets, culverins, horseGuns, fieldGuns), limbering, ±15° arc traverse & rolling cannonball', () => {
+    const sim = new SimEngine({ mapId: 'openField', mode: 'skirmish', showcaseMode: false, disableAi: true, startAge: 3 });
+    expect(UNIT_DEFS.falconets.gunFoundryLevel).toBe(4);
+    expect(UNIT_DEFS.culverins.gunFoundryLevel).toBe(4);
+    expect(UNIT_DEFS.horseGuns.gunFoundryLevel).toBe(5);
+    expect(UNIT_DEFS.fieldGuns.gunFoundryLevel).toBe(5);
+    expect(UNIT_DEFS.falconets.teamHorses).toBe(2);
+    expect(UNIT_DEFS.culverins.teamHorses).toBe(4);
+    expect(UNIT_DEFS.horseGuns.teamHorses).toBe(4);
+    expect(UNIT_DEFS.fieldGuns.teamHorses).toBe(4);
+
+    // 1. Limbering before moving & unlimbering on arrival (horseGuns has limberS = 5)
+    const hg = spawnRegiment(sim.state, 0, 'horseGuns', -40, 0, Math.PI * 0.5);
+    expect(hg.limbered).toBe(false);
+    sim.execute({ type: 'issueOrder', side: 0, regimentIds: [hg.id], order: { kind: 'march', x: -10, z: 0 } });
+    stepSeconds(sim, 2.0);
+    // Still hitching (limberS = 5 s), so it must NOT have moved yet
+    expect(hg.limberTimerS!).toBeGreaterThan(0);
+    expect(hg.x).toBeCloseTo(-40, 1);
+    stepSeconds(sim, 5.0);
+    // Now hitched & moving forward!
+    expect(hg.limbered).toBe(true);
+    expect(hg.x).toBeGreaterThan(-39);
+
+    // 2. Slow hand-traverse aiming & ±15° arc check + rolling cannonball hits deep column
+    const fg = spawnRegiment(sim.state, 0, 'fieldGuns', -60, 40, 0); // facing +Z, enemy is at +X (90° off!)
+    const col = spawnRegiment(sim.state, 1, 'swordsmen', 20, 40, -Math.PI * 0.5, { formation: 'column' });
+    fg.order = { kind: 'attack', x: col.x, z: col.z, targetRegimentId: col.id };
+    stepSeconds(sim, 2.0);
+    // Still turning from 0 rad toward +pi/2 (aimTurnRadS = 0.18 rad/s -> ~0.36 rad turned), cannot fire yet!
+    expect(sim.state.projectiles.some((p) => p.sourceRegimentId === fg.id)).toBe(false);
+    expect(fg.yawRad).toBeGreaterThan(0.2);
+
+    // Point gun directly at enemy column -> fires cannonball with rollDistM = 20 and damages/kills soldiers
+    fg.yawRad = Math.PI * 0.5;
+    for (const s of fg.soldiers) s.rangedCooldownS = 0.05;
+    const initHp = col.soldiers.reduce((acc, s) => acc + s.hp, 0);
+    let sawRollingBall = false;
+    for (let i = 0; i < 60 * 12; i++) {
+      sim.step(1 / 60);
+      if (sim.state.projectiles.some((p) => p.sourceRegimentId === fg.id && (p.rollDistM ?? 0) >= 20)) {
+        sawRollingBall = true;
+      }
+    }
+    const endHp = col.soldiers.reduce((acc, s) => acc + (s.alive ? s.hp : 0), 0);
+    expect(sawRollingBall).toBe(true);
+    expect(endHp).toBeLessThan(initHp);
+  });
+
+  it('implements Army Captain +5 morale aura, permanent shatter disband, deferred planned roads, and AI Pike/Shield Wall reflexes', () => {
+    const sim = new SimEngine({ mapId: 'openField', mode: 'skirmish', showcaseMode: false, disableAi: true });
+    const k0 = findKeep(sim.state, 0)!;
+
+    // 1. Army Captain aura (+5 max morale to friendly regiments within 45 m)
+    const vet = spawnRegiment(sim.state, 0, 'swordsmen', 0, 0, 0, { kills: 30, veteranTier: 2 });
+    const nearAlly = spawnRegiment(sim.state, 0, 'pikemen', 20, 0, 0);
+    const farAlly = spawnRegiment(sim.state, 0, 'pikemen', 110, 0, 0);
+    stepSeconds(sim, 0.25);
+    expect(vet.isArmyCaptain).toBe(true);
+    expect(nearAlly.maxMorale).toBe(farAlly.maxMorale + 5);
+
+    // 2. Permanent Shatter: regiment routing with <25% strength shatters and disbands back into town at Keep
+    const doomed = spawnRegiment(sim.state, 0, 'militia', k0.x + 25, k0.z, 0);
+    for (let i = 2; i < doomed.soldiers.length; i++) doomed.soldiers[i]!.alive = false;
+    doomed.morale = 5;
+    doomed.routing = true;
+    doomed.shattered = true;
+    const citBefore = sim.state.citizens.filter((c) => c.side === 0).length;
+    stepSeconds(sim, 0.5);
+    expect(sim.state.regiments.some((r) => r.id === doomed.id)).toBe(false);
+    expect(sim.state.citizens.filter((c) => c.side === 0).length).toBeGreaterThanOrEqual(citBefore + 2);
+
+    // 3. Deferred / Planned Road: staked when stone is 0, automatically paved once stone arrives!
+    sim.state.sides[0].stock.stone = 0;
+    const roadRes = sim.execute({ type: 'placeRoad', side: 0, x0: k0.x + 12, z0: k0.z, x1: k0.x + 42, z1: k0.z });
+    expect(roadRes.ok).toBe(true);
+    expect(roadRes.reason).toBe('planned');
+    const staked = sim.state.roads[sim.state.roads.length - 1]!;
+    expect(staked.planned).toBe(true);
+
+    sim.state.sides[0].stock.stone = 20;
+    stepSeconds(sim, 0.5);
+    expect(staked.planned).toBe(false);
+    expect(sim.state.sides[0].stock.stone).toBeLessThan(20);
+
+    // 4. AI medieval tactical reflexes: Pikemen raise Pike Wall vs approaching cavalry, Swordsmen raise Shield Wall under arrow fire
+    const aiSim = new SimEngine({ mapId: 'openField', mode: 'skirmish', showcaseMode: false, difficulty: 'normal', seed: 42 });
+    const aiPikes = spawnRegiment(aiSim.state, 1, 'pikemen', 0, 0, -Math.PI * 0.5);
+    const aiSwd = spawnRegiment(aiSim.state, 1, 'swordsmen', 0, 28, -Math.PI * 0.5);
+    aiSwd.aiShieldWallTimerS = 4.0;
+    spawnRegiment(aiSim.state, 0, 'lightCav', -35, 0, Math.PI * 0.5);
+    stepSeconds(aiSim, 3.5);
+    expect(aiPikes.stance).toBe('pikeWall');
+    expect(aiSwd.stance).toBe('shieldWall');
+  });
 });

@@ -133,8 +133,13 @@ export interface Strings {
   readonly remountBtn: string;
   readonly captainAlive: string;
   readonly captainFallen: string;
+  readonly armyCaptainBadge: string;
   readonly veteranLabel: string;
   readonly routingLabel: string;
+  readonly shatteredLabel: string;
+  readonly limberingLabel: string;
+  readonly unlimberingLabel: string;
+  readonly limberedLabel: string;
   readonly formations: Record<FormationKind, string>;
   readonly stances: Record<StanceKind, string>;
   readonly ranksLabel: string;
@@ -239,7 +244,7 @@ const EN: Strings = {
     skirmish: 'Skirmish',
     defence: 'Defence (25m + 10 Waves)',
     tutorial: 'Tutorial (7 Steps)',
-    campaign: 'Campaign (5 Missions)',
+    campaign: 'Campaign (6 Missions)',
   },
   difficultyNames: {
     easy: 'Easy',
@@ -331,8 +336,13 @@ const EN: Strings = {
   remountBtn: 'Mount',
   captainAlive: 'Captain alive',
   captainFallen: 'Captain fallen (-1 Atk, -10 Morale)',
+  armyCaptainBadge: 'Army Captain (+5 Morale aura 45 m)',
   veteranLabel: 'Veteran',
   routingLabel: 'ROUTING',
+  shatteredLabel: 'SHATTERED',
+  limberingLabel: 'Limbering',
+  unlimberingLabel: 'Unlimbering',
+  limberedLabel: 'Limbered',
   formations: {
     line: 'Line',
     column: 'Column',
@@ -378,14 +388,18 @@ const EN: Strings = {
     crossbowmen: '60% armour-piercing bolts counter Halberdiers & heavy armour; weak to Cavalry.',
     lightCav: 'Fast flanker countering Archers, Crossbows & Siege; weak to Pikemen.',
     heavyCav: 'Devastating flank shock vs Swordsmen & Ranged; countered by Pikemen.',
-    cannon: '88 m flat trajectory breaches walls & towers; protect from Cavalry.',
-    mortar: '112 m high-arc siege shells over walls; minimum range 35 m.',
+    cannon: '88 m rolling shot breaches walls & towers; 12 s limber, protect from Cavalry.',
+    mortar: '112 m high-arc siege shells over walls; minimum range 35 m, 20 s limber.',
     musketeers: 'Era 2 matchlock volleys pierce 75% of armour & shields; protect with Pikes from Cavalry.',
     cuirassiers: 'Era 2 breastplate heavy shock cavalry; crushes Musketeers & Swordsmen, weak to Pikes.',
-    dragoons: 'Era 2 mounted carbine skirmishers; outmanoeuvre slow infantry and harass flanks.',
+    dragoons: 'Era 2 mounted carbine skirmishers; can dismount to fight on foot as steady musketeers.',
+    falconets: 'Era 2 light 2-horse brass field guns (110 m, 6 s limber); quick-firing anti-infantry rolling shot.',
+    culverins: 'Era 2 heavy 4-horse long-barrelled battery (170 m, 15 s limber); shatters walls and deep ranks.',
     lineInfantry: 'Era 3 flintlock & bayonet line; deadly volleys AND anti-cavalry bayonets.',
-    riflemen: 'Era 3 long-range 110 m sharpshooters; outrange Line Infantry, vulnerable to Cavalry.',
+    riflemen: 'Era 3 long-range 130 m sharpshooters; ignore forest cover, vulnerable to Cavalry.',
     hussars: 'Era 3 swift shock cavalry; shreds Riflemen & Artillery, weak to Line bayonets & Pikes.',
+    horseGuns: 'Era 3 swift 4-horse battery (140 m, 5 s limber, 2.8 m/s); redeploys rapidly to flank Squares.',
+    fieldGuns: 'Era 3 heavy 12-pounder 4-horse battery (210 m, 20 m rolling shot); dominates long-range duels.',
   },
 
   buildings: {
@@ -443,9 +457,13 @@ const EN: Strings = {
     musketeers: 'Musketeers',
     cuirassiers: 'Cuirassiers',
     dragoons: 'Dragoons',
+    falconets: 'Falconets',
+    culverins: 'Culverins',
     lineInfantry: 'Line Infantry',
     riflemen: 'Riflemen',
     hussars: 'Hussars',
+    horseGuns: 'Horse Artillery',
+    fieldGuns: 'Field Battery',
   },
   goods: {
     gold: 'Gold',
@@ -703,8 +721,13 @@ const PL: Strings = {
   remountBtn: 'Na koń',
   captainAlive: 'Kapitan żywy',
   captainFallen: 'Kapitan poległ (-1 Atak, -10 Morale)',
+  armyCaptainBadge: 'Dowódca Armii (+5 Morale w promieniu 45 m)',
   veteranLabel: 'Weteran',
   routingLabel: 'UCIEKA',
+  shatteredLabel: 'ROZBITY',
+  limberingLabel: 'Zaprzęga',
+  unlimberingLabel: 'Odprzęga',
+  limberedLabel: 'W zaprzęgu',
   formations: {
     line: 'Linia',
     column: 'Kolumna',
@@ -746,18 +769,22 @@ const PL: Strings = {
     pikemen: 'Skórznie, pika i mniejsza tarcza — kontrują lekką i ciężką jazdę.',
     archers: 'Skórznie i długi łuk — salwy na 80 m niszczą milicję i nieosłoniętych.',
     swordsmen: 'Pełna zbroja, miecz i tarcza — dominują w walce piechoty; słabi na rycerzy.',
-    halberdiers: 'Lancknechci w pełnej zbroi z długą piką i dużą tarczą — przeciw zbroi i jeździe.',
+    halberdiers: 'Lancknechci w pełnej zbroi z długą piką — przeciw zbroi i jeździe.',
     crossbowmen: 'Skórznie i kusza — bełty przebijają 60% pancerza ciężkozbrojnych.',
     lightCav: 'Skórznie, piki, miecze i tarcze — szybkie oskrzydlenie strzelców i dział.',
     heavyCav: 'Rycerze ciężkozbrojni z kopią, mieczem i tarczą — miażdżąca szarża.',
-    cannon: 'Płaski ogień 88 m burzy mury i baszty; chroń przed jazdą.',
-    mortar: 'Stromy ostrzał 112 m ponad murami; minimalny zasięg 35 m.',
+    cannon: 'Płaski ogień 88 m z rykoszetem burzy mury i baszty; zaprzęg 12 s, chroń przed jazdą.',
+    mortar: 'Stromy ostrzał 112 m ponad murami; min. zasięg 35 m, rozstawianie 20 s.',
     musketeers: 'Epoka II: salwy muszkietów przebijają 75% pancerza i tarcz; osłaniaj pikinierami przed jazdą.',
     cuirassiers: 'Epoka II: kirys i szarża ciężkiej jazdy; rozbija muszkieterów i mieczników, słabsi na piki.',
-    dragoons: 'Epoka II: konni strzelcy z karabinkiem; szybkie oskrzydlenie i nękanie piechoty.',
+    dragoons: 'Epoka II: konni strzelcy z karabinkiem; mogą się spieszyć i walczyć jak muszkieterzy.',
+    falconets: 'Epoka II: lekkie działa 2-konne (110 m, zaprzęg 6 s); szybki ogień z rykoszetem przeciw piechocie.',
+    culverins: 'Epoka II: ciężkie kolubryny 4-konne (170 m, zaprzęg 15 s); dalekosiężny ostrzał murów i kolumn.',
     lineInfantry: 'Epoka III: karabiny skałkowe i bagnety — zabójcze salwy ORAZ skuteczna obrona przed jazdą.',
-    riflemen: 'Epoka III: gwintowane sztucery na 110 m — przewyższają zasięgiem piechotę liniową, słabi na jazdę.',
+    riflemen: 'Epoka III: gwintowane sztucery na 130 m — ignorują osłonę lasu, słabi na jazdę.',
     hussars: 'Epoka III: błyskawiczna szarża kawalerii — miażdży strzelców i działa, słabi na bagnety i piki.',
+    horseGuns: 'Epoka III: szybka artyleria konna 4-konna (140 m, zaprzęg 5 s, 2,8 m/s); błyskawicznie flankuje czworoboki.',
+    fieldGuns: 'Epoka III: ciężka bateria 12-funtowa (210 m, 20 m rykoszetu); dominuje w pojedynkach artyleryjskich.',
   },
 
   buildings: {
@@ -815,9 +842,13 @@ const PL: Strings = {
     musketeers: 'Muszkieterzy',
     cuirassiers: 'Kirasjerzy',
     dragoons: 'Dragoni',
+    falconets: 'Falkonety',
+    culverins: 'Kolubryny',
     lineInfantry: 'Piechota liniowa',
     riflemen: 'Strzelcy',
     hussars: 'Huzarzy',
+    horseGuns: 'Artyleria konna',
+    fieldGuns: 'Bateria polowa',
   },
   goods: {
     gold: 'Złoto',

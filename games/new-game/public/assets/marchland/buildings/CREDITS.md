@@ -44,4 +44,3 @@ Changes (`tools/blender/convert.py castle`): the source's Draco and Meshopt comp
 every face given one of the game's surfaces (dressed stone for the walls, towers and keep, rubble for the
 stairs, timber for the drawbridge's gear and doors); the piles of cannon balls and the ground plate removed;
 thinned from 64 000 to 30 000 triangles; scaled to 130 m across, the gate towards the game's +Z.
-

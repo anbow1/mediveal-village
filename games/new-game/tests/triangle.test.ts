@@ -122,4 +122,34 @@ describe('Three Lords (triangle) 860x860 m map & 3-way Skirmish rules', () => {
     stepSeconds(restored, 10);
     expect(restored.getFingerprint()).toBe(sim.getFingerprint());
   }, 15_000);
+
+  it('keeps 3xAI Three Lords skirmish numerically clean and within performance budget over an extended match', () => {
+    const sim = new SimEngine({ mapId: 'triangle', mode: 'skirmish', seed: 303, showcaseMode: false, startAge: 2, fastAges: true });
+    sim.aiControlsSide0 = true;
+    const t0 = performance.now();
+    // Simulate 15 minutes (900 s) at 0.25 s macro steps (3600 steps) across all 3 AI towns
+    const steps = 3600;
+    for (let i = 0; i < steps; i++) {
+      sim.step(0.25);
+      if (sim.state.scenario.outcome !== 'playing') break;
+    }
+    const elapsedMs = performance.now() - t0;
+    const avgMs = elapsedMs / steps;
+
+    expect(avgMs).toBeLessThan(4.0);
+    for (const r of sim.state.regiments) {
+      expect(Number.isFinite(r.x)).toBe(true);
+      expect(Number.isFinite(r.z)).toBe(true);
+      expect(Number.isFinite(r.morale)).toBe(true);
+    }
+    for (const c of sim.state.citizens) {
+      expect(Number.isFinite(c.x)).toBe(true);
+      expect(Number.isFinite(c.z)).toBe(true);
+    }
+    // At least one side should have expanded beyond starting Keep+Barracks
+    const maxBuildings = Math.max(
+      ...[0, 1, 2].map((s) => sim.state.buildings.filter((b) => b.side === s && b.hp > 0).length),
+    );
+    expect(maxBuildings).toBeGreaterThanOrEqual(4);
+  }, 20_000);
 });

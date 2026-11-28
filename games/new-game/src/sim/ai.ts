@@ -334,11 +334,11 @@ export function pickCounterUnit(
   const stock = sideState.stock;
 
   const candidates: UnitTypeId[] = [];
-  // Later ages prioritize the age's own firearm and modern cavalry arms first!
-  if (barracksLevel >= 5) {
-    candidates.push('lineInfantry', 'riflemen', 'hussars', 'cuirassiers', 'cannon');
-  } else if (barracksLevel >= 4) {
-    candidates.push('musketeers', 'cuirassiers', 'dragoons', 'pikemen', 'halberdiers', 'cannon');
+  // Later ages prioritize the age's own firearm, modern cavalry, and mobile artillery arms first!
+  if (barracksLevel >= 5 || foundryLevel >= 5) {
+    candidates.push('lineInfantry', 'riflemen', 'hussars', 'cuirassiers', 'horseGuns', 'fieldGuns', 'cannon');
+  } else if (barracksLevel >= 4 || foundryLevel >= 4) {
+    candidates.push('musketeers', 'cuirassiers', 'dragoons', 'falconets', 'culverins', 'pikemen', 'halberdiers', 'cannon');
   }
 
   if (enemyCav >= 2) candidates.push('pikemen', 'halberdiers');
@@ -346,11 +346,11 @@ export function pickCounterUnit(
   if (enemyRanged >= 2) candidates.push('hussars', 'cuirassiers', 'dragoons', 'lightCav', 'heavyCav', 'swordsmen');
 
   if (personality === 'raider') {
-    candidates.push('hussars', 'dragoons', 'lightCav', 'archers', 'pikemen', 'swordsmen');
+    candidates.push('hussars', 'dragoons', 'horseGuns', 'falconets', 'lightCav', 'archers', 'pikemen', 'swordsmen');
   } else if (personality === 'knight') {
-    candidates.push('cuirassiers', 'heavyCav', 'swordsmen', 'crossbowmen', 'cannon', 'pikemen', 'archers');
+    candidates.push('cuirassiers', 'heavyCav', 'fieldGuns', 'culverins', 'swordsmen', 'crossbowmen', 'cannon', 'pikemen', 'archers');
   } else {
-    candidates.push('lineInfantry', 'musketeers', 'swordsmen', 'crossbowmen', 'pikemen', 'archers', 'halberdiers', 'cannon');
+    candidates.push('lineInfantry', 'musketeers', 'fieldGuns', 'culverins', 'swordsmen', 'crossbowmen', 'pikemen', 'archers', 'halberdiers', 'cannon');
   }
   if (ownMilitia < 2) candidates.push('militia');
 
@@ -524,6 +524,10 @@ export function stepAiForSide(
   if (barracks && barracks.level < keep.level && barracks.upgradingToLevel === null) {
     executeCommand(state, { type: 'upgradeBuilding', side, buildingId: barracks.id }, terrain, nav, forest, onNavDirty);
   }
+  const foundryUp = sideBuildings.find((b) => b.type === 'gunFoundry' && b.buildProgress >= 1);
+  if (foundryUp && foundryUp.level < keep.level && foundryUp.upgradingToLevel === null) {
+    executeCommand(state, { type: 'upgradeBuilding', side, buildingId: foundryUp.id }, terrain, nav, forest, onNavDirty);
+  }
   // In Era 2+, upgrade ironMine & smelter (up to L3) so firearm armies have plentiful iron!
   if (keepEra >= 2) {
     const ironUpgradeTarget = sideBuildings.find(
@@ -633,9 +637,41 @@ export function stepAiForSide(
   );
   const foeRegs = enemySide !== null ? allHostileRegs.filter((r) => r.side === enemySide) : [];
 
-  // 4.0 Firearm tactical reflexes (marchland PLAN §3.2): form Hollow Square vs nearby cavalry, Volley Fire vs infantry!
+  // 4.0 Tactical Stance & Formation reflexes (RULES.md §11 & PLAN §3.2):
+  //   - Pike/halberd infantry braces Pike Wall vs approaching cavalry (< 55 m)
+  //   - Shielded infantry raises Shield Wall for 4 s when taking arrow/bolt fire
+  //   - Musketeers / Line Infantry form Hollow Square vs nearby cavalry (< 26 m) & Volley Fire vs infantry!
   if (difficulty !== 'easy') {
     for (const r of ownRegs) {
+      const rDef = UNIT_DEFS[r.unitType];
+      if (rDef.unitClass === 'infantry' && rDef.antiCavBonus > 0) {
+        const cavApproaching = allHostileRegs.some(
+          (e) =>
+            UNIT_DEFS[e.unitType].unitClass === 'cavalry' &&
+            !e.dismounted &&
+            Math.hypot(e.x - r.x, e.z - r.z) < 55,
+        );
+        if (cavApproaching && r.stance !== 'pikeWall') {
+          executeCommand(state, { type: 'setStance', side, regimentIds: [r.id], stance: 'pikeWall' }, terrain, nav, forest, onNavDirty);
+        } else if (!cavApproaching && r.stance === 'pikeWall') {
+          const cavStillClose = allHostileRegs.some(
+            (e) =>
+              UNIT_DEFS[e.unitType].unitClass === 'cavalry' &&
+              !e.dismounted &&
+              Math.hypot(e.x - r.x, e.z - r.z) < 68,
+          );
+          if (!cavStillClose) {
+            executeCommand(state, { type: 'setStance', side, regimentIds: [r.id], stance: 'guard' }, terrain, nav, forest, onNavDirty);
+          }
+        }
+      } else if (rDef.unitClass === 'infantry' && rDef.shieldBlock >= 0.2) {
+        if ((r.aiShieldWallTimerS ?? 0) > 0 && r.stance !== 'shieldWall') {
+          executeCommand(state, { type: 'setStance', side, regimentIds: [r.id], stance: 'shieldWall' }, terrain, nav, forest, onNavDirty);
+        } else if ((r.aiShieldWallTimerS ?? 0) <= 0 && r.stance === 'shieldWall') {
+          executeCommand(state, { type: 'setStance', side, regimentIds: [r.id], stance: 'guard' }, terrain, nav, forest, onNavDirty);
+        }
+      }
+
       if (r.unitType !== 'musketeers' && r.unitType !== 'lineInfantry') continue;
       const nearCav = allHostileRegs.some(
         (e) =>
@@ -663,11 +699,12 @@ export function stepAiForSide(
     }
   }
 
-  // 4a. Defend Keep if ANY enemy enters < 95 m
+  // 4a. Defend Keep if ANY enemy enters < 95 m (keep braced Pike Wall / Square holding steady!)
   const threatAtHome = allHostileRegs.find((e) => Math.hypot(e.x - keep.x, e.z - keep.z) < 95);
   if (threatAtHome) {
     sideState.aiAttacking = false;
     for (const r of ownRegs) {
+      if (r.stance === 'pikeWall' || r.formation === 'square') continue;
       if (!r.order || r.order.targetRegimentId !== threatAtHome.id) {
         executeCommand(
           state,
@@ -698,7 +735,9 @@ export function stepAiForSide(
     .filter((cp) => cp.owner !== side)
     .sort((a, b) => Math.hypot(a.x - keep.x, a.z - keep.z) - Math.hypot(b.x - keep.x, b.z - keep.z))[0];
   if (unownedCp && mobileRegs.length >= 2) {
-    const scout = mobileRegs.find((r) => !r.order && UNIT_DEFS[r.unitType].unitClass !== 'siege');
+    const scout = mobileRegs.find(
+      (r) => !r.order && r.stance !== 'pikeWall' && r.formation !== 'square' && UNIT_DEFS[r.unitType].unitClass !== 'siege',
+    );
     if (scout) {
       executeCommand(
         state,
@@ -737,7 +776,7 @@ export function stepAiForSide(
       foeRegs.slice().sort((a, b) => Math.hypot(a.x - keep.x, a.z - keep.z) - Math.hypot(b.x - keep.x, b.z - keep.z))[0] ??
       null;
     for (const r of mobileRegs) {
-      if (r.order !== null) continue;
+      if (r.order !== null || r.stance === 'pikeWall' || r.formation === 'square') continue;
       const def = UNIT_DEFS[r.unitType];
       if (primaryEnemy) {
         // Flanking cavalry arcs around enemy line on Normal/Hard!

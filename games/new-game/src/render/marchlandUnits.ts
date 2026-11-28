@@ -1562,7 +1562,8 @@ export async function buildMarchlandUnits(
 ): Promise<MarchlandUnitsHandles | null> {
   const base = 'assets/marchland';
   const unitPools = new Map<UnitTypeId, SkinnedUnitPool>();
-  const engines = new Map<'cannon' | 'fieldgun' | 'mortar', EnginePool>();
+  type EngineKind = 'cannon' | 'mortar' | 'falconet' | 'culverin' | 'horsegun' | 'fieldgun';
+  const engines = new Map<EngineKind, EnginePool>();
   const folkPools: FolkPool[] = [];
   let artilleryCrewPool: FolkPool | null = null;
   const goodMeshes = new Map<GoodPropKind, InstancedMesh>();
@@ -1588,7 +1589,7 @@ export async function buildMarchlandUnits(
             'townswoman-worker.json',
           ];
 
-  const totalSteps = 9 + 6 + 8 + folkFiles.length;
+  const totalSteps = 9 + 6 + 11 + folkFiles.length;
   let doneSteps = 0;
   const stepDone = () => {
     doneSteps++;
@@ -1663,9 +1664,12 @@ export async function buildMarchlandUnits(
     draftHorsePool = buildDraftHorsePool(scene, warhorseM);
   }
 
-  // Small prop JSONs (cannons, Era 2-3 fieldgun, mortars, handcarts, wagons, livestock pigs + 8 real 3D goods bundles + Era 2-3 artilleryman crew)
-  const [cannonM, fieldgunM, mortarM, handcartM, wagonM, pigM, goodsModels, artillerymanM] = await Promise.all([
+  // Small prop JSONs (all 6 artillery models: cannon, mortar, falconet, culverin, horsegun, fieldgun + carts/wagons/pigs/goods + artilleryman crew)
+  const [cannonM, falconetM, culverinM, horsegunM, fieldgunM, mortarM, handcartM, wagonM, pigM, goodsModels, artillerymanM] = await Promise.all([
     fetchJson<PropModel>(`${base}/props/cannon.json`).finally(stepDone),
+    fetchJson<PropModel>(`${base}/props/falconet.json`).finally(stepDone),
+    fetchJson<PropModel>(`${base}/props/culverin.json`).finally(stepDone),
+    fetchJson<PropModel>(`${base}/props/horsegun.json`).finally(stepDone),
     fetchJson<PropModel>(`${base}/props/fieldgun.json`).finally(stepDone),
     fetchJson<PropModel>(`${base}/props/mortar.json`).finally(stepDone),
     fetchJson<PropModel>(`${base}/props/handcart.json`).finally(stepDone),
@@ -1675,6 +1679,9 @@ export async function buildMarchlandUnits(
     fetchJson<RiggedModel>(`${base}/soldiers/artilleryman.json`).finally(stepDone),
   ]);
   if (cannonM) engines.set('cannon', buildEnginePool(scene, 'ML_Engine_cannon', cannonM));
+  if (falconetM) engines.set('falconet', buildEnginePool(scene, 'ML_Engine_falconet', falconetM));
+  if (culverinM) engines.set('culverin', buildEnginePool(scene, 'ML_Engine_culverin', culverinM));
+  if (horsegunM) engines.set('horsegun', buildEnginePool(scene, 'ML_Engine_horsegun', horsegunM));
   if (fieldgunM) engines.set('fieldgun', buildEnginePool(scene, 'ML_Engine_fieldgun', fieldgunM));
   if (mortarM) engines.set('mortar', buildEnginePool(scene, 'ML_Engine_mortar', mortarM));
   if (artillerymanM) artilleryCrewPool = buildFolkPool(scene, 'ML_ArtilleryCrew', artillerymanM);
@@ -1866,7 +1873,14 @@ export async function buildMarchlandUnits(
     // 1. Soldiers & Cavalry
     const unitCounts = new Map<UnitTypeId, number>();
     for (const k of unitPools.keys()) unitCounts.set(k, 0);
-    const engineCounts: Record<'cannon' | 'fieldgun' | 'mortar', number> = { cannon: 0, fieldgun: 0, mortar: 0 };
+    const engineCounts: Record<EngineKind, number> = {
+      cannon: 0,
+      mortar: 0,
+      falconet: 0,
+      culverin: 0,
+      horsegun: 0,
+      fieldgun: 0,
+    };
 
     const bldById = new Map<number, BuildingTypeId>();
     for (const b of state.buildings) bldById.set(b.id, b.type);
@@ -1875,13 +1889,23 @@ export async function buildMarchlandUnits(
       if (reg.garrisonedInBuildingId !== null) continue;
       const def = UNIT_DEFS[reg.unitType];
 
-      if (reg.unitType === 'cannon' || reg.unitType === 'mortar') {
-        const useFieldGun = reg.unitType === 'cannon' && (sideEra[reg.side] ?? 1) >= 2 && engines.has('fieldgun');
-        const eKey: 'cannon' | 'fieldgun' | 'mortar' = useFieldGun ? 'fieldgun' : reg.unitType;
+      if (def.unitClass === 'siege') {
+        const resolveEngine = (): EngineKind => {
+          if (reg.unitType === 'falconets' && engines.has('falconet')) return 'falconet';
+          if (reg.unitType === 'culverins' && engines.has('culverin')) return 'culverin';
+          if (reg.unitType === 'horseGuns' && engines.has('horsegun')) return 'horsegun';
+          if (reg.unitType === 'fieldGuns' && engines.has('fieldgun')) return 'fieldgun';
+          if (reg.unitType === 'mortar') return 'mortar';
+          if (reg.unitType === 'cannon' && (sideEra[reg.side] ?? 1) >= 2 && engines.has('fieldgun')) return 'fieldgun';
+          return 'cannon';
+        };
+        const eKey = resolveEngine();
         const ep = engines.get(eKey);
         if (!ep) continue;
         const pArr = ep.place.array as Float32Array;
         const sArr = ep.side.array as Float32Array;
+        // Limbered horse-drawn guns travel trail-first (flipped 180° relative to firing orientation)
+        const limberYawOff = reg.limbered && (def.teamHorses ?? 0) > 0 ? 0 : Math.PI;
         for (const s of reg.soldiers) {
           if (!s.alive) continue;
           const idx = engineCounts[eKey];
@@ -1890,7 +1914,7 @@ export async function buildMarchlandUnits(
           updateTracker(soldierMotion, trKey, s.x, s.z, reg.currentSpeedMs, simClockS, 0.14, 0.06);
           const sinceAtk = s.sinceAttackS ?? 99;
           let back = 0;
-          if (sinceAtk < RECOIL_S) {
+          if (!reg.limbered && sinceAtk < RECOIL_S) {
             const t = sinceAtk / RECOIL_S;
             back = (reg.unitType === 'mortar' ? 0.12 : 0.85) * (t < 0.08 ? t / 0.08 : (1 - t) ** 2);
           }
@@ -1899,7 +1923,7 @@ export async function buildMarchlandUnits(
           pArr[idx * 4] = gx;
           pArr[idx * 4 + 1] = heightAt(gx, gz);
           pArr[idx * 4 + 2] = gz;
-          pArr[idx * 4 + 3] = s.yawRad + Math.PI;
+          pArr[idx * 4 + 3] = s.yawRad + limberYawOff;
           sArr[idx] = reg.side;
           engineCounts[eKey] = idx + 1;
         }
@@ -2053,7 +2077,7 @@ export async function buildMarchlandUnits(
       pool.frame.needsUpdate = true;
     }
 
-    for (const kind of ['cannon', 'fieldgun', 'mortar'] as const) {
+    for (const kind of ['cannon', 'mortar', 'falconet', 'culverin', 'horsegun', 'fieldgun'] as const) {
       const ep = engines.get(kind);
       if (!ep) continue;
       const cnt = engineCounts[kind];
@@ -2221,6 +2245,48 @@ export async function buildMarchlandUnits(
       }
     }
 
+    // 2a-bis. Animated draft horse teams (2 or 4 horses in pairs) ahead of limbered / limbering Era 2-3 guns!
+    if (draftHorsePool && draftHorsePool.horse) {
+      const horseCapTotal = CART_CAP + 64;
+      const dP = draftHorsePool.place.array as Float32Array;
+      const dF = draftHorsePool.frame.array as Float32Array;
+      const dS = draftHorsePool.side.array as Float32Array;
+      const hClips = draftHorsePool.horse;
+      for (const reg of state.regiments) {
+        if (reg.garrisonedInBuildingId !== null) continue;
+        const def = UNIT_DEFS[reg.unitType];
+        const teamHorses = def.teamHorses ?? 0;
+        if (teamHorses <= 0 || !(reg.limbered || (reg.limberTimerS ?? 0) > 0)) continue;
+        for (const s of reg.soldiers) {
+          if (!s.alive) continue;
+          const tr = soldierMotion.get(reg.id * 64 + s.slotIndex);
+          const gunSpd = tr ? tr.smoothSpeed : reg.currentSpeedMs;
+          const gunStride = tr ? Math.max(s.travelM, tr.strideM) : s.travelM;
+          const dx = Math.sin(s.yawRad);
+          const dz = Math.cos(s.yawRad);
+          for (let h = 0; h < teamHorses && draftHorseCount < horseCapTotal; h++) {
+            const along = 2.6 + Math.floor(h / 2) * 2.4;
+            const across = h % 2 === 0 ? 0.58 : -0.58;
+            const hx = s.x + dx * along + dz * across;
+            const hz = s.z + dz * along - dx * across;
+            dP[draftHorseCount * 4] = hx;
+            dP[draftHorseCount * 4 + 1] = heightAt(hx, hz);
+            dP[draftHorseCount * 4 + 2] = hz;
+            dP[draftHorseCount * 4 + 3] = s.yawRad + Math.PI;
+            dS[draftHorseCount] = reg.side;
+            const phaseOff = s.slotIndex * 0.41 + h * 0.23;
+            dF[draftHorseCount] =
+              gunSpd > 2.4
+                ? cycle(hClips.gallop, gunStride / GALLOP_CYCLE_M + phaseOff)
+                : gunSpd > 0.22
+                  ? cycle(hClips.walk, gunStride / Math.max(0.5, hClips.walk.travelM ?? 1.1) + phaseOff)
+                  : cycle(hClips.idle, simClockS / (hClips.idle.frames / draftHorsePool.fps) + phaseOff);
+            draftHorseCount++;
+          }
+        }
+      }
+    }
+
     // 2b. Real 3D resource stacks on workshop yard aprons & active construction sites!
     for (const b of state.buildings) {
       if (b.hp <= 0) continue;
@@ -2278,29 +2344,33 @@ export async function buildMarchlandUnits(
       mesh.instanceMatrix.needsUpdate = true;
     }
 
-    // 3. Animated gun crewmen beside active cannons/mortars (Era 2-3 uses uniformed artilleryman.json; Era 1 uses townsfolk!)
+    // 3. Animated gun crewmen beside all active siege artillery (Era 2-3 guns use uniformed artilleryman.json; Era 1 uses townsfolk!)
     if (folkPools.length > 0 || artilleryCrewPool) {
       for (const reg of state.regiments) {
-        if (reg.unitType !== 'cannon' && reg.unitType !== 'mortar') continue;
-        const fp =
-          (sideEra[reg.side] ?? 1) >= 2 && artilleryCrewPool
-            ? artilleryCrewPool
-            : folkPools[0];
+        const uDef = UNIT_DEFS[reg.unitType];
+        if (uDef.unitClass !== 'siege') continue;
+        const isModernGun =
+          reg.unitType === 'falconets' ||
+          reg.unitType === 'culverins' ||
+          reg.unitType === 'horseGuns' ||
+          reg.unitType === 'fieldGuns' ||
+          (sideEra[reg.side] ?? 1) >= 2;
+        const fp = isModernGun && artilleryCrewPool ? artilleryCrewPool : folkPools[0];
         if (!fp) continue;
         const pArr = fp.place.array as Float32Array;
         const sArr = fp.side.array as Float32Array;
         const fArr = fp.frame.array as Float32Array;
         const { idle, walk, pickup, putdown } = fp.clips;
-        const reloadS = UNIT_DEFS[reg.unitType].ranged?.reloadS ?? 10;
+        const reloadS = uDef.ranged?.reloadS ?? 10;
         const spots: readonly (readonly [number, number, number])[] =
-          reg.unitType === 'cannon'
+          reg.unitType === 'mortar'
             ? [
-                [1.15, 0.5, 0.35],
-                [-1.15, 0.2, -0.35],
-              ]
-            : [
                 [1.3, 0.8, 0.4],
                 [-1.3, 0.5, -0.45],
+              ]
+            : [
+                [1.15, 0.5, 0.35],
+                [-1.15, 0.2, -0.35],
               ];
         for (const s of reg.soldiers) {
           if (!s.alive) continue;
@@ -2325,7 +2395,7 @@ export async function buildMarchlandUnits(
             const offset = s.slotIndex * 1.9 + k * 0.7;
             if (gunMoving) {
               fArr[idx] = cycle(walk, gunStrideM / Math.max(0.5, walk.travelM ?? WALK_CYCLE_M));
-            } else if (sinceAtk < reloadS * 0.8) {
+            } else if (!reg.limbered && sinceAtk < reloadS * 0.8) {
               const pickS = pickup.frames / pickup.fps;
               const t = (sinceAtk + offset) % (pickS + putdown.frames / putdown.fps);
               fArr[idx] =
